@@ -143,6 +143,8 @@ for i in $(seq 1 15); do
       --cert "$CONF/credentials/reader.crt" --key "$CONF/credentials/reader.key" \
       -H "Authorization: Bearer $TOKEN" "https://$HOST:9443/v1/status" >/dev/null; then
     echo "Cloud security monitor ready at https://$HOST:9443"
+    echo 'Record this CA fingerprint through an independent administrator channel before first business pairing:'
+    openssl x509 -in "$CONF/ca.crt" -noout -fingerprint -sha256
     exit 0
   fi
   sleep 2

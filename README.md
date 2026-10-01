@@ -13,6 +13,16 @@ sudo bash scripts/install-linux.sh --host security.example.com
 
 重复运行同一个版本只能使用相同源码；升级时须提升 `package.json` 的版本。旧状态保存在 `/var/lib/appgog-security`；配置和私钥保存在 `/etc/appgog-security`，不得从业务服务器复制过来。
 
+### 私有仓库从干净 Linux 一行安装
+
+在安全服务器预先配置**只读** SSH deploy key、核对 GitHub SSH 主机指纹并保存到 root 的 `known_hosts`；从受信的开发/发布环境取得并审核 40 位提交 SHA。下面是一条命令，替换末尾的 `COMMIT_SHA` 和 `SERVER_HOST`。命令不会把 GitHub 凭据写到参数、日志或仓库中；SSH 身份不可用时会直接失败，不会回退到匿名下载。支持 systemd、apt/dnf、x86_64/aarch64，其他环境明确停止。
+
+```sh
+sudo bash -c 'set -eu; umask 077; if ! command -v git >/dev/null || ! command -v ssh >/dev/null; then if command -v apt-get >/dev/null; then apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y git openssh-client; elif command -v dnf >/dev/null; then dnf install -y git openssh-clients; else echo "Unsupported package manager" >&2; exit 1; fi; fi; workdir=$(mktemp -d); trap '\''rm -r -- "$workdir"'\'' EXIT; GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=yes" git clone --quiet --no-checkout git@github.com:Jerry2586/Cloud-based-Scanning-and-Removal-Center.git "$workdir"; cd "$workdir"; git cat-file -e "$1^{commit}"; git checkout --quiet --detach "$1"; test "$(git rev-parse HEAD)" = "$1"; bash scripts/install-linux.sh --host "$2"' _ COMMIT_SHA SERVER_HOST
+```
+
+这条命令自动补齐基础依赖并安装服务；私有源码的**读权限、可信提交 SHA 和 SSH 主机身份**必须由管理员独立提供。首次配对前，从本机控制台独立记录安装器输出的 CA SHA-256 指纹，业务机配对时输入该指纹。多次运行同一提交可做重装检查；升级先审查新提交并提高项目版本。安装成功不代表已与授权/打包节点配对，也不代表跨机容灾演练通过。
+
 ## 注册和交付凭据
 
 基线必须从独立校验过的同版本源码生成。**不要从已经怀疑受入侵的业务机器采样并批准基线。**
