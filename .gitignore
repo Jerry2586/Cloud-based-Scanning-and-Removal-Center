@@ -1,0 +1,12 @@
+# Never commit generated server identities, credentials, or runtime state.
+.env
+.env.*
+*.key
+*.token
+*.crt
+*.csr
+*.srl
+config.json
+state.json
+node_modules/
+var/
