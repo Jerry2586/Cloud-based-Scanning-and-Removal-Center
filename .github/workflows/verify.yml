@@ -1,0 +1,21 @@
+name: Verify cloud security center
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Validate Linux install and identity scripts
+        run: bash -n scripts/install-linux.sh scripts/enroll-node.sh scripts/export-business-bundle.sh scripts/rotate-identity.sh
+      - name: Run monitor and real mutual TLS tests
+        run: node --test
