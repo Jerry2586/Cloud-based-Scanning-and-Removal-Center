@@ -17,7 +17,7 @@ const reply = (res, status, payload) => {
 const token = req => /^Bearer (\S+)$/.exec(req.headers.authorization ?? '')?.[1] ?? '';
 
 export function createMonitor({ nodes, readers, stateFile, now = () => Date.now(), probe = defaultProbe }) {
-  const state = { probes: {}, reports: {}, events: [] };
+  const state = { probes: {}, reports: {}, reportFreshness: {}, events: [] };
   if (stateFile) {
     try { Object.assign(state, JSON.parse(readFileSync(stateFile, 'utf8'))); } catch (error) {
       if (error.code !== 'ENOENT') throw error;
@@ -46,7 +46,8 @@ export function createMonitor({ nodes, readers, stateFile, now = () => Date.now(
       probe: state.probes[name] ?? { state: 'unknown' },
       integrity: state.reports[name] ?? { state: 'unknown' },
       last_report_at: state.reports[name]?.at ?? null,
-      report_fresh: Boolean(state.reports[name]?.at && now() - Date.parse(state.reports[name].at) < 120000),
+      report_fresh: Boolean(state.reports[name]?.at && now() >= Date.parse(state.reports[name].at)
+        && now() - Date.parse(state.reports[name].at) < 120000),
       baseline_files: Object.keys(config.baseline ?? {}).length,
     }])),
     events: state.events.slice(0, 40),
@@ -60,6 +61,14 @@ export function createMonitor({ nodes, readers, stateFile, now = () => Date.now(
       state.probes[name] = { ...result, at: new Date(now()).toISOString() };
       if (result.state !== 'healthy' && (previous !== result.state || previous === undefined)) event('probe.failed', name, result.reason ?? 'unreachable');
     }));
+    for (const name of Object.keys(nodes)) {
+      const at = Date.parse(state.reports[name]?.at ?? '');
+      const fresh = Number.isFinite(at) && now() - at < 120000 && now() >= at;
+      if (!fresh && state.reportFreshness[name] !== 'stale') {
+        event('report.stale', name, state.reports[name]?.at ? 'report expired' : 'no report received');
+      }
+      state.reportFreshness[name] = fresh ? 'fresh' : 'stale';
+    }
     persist();
     return status();
   }
@@ -94,6 +103,8 @@ export function createMonitor({ nodes, readers, stateFile, now = () => Date.now(
         const check = { state: Object.keys(baseline).length ? (missing.length || changed.length || added.length ? 'changed' : 'matched') : 'unconfigured',
           at: new Date(now()).toISOString(), missing, changed, added };
         state.reports[name] = check;
+        if (state.reportFreshness[name] === 'stale') event('report.resumed', name, 'authenticated report received');
+        state.reportFreshness[name] = 'fresh';
         if (check.state === 'changed') event('integrity.changed', name, { missing, changed, added });
         persist();
         return reply(res, 200, check);

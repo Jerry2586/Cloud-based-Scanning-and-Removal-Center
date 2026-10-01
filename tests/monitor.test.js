@@ -54,3 +54,24 @@ test('report detects changed, missing, added; credentials rotate without stale a
   time += 121000;
   assert.equal(monitor.status().nodes['license-center'].report_fresh, false);
 });
+
+test('cloud records missing, stale and resumed node reports once per transition', async () => {
+  let time = Date.now();
+  const monitor = createMonitor({ nodes: { 'license-center': node }, readers: [reader], now: () => time,
+    probe: async () => ({ state: 'healthy' }) });
+  await monitor.runProbes();
+  await monitor.runProbes();
+  assert.equal(monitor.status().events.filter(event => event.kind === 'report.stale').length, 1);
+  const report = () => call(monitor, { url: '/v1/report', method: 'POST', credential: node,
+    body: JSON.stringify({ files: { 'app.js': 'a'.repeat(64) } }) });
+  assert.equal((await report()).status, 200);
+  assert.equal(monitor.status().events.filter(event => event.kind === 'report.resumed').length, 1);
+  time += 121000;
+  await monitor.runProbes();
+  await monitor.runProbes();
+  assert.equal(monitor.status().nodes['license-center'].report_fresh, false);
+  assert.equal(monitor.status().events.filter(event => event.kind === 'report.stale').length, 2);
+  assert.equal((await report()).status, 200);
+  assert.equal(monitor.status().events.filter(event => event.kind === 'report.resumed').length, 2);
+  assert.equal(monitor.status().nodes['license-center'].report_fresh, true);
+});
