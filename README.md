@@ -28,6 +28,10 @@ sudo bash scripts/export-business-bundle.sh all /root/business-pairing
 
 云端服务器上 `/v1/connectivity` 返回已认证身份；`/v1/status` 仅允许 reader，`/v1/report` 仅允许两个上报节点。通过 `scripts/rotate-identity.sh stage|commit <role>` 分两步换证和令牌：先在云端 stage，部署并验证新身份，再 commit 撤销旧身份。公网 `/health` 只表示云端进程存活，不能当作业务节点安全判据。
 
+## 宿主检查自报
+
+授权和打包节点各自的 systemd 代理启动后以及每五分钟运行固定范围检查，节点通过既有 mTLS 身份和令牌上报状态、检查时间及四种状态计数，不上报文件内容、详细路径或本地日志。云端严格校验形状、计数与未来时间；自报超过十五分钟或节点报告超过两分钟未刷新时显示过期，异常状态变化记为 host.finding / host.warning / host.unavailable / host.stale，恢复记为 host.resumed。旧节点未上报宿主结果时显示不可用；该数据带 node-self-report 来源标签，业务节点失守时不具备独立可信性。公网探测由云端独立执行，保持独立字段。
+
 ## 运维限制
 
 服务上报代码目录的文件哈希，不读取业务数据卷、数据库、私钥和系统进程；节点失联时云端仍会继续探测公网健康端点并留下事件。超过两分钟没有收到节点报告会记录 `report.stale`，重新收到经过身份认证的报告会记录 `report.resumed`；事件只保留最近 300 条，必须额外转发到独立日志存储以支持长期取证。若攻击者取得业务进程权限，可伪造该进程可读取的数据和报告；应结合独立备份、审计、主机侧隔离与应急响应。新基线需要在完成签名版本核验后再批准，不随被监控主机的报告自动更新。

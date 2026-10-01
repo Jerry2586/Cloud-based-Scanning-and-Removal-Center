@@ -75,3 +75,49 @@ test('cloud records missing, stale and resumed node reports once per transition'
   assert.equal(monitor.status().events.filter(event => event.kind === 'report.resumed').length, 2);
   assert.equal(monitor.status().nodes['license-center'].report_fresh, true);
 });
+
+test('host self-report rejects malformed evidence, signals transitions and expires independently of new reports', async () => {
+  let time = Date.now();
+  const monitor = createMonitor({ nodes: { 'license-center': node }, readers: [reader], now: () => time,
+    probe: async () => ({ state: 'healthy' }) });
+  const submit = host_scan => call(monitor, { url: '/v1/report', method: 'POST', credential: node,
+    body: JSON.stringify({ files: { 'app.js': 'a'.repeat(64) }, host_scan }) });
+  const counts = { ok: 6, warning: 0, finding: 0, unavailable: 0 };
+  assert.equal((await submit({ state: 'ok', checked_at: 'bad', counts })).status, 400);
+  assert.equal((await submit({ state: 'ok', checked_at: new Date(time + 120000).toISOString(), counts })).status, 400);
+  assert.equal((await submit({ state: 'ok', checked_at: new Date(time).toISOString(), counts: { ...counts, finding: -1 } })).status, 400);
+  assert.equal(monitor.status().nodes['license-center'].integrity.state, 'unknown');
+  assert.equal((await submit({ state: 'ok', checked_at: new Date(time).toISOString(), counts })).status, 200);
+  assert.equal(monitor.status().nodes['license-center'].host_scan.state, 'ok');
+  assert.equal(monitor.status().nodes['license-center'].host_scan.source, 'node-self-report');
+  assert.equal((await submit({ state: 'finding', checked_at: new Date(time).toISOString(), counts: { ...counts, ok: 5, finding: 1 } })).status, 200);
+  assert.equal((await submit({ state: 'finding', checked_at: new Date(time).toISOString(), counts: { ...counts, ok: 5, finding: 1 } })).status, 200);
+  assert.equal(monitor.status().events.filter(event => event.kind === 'host.finding').length, 1);
+  time += 901000;
+  // A freshly authenticated report cannot turn an old host scan into fresh evidence.
+  assert.equal((await submit({ state: 'finding', checked_at: new Date(time - 901000).toISOString(), counts: { ...counts, ok: 5, finding: 1 } })).status, 200);
+  assert.equal(monitor.status().nodes['license-center'].host_scan.state, 'stale');
+  await monitor.runProbes();
+  assert.equal(monitor.status().events.filter(event => event.kind === 'host.stale').length, 1);
+  assert.equal((await submit({ state: 'ok', checked_at: new Date(time).toISOString(), counts })).status, 200);
+  assert.equal(monitor.status().nodes['license-center'].host_scan.state, 'ok');
+  assert.equal(monitor.status().events.filter(event => event.kind === 'host.resumed').length, 1);
+});
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+test('existing persisted state upgrades without host fields or trusted host result', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cloud-state-'));
+  try {
+    const stateFile = join(dir, 'state.json');
+    writeFileSync(stateFile, JSON.stringify({ probes: {}, reports: {}, reportFreshness: {}, events: [] }));
+    const monitor = createMonitor({ nodes: { 'license-center': node }, readers: [reader], stateFile,
+      probe: async () => ({ state: 'healthy' }) });
+    assert.equal(monitor.status().nodes['license-center'].host_scan.state, 'unavailable');
+    await monitor.runProbes();
+    assert.equal((await call(monitor, { url: '/v1/report', method: 'POST', credential: node,
+      body: JSON.stringify({ files: { 'app.js': 'a'.repeat(64) } }) })).status, 200);
+    assert.equal(monitor.status().nodes['license-center'].host_scan.state, 'unavailable');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

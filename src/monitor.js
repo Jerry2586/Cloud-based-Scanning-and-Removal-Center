@@ -17,12 +17,15 @@ const reply = (res, status, payload) => {
 const token = req => /^Bearer (\S+)$/.exec(req.headers.authorization ?? '')?.[1] ?? '';
 
 export function createMonitor({ nodes, readers, stateFile, now = () => Date.now(), probe = defaultProbe }) {
-  const state = { probes: {}, reports: {}, reportFreshness: {}, events: [] };
+  const state = { probes: {}, reports: {}, reportFreshness: {}, hostReports: {}, hostReportState: {}, events: [] };
   if (stateFile) {
     try { Object.assign(state, JSON.parse(readFileSync(stateFile, 'utf8'))); } catch (error) {
       if (error.code !== 'ENOENT') throw error;
     }
   }
+  // Older state files predate host scan reporting.
+  state.hostReports ??= {};
+  state.hostReportState ??= {};
   const persist = () => {
     if (!stateFile) return;
     mkdirSync(dirname(stateFile), { recursive: true });
@@ -40,6 +43,20 @@ export function createMonitor({ nodes, readers, stateFile, now = () => Date.now(
       && (subject.identities ?? [subject]).some(candidate =>
         equal(cert.fingerprint256, candidate.fingerprint256) && equal(token(req), candidate.token));
   };
+  const hostSnapshot = name => {
+    const report = state.hostReports[name];
+    const reportAt = Date.parse(state.reports[name]?.at ?? '');
+    const checkedAt = Date.parse(report?.checked_at ?? '');
+    const reportFresh = Number.isFinite(reportAt) && now() >= reportAt && now() - reportAt < 120000;
+    const scanFresh = Number.isFinite(checkedAt) && now() >= checkedAt && now() - checkedAt < 900000;
+    const current = Boolean(report && reportFresh && (scanFresh || report.state === 'unavailable'));
+    const assessed = !report ? 'unavailable' : !reportFresh ? 'stale'
+      : report.state === 'unavailable' || report.state === 'running' || report.state === 'idle' ? 'unavailable'
+      : scanFresh ? report.state : 'stale';
+    return { state: assessed,
+      checked_at: report?.checked_at ?? null, fresh: current, source: 'node-self-report',
+      counts: report?.counts ?? null };
+  };
   const status = () => ({
     generated_at: new Date(now()).toISOString(),
     nodes: Object.fromEntries(Object.entries(nodes).map(([name, config]) => [name, {
@@ -49,9 +66,26 @@ export function createMonitor({ nodes, readers, stateFile, now = () => Date.now(
       report_fresh: Boolean(state.reports[name]?.at && now() >= Date.parse(state.reports[name].at)
         && now() - Date.parse(state.reports[name].at) < 120000),
       baseline_files: Object.keys(config.baseline ?? {}).length,
+      host_scan: hostSnapshot(name),
     }])),
     events: state.events.slice(0, 40),
   });
+  const validateHostScan = (value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || !['ok', 'warning', 'finding', 'unavailable', 'running', 'idle'].includes(value.state)) throw Error('INVALID_HOST');
+    if (value.checked_at !== null && value.checked_at !== undefined) {
+      if (typeof value.checked_at !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|\+00:00)$/.test(value.checked_at)
+        || !Number.isFinite(Date.parse(value.checked_at)) || Date.parse(value.checked_at) > now() + 60000) throw Error('INVALID_HOST_TIME');
+    }
+    if (value.counts !== undefined) {
+      if (!value.counts || typeof value.counts !== 'object' || Array.isArray(value.counts)
+        || Object.keys(value.counts).sort().join(',') !== 'finding,ok,unavailable,warning'
+        || Object.values(value.counts).some(count => !Number.isSafeInteger(count) || count < 0 || count > 20)
+        || Object.values(value.counts).reduce((a, b) => a + b, 0) > 20) throw Error('INVALID_HOST_COUNTS');
+    }
+    if (['ok', 'warning', 'finding'].includes(value.state) && (!value.checked_at || !value.counts)) throw Error('INCOMPLETE_HOST');
+    return { state: value.state, checked_at: value.checked_at ?? null, counts: value.counts ?? null };
+  };
   async function runProbes() {
     await Promise.all(Object.entries(nodes).map(async ([name, config]) => {
       let result;
@@ -68,6 +102,11 @@ export function createMonitor({ nodes, readers, stateFile, now = () => Date.now(
         event('report.stale', name, state.reports[name]?.at ? 'report expired' : 'no report received');
       }
       state.reportFreshness[name] = fresh ? 'fresh' : 'stale';
+      const hostState = hostSnapshot(name).state;
+      if (hostState !== state.hostReportState[name]) {
+        event('host.' + hostState, name, 'node self-reported host scan no longer fresh');
+        state.hostReportState[name] = hostState;
+      }
     }
     persist();
     return status();
@@ -96,6 +135,8 @@ export function createMonitor({ nodes, readers, stateFile, now = () => Date.now(
         }
         const data = JSON.parse(text);
         if (!data || typeof data.files !== 'object' || Array.isArray(data.files)) throw Error('INVALID');
+        const host = data.host_scan === undefined ? { state: 'unavailable', checked_at: null, counts: null }
+          : validateHostScan(data.host_scan);
         const baseline = config.baseline ?? {};
         const missing = Object.keys(baseline).filter(path => !Object.hasOwn(data.files, path));
         const changed = Object.keys(baseline).filter(path => Object.hasOwn(data.files, path) && data.files[path] !== baseline[path]);
@@ -103,6 +144,16 @@ export function createMonitor({ nodes, readers, stateFile, now = () => Date.now(
         const check = { state: Object.keys(baseline).length ? (missing.length || changed.length || added.length ? 'changed' : 'matched') : 'unconfigured',
           at: new Date(now()).toISOString(), missing, changed, added };
         state.reports[name] = check;
+        state.hostReports[name] = host;
+        const hostState = hostSnapshot(name).state;
+        if (hostState !== state.hostReportState[name]) {
+          if (hostState === 'finding' || hostState === 'warning' || hostState === 'unavailable' || hostState === 'stale') {
+            event('host.' + hostState, name, 'node self-reported host scan; independent verification required');
+          } else if (state.hostReportState[name] && hostState === 'ok') {
+            event('host.resumed', name, 'node self-reported host scan recovered');
+          }
+          state.hostReportState[name] = hostState;
+        }
         if (state.reportFreshness[name] === 'stale') event('report.resumed', name, 'authenticated report received');
         state.reportFreshness[name] = 'fresh';
         if (check.state === 'changed') event('integrity.changed', name, { missing, changed, added });
