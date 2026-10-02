@@ -74,6 +74,6 @@ jq -n --arg product "$PRODUCT" --arg version "$VERSION" --arg tar_name "$TAR_NAM
   > "$OUTPUT/release-manifest.json"
 openssl pkeyutl -sign -inkey "$SIGNING_KEY" -rawin -in "$OUTPUT/release-manifest.json" \
   -out "$OUTPUT/release-manifest.json.sig"
-sha256sum "$OUTPUT/$TAR_NAME" > "$OUTPUT/$TAR_NAME.sha256"
-sha256sum "$OUTPUT/$RUN_NAME" > "$OUTPUT/$RUN_NAME.sha256"
+(cd "$OUTPUT" && sha256sum "$TAR_NAME" > "$TAR_NAME.sha256")
+(cd "$OUTPUT" && sha256sum "$RUN_NAME" > "$RUN_NAME.sha256")
 printf 'Release candidate v%s created in %s\n' "$VERSION" "$OUTPUT"
