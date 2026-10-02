@@ -10,3 +10,4 @@ config.json
 state.json
 node_modules/
 var/
+.codex/

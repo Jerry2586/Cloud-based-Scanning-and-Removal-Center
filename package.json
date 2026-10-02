@@ -1,8 +1,13 @@
 {
   "name": "appgog-cloud-security-center",
-  "version": "0.1.1",
+  "version": "0.1.5",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=24" },
-  "scripts": { "start": "node src/server.js", "test": "node --test" }
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  }
 }
