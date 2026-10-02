@@ -6,7 +6,7 @@ DEST=${2:-}
 CONF=${SECURITY_CONFIG_DIR:-/etc/appgog-security}
 case "$ROLE" in all) identities=(license-center:license build-center:build) ;; license) identities=(license-center:license) ;; build) identities=(build-center:build) ;; *) echo 'Usage: sudo export-business-bundle.sh all|license|build /root/new-private-bundle-directory' >&2; exit 2 ;; esac
 [[ $EUID -eq 0 && $DEST == /* && ! -e $DEST && -s $CONF/ca.crt ]] || { echo 'Root, a new absolute destination, and an installed CA are required' >&2; exit 2; }
-case "/$DEST/" in */./*|*/../*|//*) echo 'Unsafe export destination' >&2; exit 2 ;; esac
+case "$DEST" in *'/./'*|*'/../'*|*'//'*) echo 'Unsafe export destination' >&2; exit 2 ;; esac
 [[ $(realpath -m -- "$DEST") == "$DEST" && $DEST != / && $DEST != /root && $DEST != /etc && $DEST != /opt && $DEST != /var ]] \
   || { echo 'Unsafe export destination' >&2; exit 2; }
 for entry in "${identities[@]}"; do

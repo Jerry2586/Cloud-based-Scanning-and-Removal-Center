@@ -130,6 +130,10 @@ fi
 if SECURITY_CONFIG_DIR="$CONF" bash "$ROOT/scripts/export-business-bundle.sh" all /root >/dev/null 2>&1; then
   fail 'dangerous export destination was accepted'
 fi
+if SECURITY_CONFIG_DIR="$CONF" bash "$ROOT/scripts/export-business-bundle.sh" all \
+  "$WORK//duplicate-separator" >/dev/null 2>&1; then
+  fail 'non-canonical export destination was accepted'
+fi
 
 for role in reader license-center build-center; do
   old_fp=$(jq -r "if \"$role\" == \"reader\" then .readers[0].identities[0].fingerprint256 else .nodes[\"$role\"].identities[0].fingerprint256 end" "$CONF/config.json")
