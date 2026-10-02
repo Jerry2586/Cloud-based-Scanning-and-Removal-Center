@@ -178,14 +178,24 @@ elif ! id "$SERVICE_USER" >/dev/null 2>&1; then
 fi
 SERVICE_GROUP=$(id -gn "$SERVICE_USER")
 
-health_check() {
+health_check() (
+  local token curl_config=''
+  trap '[[ -z $curl_config ]] || rm -f -- "$curl_config"' EXIT
   if [[ -n ${SECURITY_HEALTHCHECK_CMD:-} ]]; then "$SECURITY_HEALTHCHECK_CMD"; return; fi
   "$SYSTEMCTL" is-active "$SERVICE" >/dev/null 2>&1 || return 1
-  token=$(cat "$CONF/credentials/reader.token")
-  curl -fsS --max-time 4 --resolve "$HOST:9443:127.0.0.1" --cacert "$CONF/ca.crt" \
-    --cert "$CONF/credentials/reader.crt" --key "$CONF/credentials/reader.key" \
-    -H "Authorization: Bearer $token" "https://$HOST:9443/v1/status" >/dev/null
-}
+  token=$(<"$CONF/credentials/reader.token")
+  curl_config=$(mktemp "$CONF/health.curl.XXXXXX")
+  chmod 600 "$curl_config"
+  printf '%s\n' \
+    'silent' 'show-error' 'fail' 'max-time = 4' \
+    "resolve = \"$HOST:9443:127.0.0.1\"" \
+    "cacert = \"$CONF/ca.crt\"" \
+    "cert = \"$CONF/credentials/reader.crt\"" \
+    "key = \"$CONF/credentials/reader.key\"" \
+    "header = \"Authorization: Bearer $token\"" \
+    "url = \"https://$HOST:9443/v1/status\"" > "$curl_config"
+  curl --config "$curl_config" >/dev/null
+)
 
 RELEASE="$BASE/releases/$VERSION"
 if [[ -e $RELEASE ]]; then

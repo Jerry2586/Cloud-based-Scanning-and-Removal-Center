@@ -10,6 +10,37 @@ mkdir -p "$CONF/credentials" "$WORK/bin"
 
 fail() { echo "identity script test failed: $*" >&2; exit 1; }
 assert_jq() { jq -e "$1" "$2" >/dev/null || fail "$3"; }
+assert_no_business_secrets() {
+  local config_dir=$1 role suffix
+  for role in license-center build-center; do
+    for suffix in key csr crt token; do
+      [[ ! -e $config_dir/credentials/$role.$suffix ]] \
+        || fail "$role one-time export retained cloud $suffix"
+    done
+  done
+}
+
+if grep -R -nE -- '"token"[[:space:]]*:' "$ROOT/scripts" "$ROOT/src" >/dev/null; then
+  fail 'production source writes a plaintext token field'
+fi
+if grep -R -nE -- 'jq([^[:alnum:]_]|$).*--arg[[:space:]]+token([[:space:]]|$)' "$ROOT/scripts" >/dev/null; then
+  fail 'production source passes a plaintext token into jq configuration output'
+fi
+if grep -R -nE -- 'curl.*(-H|--header).*Authorization:[[:space:]]*Bearer' "$ROOT/scripts" >/dev/null; then
+  fail 'production source exposes a bearer token in curl process arguments'
+fi
+for contract in \
+  'scripts/install-linux.sh:health_check' \
+  'scripts/appgog-security.sh:nodes'; do
+  file=${contract%%:*}; function_name=${contract#*:}
+  function_source=$(sed -n "/^${function_name}() (/ ,/^)/p" "$ROOT/$file")
+  grep -F 'chmod 600 "$curl_config"' <<<"$function_source" >/dev/null \
+    || fail "$function_name does not protect its temporary curl configuration"
+  grep -E 'trap .*rm -f -- .*curl_config' <<<"$function_source" >/dev/null \
+    || fail "$function_name does not clean its temporary curl configuration on every exit"
+  grep -F 'curl --config "$curl_config"' <<<"$function_source" >/dev/null \
+    || fail "$function_name does not keep bearer credentials out of curl arguments"
+done
 
 openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 30 -subj '/CN=test-ca' \
   -keyout "$CONF/ca.key" -out "$CONF/ca.crt" >/dev/null 2>&1
@@ -20,15 +51,17 @@ openssl x509 -req -in "$CONF/credentials/reader.csr" -CA "$CONF/ca.crt" -CAkey "
 openssl rand -hex 32 > "$CONF/credentials/reader.token"
 FP=$(openssl x509 -in "$CONF/credentials/reader.crt" -noout -fingerprint -sha256 | cut -d= -f2)
 TOKEN=$(cat "$CONF/credentials/reader.token")
+TOKEN_DIGEST=$(printf '%s' "$TOKEN" | sha256sum | awk '{print $1}')
 
 source "$ROOT/scripts/lib/identity-config.sh"
 
 printf '{"nodes":{},"readers":[],"policy":{"rules":{"require_signed_updates":false,"allow_remote_commands":true,"allow_cloud_push":true}}}\n' > "$CONF/empty.json"
 appgog_normalize_reader_config "$CONF/empty.json" "$CONF/credentials/reader.crt" \
   "$CONF/credentials/reader.token" > "$CONF/empty.normalized.json"
-jq -e --arg fp "$FP" --arg token "$TOKEN" '
+jq -e --arg fp "$FP" --arg digest "$TOKEN_DIGEST" '
   .readers[0].role == "reader" and .readers[0].identities[0].fingerprint256 == $fp and
-  .readers[0].identities[0].token == $token and .readers[0].identities[0].status == "active" and
+  .readers[0].identities[0].token_sha256 == $digest and
+  (.readers[0].identities[0] | has("token") | not) and .readers[0].identities[0].status == "active" and
   (.readers[0].identities[0].issued_at | type == "string") and
   (.readers[0].identities[0].cert_not_after | type == "string") and
   .policy.rules.require_signed_updates == true and .policy.rules.allow_remote_commands == false and
@@ -36,11 +69,16 @@ jq -e --arg fp "$FP" --arg token "$TOKEN" '
 ' "$CONF/empty.normalized.json" >/dev/null || fail 'empty readers were not repaired'
 
 jq -n --arg fp "$FP" --arg token "$TOKEN" \
-  '{nodes:{},readers:[{fingerprint256:$fp,token:$token}]}' > "$CONF/legacy.json"
+  '{nodes:{"license-center":{role:"license-center",identities:[{fingerprint256:"AA",token:$token,status:"active"}]}},
+    readers:[{fingerprint256:$fp,token:$token}]}' > "$CONF/legacy.json"
 appgog_normalize_reader_config "$CONF/legacy.json" "$CONF/credentials/reader.crt" \
   "$CONF/credentials/reader.token" > "$CONF/legacy.normalized.json"
-jq -e '(.readers[0] | has("fingerprint256") | not) and (.readers[0] | has("token") | not) and
-  (.readers[0].identities | length == 1)' "$CONF/legacy.normalized.json" >/dev/null || fail 'legacy reader was not migrated'
+jq -e --arg digest "$TOKEN_DIGEST" '
+  (.readers[0] | has("fingerprint256") | not) and (.readers[0] | has("token") | not) and
+  (.readers[0].identities | length == 1) and .readers[0].identities[0].token_sha256 == $digest and
+  .nodes["license-center"].identities[0].token_sha256 == $digest and
+  ([.. | objects | select(has("token"))] | length == 0)
+' "$CONF/legacy.normalized.json" >/dev/null || fail 'legacy plaintext tokens were not migrated to digests'
 
 jq -n '{nodes:{},readers:[{role:"reader",identities:[{fingerprint256:"AA",token:"bad",status:"active"}]}]}' \
   > "$CONF/mismatch.json"
@@ -97,15 +135,26 @@ for role in license-center build-center; do
     "https://$role.example.test/health" "$WORK/baseline.json" >/dev/null
   assert_jq ".nodes[\"$role\"].role == \"$role\" and (.nodes[\"$role\"].identities | length == 1)" \
     "$CONF/config.json" "$role enrollment failed"
+  assert_jq ".nodes[\"$role\"].identities[0].token_sha256 == \"$(appgog_token_digest "$CONF/credentials/$role.token")\" and
+    (.nodes[\"$role\"].identities[0] | has(\"token\") | not)" "$CONF/config.json" \
+    "$role enrollment stored a plaintext or mismatched token"
 done
 
+cp -a "$CONF" "$WORK/export-source"
 for profile in all license build; do
   destination="$WORK/export-$profile"
-  SECURITY_CONFIG_DIR="$CONF" bash "$ROOT/scripts/export-business-bundle.sh" "$profile" "$destination" >/dev/null
+  profile_conf=$CONF
+  if [[ $profile != all ]]; then
+    profile_conf="$WORK/export-config-$profile"
+    mkdir -p "$profile_conf"
+    cp -a "$WORK/export-source/." "$profile_conf/"
+  fi
+  SECURITY_CONFIG_DIR="$profile_conf" bash "$ROOT/scripts/export-business-bundle.sh" "$profile" "$destination" >/dev/null
   [[ -s $destination/ca.crt && -s $destination/bundle.json ]] || fail "$profile export is incomplete"
   [[ ! -e $destination/ca.key && ! -e $destination/reader.crt && ! -e $destination/reader.key \
     && ! -e $destination/reader.token ]] || fail "$profile export leaked cloud or reader credentials"
-  assert_jq ".profile == \"$profile\" and .ca_sha256_fingerprint == \"$(openssl x509 -in "$CONF/ca.crt" -noout -fingerprint -sha256 | cut -d= -f2)\"" \
+  assert_jq ".profile == \"$profile\" and .one_time_export == true and
+    .ca_sha256_fingerprint == \"$(openssl x509 -in "$CONF/ca.crt" -noout -fingerprint -sha256 | cut -d= -f2)\"" \
     "$destination/bundle.json" "$profile bundle metadata is invalid"
 done
 jq -e '.roles == ["license","build"]' "$WORK/export-all/bundle.json" >/dev/null \
@@ -117,6 +166,18 @@ jq -e '.roles == ["build"]' "$WORK/export-build/bundle.json" >/dev/null \
 [[ -s $WORK/export-all/license.key && -s $WORK/export-all/build.key ]] || fail 'all export missed a business identity'
 [[ -s $WORK/export-license/license.key && ! -e $WORK/export-license/build.key ]] || fail 'license export crossed role boundary'
 [[ -s $WORK/export-build/build.key && ! -e $WORK/export-build/license.key ]] || fail 'build export crossed role boundary'
+for role in license-center build-center; do
+  for suffix in key csr crt token; do
+    [[ ! -e $CONF/credentials/$role.$suffix ]] || fail "one-time export retained cloud $role.$suffix"
+  done
+done
+config_hash=$(sha256sum "$CONF/config.json" | awk '{print $1}')
+if SECURITY_CONFIG_DIR="$CONF" bash "$ROOT/scripts/export-business-bundle.sh" all \
+  "$WORK/export-all-again" >/dev/null 2>&1; then
+  fail 'one-time business identities were exported twice'
+fi
+[[ $(sha256sum "$CONF/config.json" | awk '{print $1}') == "$config_hash" ]] \
+  || fail 'rejected repeat export changed configuration'
 
 mkdir -p "$WORK/existing-export"
 if SECURITY_CONFIG_DIR="$CONF" bash "$ROOT/scripts/export-business-bundle.sh" all \
@@ -164,6 +225,11 @@ for role in reader license-center build-center; do
     (.readers[0].identities | length == 2) and (.readers[0].identities | any(.status == \"staged\"))
     else (.nodes[\"$role\"].identities | length == 2) and (.nodes[\"$role\"].identities | any(.status == \"staged\")) end" \
     "$CONF/config.json" >/dev/null || fail "$role stage failed"
+  next_digest=$(appgog_token_digest "$CONF/credentials/$role.next.token")
+  jq -e --arg role "$role" --arg digest "$next_digest" '
+    (if $role == "reader" then .readers[0].identities else .nodes[$role].identities end) as $ids |
+    ([$ids[] | select(.status == "staged" and .token_sha256 == $digest and (has("token") | not))] | length == 1)
+  ' "$CONF/config.json" >/dev/null || fail "$role staged token digest is invalid"
 
   staged_hash=$(sha256sum "$CONF/config.json" | awk '{print $1}')
   if SECURITY_CONFIG_DIR="$CONF" bash "$ROOT/scripts/rotate-identity.sh" stage "$role" >/dev/null 2>&1; then
@@ -172,9 +238,10 @@ for role in reader license-center build-center; do
   [[ $(sha256sum "$CONF/config.json" | awk '{print $1}') == "$staged_hash" ]] || fail "$role second stage changed configuration"
 
   cp "$CONF/config.json" "$WORK/$role.clean.json"
-  active_hash=$(sha256sum "$CONF/credentials/$role.key" "$CONF/credentials/$role.crt" \
-    "$CONF/credentials/$role.token" | sha256sum | awk '{print $1}')
+  active_hash=''
   if [[ $role == reader ]]; then
+    active_hash=$(sha256sum "$CONF/credentials/$role.key" "$CONF/credentials/$role.crt" \
+      "$CONF/credentials/$role.token" | sha256sum | awk '{print $1}')
     touch "$WORK/systemctl-fail-once"
     if SYSTEMCTL_FAIL_ONCE_FILE="$WORK/systemctl-fail-once" SECURITY_CONFIG_DIR="$CONF" \
       bash "$ROOT/scripts/rotate-identity.sh" commit "$role" >/dev/null 2>&1; then
@@ -185,6 +252,10 @@ for role in reader license-center build-center; do
       "$CONF/credentials/$role.token" | sha256sum | awk '{print $1}') == "$active_hash" ]] || fail 'commit restart failure changed active credentials'
     for suffix in key csr crt token; do
       [[ -f $CONF/credentials/$role.next.$suffix ]] || fail "commit restart failure removed .next.$suffix"
+    done
+  else
+    for suffix in key csr crt token; do
+      [[ ! -e $CONF/credentials/$role.$suffix ]] || fail "$role retained a long-lived cloud $suffix before rotation"
     done
   fi
 
@@ -201,14 +272,17 @@ for role in reader license-center build-center; do
     fail "$role commit accepted a mismatched staged fingerprint"
   fi
   [[ $(sha256sum "$CONF/config.json" | awk '{print $1}') == "$mismatch_hash" ]] || fail "$role failed fingerprint commit changed configuration"
-  [[ $(sha256sum "$CONF/credentials/$role.key" "$CONF/credentials/$role.crt" \
-    "$CONF/credentials/$role.token" | sha256sum | awk '{print $1}') == "$active_hash" ]] || fail "$role failed fingerprint commit changed active credentials"
+  if [[ $role == reader ]]; then
+    [[ $(sha256sum "$CONF/credentials/$role.key" "$CONF/credentials/$role.crt" \
+      "$CONF/credentials/$role.token" | sha256sum | awk '{print $1}') == "$active_hash" ]] \
+      || fail "$role failed fingerprint commit changed active credentials"
+  fi
 
-  jq --arg role "$role" --arg token "$(printf 'f%.0s' {1..64})" '
+  jq --arg role "$role" --arg digest "$(printf 'f%.0s' {1..64})" '
     if $role == "reader" then
-      .readers[0].identities |= map(if .status == "staged" then .token = $token else . end)
+      .readers[0].identities |= map(if .status == "staged" then .token_sha256 = $digest else . end)
     else
-      .nodes[$role].identities |= map(if .status == "staged" then .token = $token else . end)
+      .nodes[$role].identities |= map(if .status == "staged" then .token_sha256 = $digest else . end)
     end
   ' "$WORK/$role.clean.json" > "$CONF/config.json"
   mismatch_hash=$(sha256sum "$CONF/config.json" | awk '{print $1}')
@@ -216,8 +290,11 @@ for role in reader license-center build-center; do
     fail "$role commit accepted a mismatched staged token"
   fi
   [[ $(sha256sum "$CONF/config.json" | awk '{print $1}') == "$mismatch_hash" ]] || fail "$role failed token commit changed configuration"
-  [[ $(sha256sum "$CONF/credentials/$role.key" "$CONF/credentials/$role.crt" \
-    "$CONF/credentials/$role.token" | sha256sum | awk '{print $1}') == "$active_hash" ]] || fail "$role failed token commit changed active credentials"
+  if [[ $role == reader ]]; then
+    [[ $(sha256sum "$CONF/credentials/$role.key" "$CONF/credentials/$role.crt" \
+      "$CONF/credentials/$role.token" | sha256sum | awk '{print $1}') == "$active_hash" ]] \
+      || fail "$role failed token commit changed active credentials"
+  fi
 
   cp "$WORK/$role.clean.json" "$CONF/config.json"
   SECURITY_CONFIG_DIR="$CONF" bash "$ROOT/scripts/rotate-identity.sh" commit "$role" >/dev/null
@@ -227,8 +304,14 @@ for role in reader license-center build-center; do
     else (.nodes[\"$role\"].identities | length == 1) and (.nodes[\"$role\"].identities[0].status == \"active\") and
       (.nodes[\"$role\"].identities | all(.fingerprint256 != \$old)) end" \
     "$CONF/config.json" >/dev/null || fail "$role commit did not revoke the old identity"
-  [[ $(stat -c %a "$CONF/credentials/$role.key") == 600 ]] || fail "$role key permissions are not 600"
-  [[ $(stat -c %a "$CONF/credentials/$role.token") == 600 ]] || fail "$role token permissions are not 600"
+  if [[ $role == reader ]]; then
+    [[ $(stat -c %a "$CONF/credentials/$role.key") == 600 ]] || fail "$role key permissions are not 600"
+    [[ $(stat -c %a "$CONF/credentials/$role.token") == 600 ]] || fail "$role token permissions are not 600"
+  else
+    for suffix in key csr crt token; do
+      [[ ! -e $CONF/credentials/$role.$suffix ]] || fail "$role commit retained cloud $suffix"
+    done
+  fi
   compgen -G "$CONF/credentials/$role.next.*" >/dev/null && fail "$role commit left next artifacts"
 done
 
@@ -257,6 +340,9 @@ assert_jq '(.nodes | keys | sort) == ["build-center","license-center"]' \
   "$SETUP_CONF/config.json" 'shared setup did not register both roles'
 [[ -s $WORK/setup-shared-export/license.key && -s $WORK/setup-shared-export/build.key ]] \
   || fail 'shared setup did not export both business identities'
+assert_jq '.profile == "all" and .one_time_export == true and (.roles | sort) == ["build","license"]' \
+  "$WORK/setup-shared-export/bundle.json" 'shared setup bundle is not a one-time all-role export'
+assert_no_business_secrets "$SETUP_CONF"
 setup_hash=$(sha256sum "$SETUP_CONF/config.json" | awk '{print $1}')
 if run_setup shared https://license.example.test/health "$WORK/baseline.json" \
   https://build.example.test/health "$WORK/baseline.json" "$WORK/setup-duplicate-export" >/dev/null 2>&1; then
@@ -306,5 +392,32 @@ run_setup separate https://license.example.test/health "$WORK/baseline.json" \
   && -s $WORK/setup-separate-export/build-center/build.key \
   && ! -e $WORK/setup-separate-export/build-center/license.key ]] \
   || fail 'separate setup crossed or omitted business identities'
+assert_jq '.profile == "license" and .one_time_export == true and .roles == ["license"]' \
+  "$WORK/setup-separate-export/license-center/bundle.json" 'separate license bundle metadata is invalid'
+assert_jq '.profile == "build" and .one_time_export == true and .roles == ["build"]' \
+  "$WORK/setup-separate-export/build-center/bundle.json" 'separate build bundle metadata is invalid'
+assert_no_business_secrets "$SETUP_CONF"
+
+printf 'SECURITY_PUBLIC_HOST=security.example.test\n' > "$SETUP_CONF/install.env"
+printf '#!/usr/bin/env bash\nset -euo pipefail\n[[ ${1:-} == --config && -f ${2:-} ]] || exit 11\nprintf "%%s\\n" "$(stat -c %%a "$2")" > "$CURL_MODE_FILE"\nprintf "%%s\\n" "$2" > "$CURL_PATH_FILE"\ngrep -q "^header = \\"Authorization: Bearer " "$2" || exit 12\nfor argument in "$@"; do [[ $argument != *"Authorization: Bearer"* ]] || exit 13; done\n[[ ${CURL_SHOULD_FAIL:-false} != true ]] || exit 22\nprintf "%%s\\n" '\''{"deployment":{"state":"ready","configured_roles":[],"required_roles":[],"connected_roles":[]},"nodes":{}}'\''\n' > "$WORK/bin/curl"
+chmod +x "$WORK/bin/curl"
+
+CURL_MODE_FILE="$WORK/curl-mode" CURL_PATH_FILE="$WORK/curl-path" \
+  SECURITY_INSTALL_DIR="$SETUP_BASE" SECURITY_CONFIG_DIR="$SETUP_CONF" SECURITY_DATA_DIR="$SETUP_DATA" \
+  SECURITY_SYSTEMD_DIR="$SETUP_SYSTEMD" SECURITY_BIN_DIR="$SETUP_BIN" SECURITY_SYSTEMCTL=systemctl \
+  SECURITY_SERVICE_NAME=appgog-security-test.service \
+  bash "$ROOT/scripts/appgog-security.sh" nodes >/dev/null
+[[ $(cat "$WORK/curl-mode") == 600 ]] || fail 'nodes curl configuration permissions are not 600'
+[[ ! -e $(cat "$WORK/curl-path") ]] || fail 'nodes retained its curl configuration after success'
+
+if CURL_SHOULD_FAIL=true CURL_MODE_FILE="$WORK/curl-mode-fail" CURL_PATH_FILE="$WORK/curl-path-fail" \
+  SECURITY_INSTALL_DIR="$SETUP_BASE" SECURITY_CONFIG_DIR="$SETUP_CONF" SECURITY_DATA_DIR="$SETUP_DATA" \
+  SECURITY_SYSTEMD_DIR="$SETUP_SYSTEMD" SECURITY_BIN_DIR="$SETUP_BIN" SECURITY_SYSTEMCTL=systemctl \
+  SECURITY_SERVICE_NAME=appgog-security-test.service \
+  bash "$ROOT/scripts/appgog-security.sh" nodes >/dev/null 2>&1; then
+  fail 'nodes accepted a failed authenticated status request'
+fi
+[[ $(cat "$WORK/curl-mode-fail") == 600 ]] || fail 'failed nodes curl configuration permissions are not 600'
+[[ ! -e $(cat "$WORK/curl-path-fail") ]] || fail 'nodes retained its curl configuration after failure'
 
 echo 'Identity migration, enrollment, and rotation tests passed.'

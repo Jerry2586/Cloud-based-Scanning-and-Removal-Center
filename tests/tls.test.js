@@ -6,11 +6,12 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createServer, request as httpsRequest } from 'node:https';
-import { X509Certificate } from 'node:crypto';
+import { createHash, X509Certificate } from 'node:crypto';
 import { createMonitor } from '../src/monitor.js';
 
 const binary = process.platform === 'win32' ? 'C:/Program Files/Git/usr/bin/openssl.exe' : 'openssl';
 const available = spawnSync(binary, ['version']).status === 0;
+const tokenDigest = value => createHash('sha256').update(value).digest('hex');
 const openssl = (cwd, ...args) => {
   const result = spawnSync(binary, args, { cwd, encoding: 'utf8' });
   if (result.status !== 0) throw Error(result.stderr);
@@ -45,44 +46,47 @@ test('actual mutual TLS: valid identity, wrong token, missing certificate, wrong
     const ca = readFileSync(join(dir, 'ca.crt'));
     const cert = readFileSync(join(dir, 'client.crt'));
     const key = readFileSync(join(dir, 'client.key'));
-    const reader = { token: 'r'.repeat(40), fingerprint256: new X509Certificate(cert).fingerprint256 };
+    let readerToken = 'r'.repeat(40);
+    const reader = { token_sha256: tokenDigest(readerToken), fingerprint256: new X509Certificate(cert).fingerprint256 };
     const monitor = createMonitor({ nodes: {}, readers: [reader] });
     server = createServer({ key: readFileSync(join(dir, 'server.key')), cert: readFileSync(join(dir, 'server.crt')),
       ca, requestCert: true, rejectUnauthorized: true }, monitor.handler);
     await new Promise(resolve => server.listen(0, resolve));
     const port = server.address().port;
-    assert.equal((await request(port, { ca, cert, key, token: reader.token })).status, 200);
+    assert.equal((await request(port, { ca, cert, key, token: readerToken })).status, 200);
     const ipStatus = await new Promise((resolve, reject) => {
       const req = httpsRequest(`https://127.0.0.1:${port}/v1/status`, { ca, cert, key,
-        headers: { authorization: `Bearer ${reader.token}` } }, res => {
+        headers: { authorization: `Bearer ${readerToken}` } }, res => {
         res.resume(); res.on('end', () => resolve(res.statusCode));
       });
       req.on('error', reject); req.end();
     });
     assert.equal(ipStatus, 200);
     assert.equal((await request(port, { ca, cert, key, token: 'invalid' })).status, 403);
-    await assert.rejects(request(port, { ca, token: reader.token }), /certificate|alert|handshake/i);
-    await assert.rejects(request(port, { ca: cert, cert, key, token: reader.token }), /certificate|verify|issuer/i);
+    await assert.rejects(request(port, { ca, token: readerToken }), /certificate|alert|handshake/i);
+    await assert.rejects(request(port, { ca: cert, cert, key, token: readerToken }), /certificate|verify|issuer/i);
     await assert.rejects(new Promise((resolve, reject) => {
-      const req = httpsRequest(`https://localhost:${port}/v1/status`, { ca, cert, key, servername: 'wrong.example', headers: { authorization: `Bearer ${reader.token}` } }, resolve);
+      const req = httpsRequest(`https://localhost:${port}/v1/status`, { ca, cert, key, servername: 'wrong.example', headers: { authorization: `Bearer ${readerToken}` } }, resolve);
       req.on('error', reject); req.end();
     }), /altname|hostname|ip address/i);
-    reader.token = 's'.repeat(40);
+    readerToken = 's'.repeat(40);
+    reader.token_sha256 = tokenDigest(readerToken);
     assert.equal((await request(port, { ca, cert, key, token: 'r'.repeat(40) })).status, 403);
-    assert.equal((await request(port, { ca, cert, key, token: reader.token })).status, 200);
+    assert.equal((await request(port, { ca, cert, key, token: readerToken })).status, 200);
 
     openssl(dir, 'req', '-newkey', 'rsa:2048', '-nodes', '-keyout', 'rotated.key', '-out', 'rotated.csr', '-subj', '/CN=rotated-reader');
     openssl(dir, 'x509', '-req', '-in', 'rotated.csr', '-CA', 'ca.crt', '-CAkey', 'ca.key', '-CAcreateserial', '-out', 'rotated.crt', '-days', '1');
     const rotatedCert = readFileSync(join(dir, 'rotated.crt'));
     const rotatedKey = readFileSync(join(dir, 'rotated.key'));
-    reader.identities = [{ fingerprint256: reader.fingerprint256, token: reader.token },
-      { fingerprint256: new X509Certificate(rotatedCert).fingerprint256, token: 'rotated'.repeat(8) }];
-    assert.equal((await request(port, { ca, cert, key, token: reader.token })).status, 200);
+    const rotatedToken = 'rotated'.repeat(8);
+    reader.identities = [{ fingerprint256: reader.fingerprint256, token_sha256: tokenDigest(readerToken) },
+      { fingerprint256: new X509Certificate(rotatedCert).fingerprint256, token_sha256: tokenDigest(rotatedToken) }];
+    assert.equal((await request(port, { ca, cert, key, token: readerToken })).status, 200);
 
-    assert.equal((await request(port, { ca, cert: rotatedCert, key: rotatedKey, token: 'rotated'.repeat(8) })).status, 200);
+    assert.equal((await request(port, { ca, cert: rotatedCert, key: rotatedKey, token: rotatedToken })).status, 200);
     reader.identities.shift();
-    assert.equal((await request(port, { ca, cert, key, token: reader.token })).status, 403);
-    assert.equal((await request(port, { ca, cert: rotatedCert, key: rotatedKey, token: 'rotated'.repeat(8) })).status, 200);
+    assert.equal((await request(port, { ca, cert, key, token: readerToken })).status, 403);
+    assert.equal((await request(port, { ca, cert: rotatedCert, key: rotatedKey, token: rotatedToken })).status, 200);
   } finally {
     if (server) await new Promise(resolve => server.close(resolve));
     rmSync(dir, { recursive: true, force: true });
@@ -108,10 +112,11 @@ test('reader and two reporting nodes cannot impersonate each other across TLS id
     }
     const nodes = {};
     for (const name of ['license-center', 'build-center']) {
-      nodes[name] = { fingerprint256: identities[name].fingerprint256, token: identities[name].token,
+      nodes[name] = { fingerprint256: identities[name].fingerprint256, token_sha256: tokenDigest(identities[name].token),
         baseline: { 'apps/app.js': 'a'.repeat(64) } };
     }
-    const monitor = createMonitor({ nodes, readers: [identities.reader] });
+    const monitor = createMonitor({ nodes, readers: [{ fingerprint256: identities.reader.fingerprint256,
+      token_sha256: tokenDigest(identities.reader.token) }] });
     server = createServer({ key: readFileSync(join(dir, 'server.key')), cert: readFileSync(join(dir, 'server.crt')),
       ca, requestCert: true, rejectUnauthorized: true }, monitor.handler);
     await new Promise(resolve => server.listen(0, resolve));
@@ -167,9 +172,10 @@ test('reader and two reporting nodes cannot impersonate each other across TLS id
       assert.equal((await cloudSecurityStatus(envFor('reader'))).connected, true);
       assert.equal((await sendReport(envFor('build-center'))).state, 'matched');
     }
-    nodes['license-center'].token = 'rotated-license-token-'.repeat(3);
+    const rotatedLicenseToken = 'rotated-license-token-'.repeat(3);
+    nodes['license-center'].token_sha256 = tokenDigest(rotatedLicenseToken);
     assert.equal((await request(port, { ...identities['license-center'], ...report })).status, 403);
-    assert.equal((await request(port, { ...identities['license-center'], token: nodes['license-center'].token, ...report })).status, 200);
+    assert.equal((await request(port, { ...identities['license-center'], token: rotatedLicenseToken, ...report })).status, 200);
   } finally {
     if (server) await new Promise(resolve => server.close(resolve));
     rmSync(dir, { recursive: true, force: true });

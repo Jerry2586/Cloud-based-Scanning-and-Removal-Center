@@ -74,9 +74,10 @@ uninstall_program() {
 }
 logs() { "$SYSTEMCTL" status "$SERVICE" --no-pager || true; journalctl -u "$SERVICE" -n "${1:-100}" --no-pager; }
 
-nodes() {
+nodes() (
   need_root
-  local host token curl_config response
+  local host token curl_config='' response
+  trap '[[ -z $curl_config ]] || rm -f -- "$curl_config"' EXIT
   host=$(sed -n 's/^SECURITY_PUBLIC_HOST=//p' "$CONF/install.env" 2>/dev/null | head -n 1)
   [[ -n $host && -s $CONF/credentials/reader.crt && -s $CONF/credentials/reader.key \
     && -s $CONF/credentials/reader.token && -s $CONF/ca.crt ]] \
@@ -93,17 +94,15 @@ nodes() {
     "resolve = \"$host:9443:127.0.0.1\"" \
     "url = \"https://$host:9443/v1/status\"" > "$curl_config"
   if ! response=$(curl --config "$curl_config"); then
-    rm -f -- "$curl_config"
     echo '无法读取本机安全状态 API。' >&2
     return 1
   fi
-  rm -f -- "$curl_config"
   jq -r '
     "部署状态：\(.deployment.state)｜已注册 \(.deployment.configured_roles | length)/\(.deployment.required_roles | length)｜已认证连接 \(.deployment.connected_roles | length)",
     (.nodes | to_entries[] |
       "- \(if .key == "license-center" then "授权中心" else "打包中心" end)：注册=\(.value.configured)｜配对=\(.value.pairing_state)｜探测=\(.value.probe.state)｜完整性=\(.value.integrity.state)｜证书=\(.value.certificate_state)｜建议=\(.value.recommended_action)")
   ' <<<"$response"
-}
+)
 
 enroll_node() {
   need_root

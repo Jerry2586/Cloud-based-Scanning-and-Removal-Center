@@ -59,6 +59,8 @@ sudo appgog-security
 
 首次配对前，从服务器控制台独立记录安装器输出的 CA SHA-256 指纹，业务机连接时必须核对。安装成功只证明云端本机通过认证健康检查，不代表授权/打包节点已配对，也不代表双机或三机容灾演练已经完成。
 
+身份配置只保存令牌的 SHA-256 摘要，不保存授权中心、打包中心或 reader 的明文令牌。服务启动时会拒绝明文令牌字段、非法摘要、重复令牌摘要和重复证书指纹。授权中心和打包中心的身份包各自只能成功导出一次；导出完成后，云端立即删除对应业务私钥、CSR、客户端证书和原始令牌。reader 是安全服务器本机管理面板使用的长期身份，因此继续保留在本机；业务身份轮换只有在新身份完成部署并执行 `commit` 后才生效，提交完成会清除业务身份的当前秘密和 `.next.*` 暂存秘密。
+
 网页只读面板地址固定为 `https://HOST:9443/dashboard`。它显示节点注册、认证连接、报告新鲜度、文件完整性、宿主检查、证书状态和安全事件，不提供远程终端、远程删除或云端主动修复。页面使用 reader 客户端证书与独立 Basic 凭据双重认证；reader 身份只交付管理员浏览器，绝不能复制到授权或打包业务服务器。
 
 小白操作顺序只有三步：
@@ -167,7 +169,7 @@ sudo openssl pkcs12 -export \
 
 云端与业务端的边界是 **Pull-only + 本地处置**：云端只接收经过 mTLS 与独立令牌认证的报告、执行公网探测、保存审计事件并发布只读安全策略。安全服务器不得保存业务服务器 SSH 私钥，不得挂载业务 Docker Socket，不提供任意命令、任意路径扫描、远程删除或主动推送修复能力。隔离可疑容器、恢复可信镜像、断网自治、回滚与文件修复必须由业务服务器上的本地代理按本地批准策略执行。即使云端被攻破，也不能因此直接取得业务服务器命令执行权。
 
-策略校验固定拒绝未签名更新、远程命令和云端主动推送；配置中出现重复令牌、重复证书指纹、未知角色、非 HTTPS 健康地址、带用户名/密码的健康地址、非法摘要或不完整轮换状态时，服务拒绝启动。
+策略校验固定拒绝未签名更新、远程命令和云端主动推送；配置中出现重复令牌摘要、重复证书指纹、未知角色、非 HTTPS 健康地址、带用户名/密码的健康地址、非法摘要或不完整轮换状态时，服务拒绝启动。
 
 ## 手动部署到独立安全服务器
 
@@ -194,11 +196,24 @@ sudo systemctl status appgog-security.service --no-pager
 ```sh
 CONF=/etc/appgog-security
 TOKEN=$(sudo cat "$CONF/credentials/reader.token")
-sudo curl --fail-with-body --cacert "$CONF/ca.crt" \
-  --cert "$CONF/credentials/reader.crt" --key "$CONF/credentials/reader.key" \
-  -H "Authorization: Bearer $TOKEN" \
-  "https://SERVER_IP:9443/v1/status"
-unset TOKEN
+CURL_CONFIG=$(sudo mktemp "$CONF/manual-status.curl.XXXXXX")
+cleanup_status_check() {
+  sudo rm -f -- "$CURL_CONFIG"
+  unset TOKEN CURL_CONFIG
+}
+trap cleanup_status_check EXIT INT TERM
+sudo chmod 600 "$CURL_CONFIG"
+sudo tee "$CURL_CONFIG" >/dev/null <<EOF
+fail-with-body
+cacert = "$CONF/ca.crt"
+cert = "$CONF/credentials/reader.crt"
+key = "$CONF/credentials/reader.key"
+header = "Authorization: Bearer $TOKEN"
+url = "https://SERVER_IP:9443/v1/status"
+EOF
+sudo curl --config "$CURL_CONFIG"
+cleanup_status_check
+trap - EXIT INT TERM
 ```
 
 从业务服务器访问时，还须放通安全服务器入站 TCP 9443，并在业务服务器上完成身份包配置；仅本机状态正常不等于业务认证连通。不要把 `/etc/appgog-security` 下的私钥、令牌或 CA 私钥提交到 Git。

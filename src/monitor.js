@@ -72,7 +72,7 @@ export function validateConfiguration(config) {
   if (!nodes || typeof nodes !== 'object' || Array.isArray(nodes)) throw Error('Nodes must be an object');
   if (!Array.isArray(readers) || readers.length !== 1) throw Error('Exactly one reader subject is required');
   const fingerprints = new Set();
-  const tokens = new Set();
+  const tokenDigests = new Set();
   const validateSubject = (subject, expectedRole) => {
     if (!subject || typeof subject !== 'object' || Array.isArray(subject)
       || (subject.role ?? expectedRole) !== expectedRole) throw Error(`Invalid identity subject for ${expectedRole}`);
@@ -83,17 +83,18 @@ export function validateConfiguration(config) {
     const statuses = [];
     for (const identity of identities) {
       if (!identity || typeof identity !== 'object' || Array.isArray(identity)
-        || typeof identity.token !== 'string' || !/^\S{32,}$/.test(identity.token)
+        || Object.hasOwn(identity, 'token')
+        || typeof identity.token_sha256 !== 'string' || !digestPattern.test(identity.token_sha256)
         || !fingerprintPattern.test(identity.fingerprint256 ?? '')) {
-        throw Error('Every identity requires a 32+ character token and SHA-256 client certificate fingerprint');
+        throw Error('Every identity requires a lowercase SHA-256 token digest and SHA-256 client certificate fingerprint');
       }
       const status = identity.status ?? 'active';
       if (status !== 'active' && status !== 'staged') throw Error('Identity status must be active or staged');
       statuses.push(status);
-      if (tokens.has(identity.token) || fingerprints.has(identity.fingerprint256)) {
-        throw Error('Identity tokens and certificate fingerprints must be unique');
+      if (tokenDigests.has(identity.token_sha256) || fingerprints.has(identity.fingerprint256)) {
+        throw Error('Identity token digests and certificate fingerprints must be unique');
       }
-      tokens.add(identity.token);
+      tokenDigests.add(identity.token_sha256);
       fingerprints.add(identity.fingerprint256);
     }
     if (statuses.filter(status => status === 'active').length !== 1
@@ -144,7 +145,8 @@ export function createMonitor({ nodes, readers, policy, stateFile, now = () => D
     const cert = req.socket.getPeerCertificate?.();
     return req.socket.authorized === true && Boolean(cert?.fingerprint256)
       && (subject.identities ?? [subject]).some(candidate =>
-        equal(cert.fingerprint256, candidate.fingerprint256) && equal(secret, candidate.token));
+        equal(cert.fingerprint256, candidate.fingerprint256)
+          && equal(sha256(secret), candidate.token_sha256));
   };
   const hostSnapshot = name => {
     const report = state.hostReports[name];

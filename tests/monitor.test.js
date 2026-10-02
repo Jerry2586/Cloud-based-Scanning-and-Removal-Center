@@ -1,11 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
+import { createHash } from 'node:crypto';
 import { createMonitor, validateConfiguration } from '../src/monitor.js';
 
 const fp = 'AA:'.repeat(31) + 'AA';
-const reader = { token: 'r'.repeat(40), fingerprint256: fp };
-const node = { token: 'n'.repeat(40), fingerprint256: fp, health_url: 'https://example.test/health', baseline: { 'app.js': 'a'.repeat(64) } };
+const tokenDigest = value => createHash('sha256').update(value).digest('hex');
+const reader = { token: 'r'.repeat(40), token_sha256: tokenDigest('r'.repeat(40)), fingerprint256: fp };
+const node = { token: 'n'.repeat(40), token_sha256: tokenDigest('n'.repeat(40)), fingerprint256: fp,
+  health_url: 'https://example.test/health', baseline: { 'app.js': 'a'.repeat(64) } };
 function callRaw(monitor, { url = '/v1/status', method = 'GET', credential = reader, authorized = true, body = '', authorization } = {}) {
   return new Promise(resolve => {
     const req = Readable.from([body]);
@@ -57,6 +60,7 @@ test('report detects changed, missing, added; credentials rotate without stale a
   assert.deepEqual(monitor.status().events.find(event => event.kind === 'integrity.changed').details,
     { missing: 0, changed: 1, added: 1 });
   rotatingNode.token = 'm'.repeat(40);
+  rotatingNode.token_sha256 = tokenDigest(rotatingNode.token);
   assert.equal((await call(monitor, { url: '/v1/report', method: 'POST', credential: { ...rotatingNode, token: 'n'.repeat(40) }, body: '{}' })).status, 403);
   result = await call(monitor, { url: '/v1/report', method: 'POST', credential: rotatingNode,
     body: JSON.stringify({ files: { 'app.js': 'a'.repeat(64) } }) });
@@ -167,9 +171,10 @@ test('audit strings are length bounded', async () => {
 
 test('status fails closed and identity, audit and pull-only policy never expose credentials', async () => {
   let time = Date.parse('2026-10-02T00:00:00Z');
-  const readerIdentity = { token: 'r'.repeat(40), fingerprint256: fp,
+  const readerIdentity = { token: 'r'.repeat(40), token_sha256: tokenDigest('r'.repeat(40)), fingerprint256: fp,
     status: 'active', cert_not_after: new Date(time + 90 * 86400000).toISOString() };
-  const nodeIdentity = { token: 'n'.repeat(40), fingerprint256: 'BB:'.repeat(31) + 'BB',
+  const nodeIdentity = { token: 'n'.repeat(40), token_sha256: tokenDigest('n'.repeat(40)),
+    fingerprint256: 'BB:'.repeat(31) + 'BB',
     status: 'active', cert_not_after: new Date(time + 90 * 86400000).toISOString() };
   const configuredNode = { role: 'license-center', identities: [nodeIdentity],
     health_url: 'https://example.test/health', baseline: { 'app.js': 'a'.repeat(64) } };
@@ -241,8 +246,10 @@ test('dashboard is server-rendered behind reader mTLS plus Basic token and secur
 });
 
 test('dashboard quick-start reaches complete only after both business roles report', async () => {
-  const license = { ...node, token: 'l'.repeat(40), status: 'active', cert_not_after: '2027-10-02T00:00:00Z' };
-  const build = { ...node, token: 'b'.repeat(40), status: 'active', cert_not_after: '2027-10-02T00:00:00Z' };
+  const license = { ...node, token: 'l'.repeat(40), token_sha256: tokenDigest('l'.repeat(40)),
+    status: 'active', cert_not_after: '2027-10-02T00:00:00Z' };
+  const build = { ...node, token: 'b'.repeat(40), token_sha256: tokenDigest('b'.repeat(40)),
+    status: 'active', cert_not_after: '2027-10-02T00:00:00Z' };
   const monitor = createMonitor({ nodes: { 'license-center': license, 'build-center': build }, readers: [reader],
     probe: async () => ({ state: 'healthy' }) });
   const host_scan = { state: 'ok', checked_at: new Date().toISOString(),
@@ -288,9 +295,9 @@ test('deployment and pairing states cover enrollment, authenticated connection, 
 
 test('identity posture warns on staged or unknown certificates and fails on expiration', () => {
   const current = Date.parse('2026-10-02T00:00:00Z');
-  const healthy = { token: 'a'.repeat(40), fingerprint256: fp,
+  const healthy = { token_sha256: tokenDigest('a'.repeat(40)), fingerprint256: fp,
     cert_not_after: '2027-01-02T00:00:00Z', status: 'active' };
-  const staged = { token: 'b'.repeat(40), fingerprint256: 'CC:'.repeat(31) + 'CC',
+  const staged = { token_sha256: tokenDigest('b'.repeat(40)), fingerprint256: 'CC:'.repeat(31) + 'CC',
     cert_not_after: '2027-01-02T00:00:00Z', status: 'staged' };
   let monitor = createMonitor({ nodes: {}, readers: [{ identities: [healthy, staged] }], now: () => current });
   assert.equal(monitor.identityStatus().summary_state, 'warning');
@@ -324,7 +331,7 @@ test('reports reject every non-lowercase SHA-256 file digest', async () => {
 });
 
 const configuredIdentity = (character, byte) => ({
-  token: character.repeat(40), fingerprint256: `${byte}:`.repeat(31) + byte, status: 'active',
+  token_sha256: tokenDigest(character.repeat(40)), fingerprint256: `${byte}:`.repeat(31) + byte, status: 'active',
 });
 
 const validConfiguration = () => ({
@@ -366,11 +373,12 @@ test('configuration rejects credential-bearing health URLs', () => {
   assert.throws(() => validateConfiguration(config), /Invalid HTTPS health URL/);
 });
 
-test('configuration rejects reused tokens and certificate fingerprints', () => {
+test('configuration rejects reused token digests and certificate fingerprints', () => {
   const duplicateToken = validConfiguration();
   duplicateToken.nodes['build-center'] = {
     role: 'build-center', health_url: 'https://build.example.test/health',
-    identities: [{ ...configuredIdentity('b', 'CC'), token: duplicateToken.nodes['license-center'].identities[0].token }],
+    identities: [{ ...configuredIdentity('b', 'CC'),
+      token_sha256: duplicateToken.nodes['license-center'].identities[0].token_sha256 }],
     baseline: { 'worker.js': 'b'.repeat(64) },
   };
   assert.throws(() => validateConfiguration(duplicateToken), /must be unique/);
@@ -399,7 +407,7 @@ test('configuration rejects invalid identity rotation state', () => {
   assert.throws(() => validateConfiguration(stagedOnly), /one active identity/);
 });
 
-test('configuration rejects malformed digests, fingerprints and tokens', () => {
+test('configuration rejects malformed digests, fingerprints and token storage', () => {
   for (const digest of ['A'.repeat(64), '0'.repeat(63)]) {
     const config = validConfiguration();
     config.nodes['license-center'].baseline['app.js'] = digest;
@@ -410,11 +418,15 @@ test('configuration rejects malformed digests, fingerprints and tokens', () => {
   lowercaseFingerprint.readers[0].identities[0].fingerprint256 = fp.toLowerCase();
   assert.throws(() => validateConfiguration(lowercaseFingerprint), /SHA-256 client certificate fingerprint/);
 
-  for (const token of ['short', `${'x'.repeat(32)} invalid`]) {
+  for (const tokenDigestValue of ['A'.repeat(64), '0'.repeat(63)]) {
     const config = validConfiguration();
-    config.readers[0].identities[0].token = token;
-    assert.throws(() => validateConfiguration(config), /32[+] character token/);
+    config.readers[0].identities[0].token_sha256 = tokenDigestValue;
+    assert.throws(() => validateConfiguration(config), /token digest/);
   }
+
+  const plaintextToken = validConfiguration();
+  plaintextToken.readers[0].identities[0].token = 'x'.repeat(40);
+  assert.throws(() => validateConfiguration(plaintextToken), /token digest/);
 });
 
 test('configuration rejects any policy that permits unsafe update or control paths', () => {

@@ -30,6 +30,8 @@ for suffix in key csr crt token; do
   [[ ! -e $CONF/credentials/$ROLE.$suffix ]] \
     || { echo 'Identity already exists; use a planned rotation, do not overwrite it' >&2; exit 1; }
 done
+jq -e --arg role "$ROLE" '.nodes[$role] == null' "$CONF/config.json" >/dev/null \
+  || { echo 'Identity is already registered in configuration; use a planned rotation' >&2; exit 1; }
 
 CONFIG_OWNER=$(stat -c '%U' "$CONF/config.json")
 CONFIG_GROUP=$(stat -c '%G' "$CONF/config.json")
@@ -65,13 +67,13 @@ openssl x509 -req -in "$WORK/$ROLE.csr" -CA "$CONF/ca.crt" -CAkey "$CONF/ca.key"
 openssl rand -hex 32 > "$WORK/$ROLE.token"
 
 FP=$(openssl x509 -in "$WORK/$ROLE.crt" -noout -fingerprint -sha256 | cut -d= -f2)
-TOKEN=$(<"$WORK/$ROLE.token")
+TOKEN_DIGEST=$(tr -d '\r\n' < "$WORK/$ROLE.token" | sha256sum | awk '{print $1}')
 ISSUED_AT=$(date -u -d "$(openssl x509 -in "$WORK/$ROLE.crt" -noout -startdate | cut -d= -f2-)" +%Y-%m-%dT%H:%M:%SZ)
 NOT_AFTER=$(date -u -d "$(openssl x509 -in "$WORK/$ROLE.crt" -noout -enddate | cut -d= -f2-)" +%Y-%m-%dT%H:%M:%SZ)
 
-jq --arg role "$ROLE" --arg url "$HEALTH_URL" --arg fp "$FP" --arg token "$TOKEN" \
+jq --arg role "$ROLE" --arg url "$HEALTH_URL" --arg fp "$FP" --arg digest "$TOKEN_DIGEST" \
   --arg issued "$ISSUED_AT" --arg expires "$NOT_AFTER" --slurpfile baseline "$BASELINE_FILE" \
-  '.nodes[$role] = {role:$role,health_url:$url,identities:[{fingerprint256:$fp,token:$token,status:"active",issued_at:$issued,cert_not_after:$expires}],baseline:$baseline[0]}' \
+  '.nodes[$role] = {role:$role,health_url:$url,identities:[{fingerprint256:$fp,token_sha256:$digest,status:"active",issued_at:$issued,cert_not_after:$expires}],baseline:$baseline[0]}' \
   "$CONF/config.json" > "$CANDIDATE"
 jq -e --arg role "$ROLE" '.nodes[$role].role == $role and (.nodes[$role].identities | length) == 1' \
   "$CANDIDATE" >/dev/null
