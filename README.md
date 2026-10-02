@@ -2,26 +2,35 @@
 
 此仓库运行在独立 Linux 服务器。Node 24 服务通过私有 CA 签发的客户端证书和独立令牌识别授权中心、打包中心与只读后台；定时从公网 HTTPS 健康端点探测两个业务节点，并比较业务节点上报的文件摘要与可信发布包的基线。它是文件完整性和可用性监测器，不是病毒特征查杀器；云端本身不远程执行命令或删除业务文件。
 
-## 安装
+## 签名 Release 一键安装与更新
 
-支持带 systemd 的 x86_64/aarch64 Linux，apt 或 dnf 包管理器。安装脚本安装缺失的基础依赖、从 nodejs.org 下载并校验 Node 24 的 SHA-256、生成独立 CA 和服务证书、保存状态目录、设置 systemd 并执行本机 HTTPS 身份检查。使用域名时把 DNS A 记录指向这台服务器；也可直接用固定公网 IPv4 地址。放通 TCP 9443：
+正式安装只信任 GitHub Release 中的版本化 `.run`、Ed25519 签名清单和 SHA-256，不以 Git 分支源码作为生产更新源。同一条命令在未安装时执行首装，已安装时检查并升级到最新正式版；同版本健康时幂等退出，拒绝自动降级。升级前自动创建完整加密备份，安装、systemd 或认证健康检查失败时自动恢复旧版本、旧配置、数据和原服务状态。
 
-```sh
-sudo bash scripts/install-linux.sh --host security.example.com
-# 无域名时：sudo bash scripts/install-linux.sh --host 203.0.113.10
-```
+支持带 systemd 的 Debian、Ubuntu、CentOS、RHEL、Rocky Linux、AlmaLinux、Fedora、Oracle Linux，支持 amd64/arm64。安装器自动补齐 CA、curl、OpenSSL、coreutils、jq 等基础工具，下载并校验合同固定的 Node 24 运行时，生成独立 CA 与服务身份并开放本机管理入口。服务器需放通 TCP 9443。
 
-重复运行同一个版本只能使用相同源码；升级时须提升 `package.json` 的版本。旧状态保存在 `/var/lib/appgog-security`；配置和私钥保存在 `/etc/appgog-security`，不得从业务服务器复制过来。
-
-### 私有仓库从干净 Linux 一行安装
-
-在安全服务器预先配置**只读** SSH deploy key、核对 GitHub SSH 主机指纹并保存到 root 的 `known_hosts`；从受信的开发/发布环境取得并审核 40 位提交 SHA。下面是一条命令，替换末尾的 `COMMIT_SHA` 和 `SERVER_HOST`。命令不会把 GitHub 凭据写到参数、日志或仓库中；SSH 身份不可用时会直接失败，不会回退到匿名下载。支持 systemd、apt/dnf、x86_64/aarch64，其他环境明确停止。
+公共仓库可在干净 Linux 上执行：
 
 ```sh
-sudo bash -c 'set -eu; umask 077; if ! command -v git >/dev/null || ! command -v ssh >/dev/null; then if command -v apt-get >/dev/null; then apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y git openssh-client; elif command -v dnf >/dev/null; then dnf install -y git openssh-clients; else echo "Unsupported package manager" >&2; exit 1; fi; fi; workdir=$(mktemp -d); trap '\''rm -r -- "$workdir"'\'' EXIT; GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=yes" git clone --quiet --no-checkout git@github.com:Jerry2586/Cloud-based-Scanning-and-Removal-Center.git "$workdir"; cd "$workdir"; git cat-file -e "$1^{commit}"; git checkout --quiet --detach "$1"; test "$(git rev-parse HEAD)" = "$1"; bash scripts/install-linux.sh --host "$2"' _ COMMIT_SHA SERVER_HOST
+curl -fsSL https://raw.githubusercontent.com/Jerry2586/Cloud-based-Scanning-and-Removal-Center/main/install.sh -o /tmp/appgog-security-install.sh && sudo sh /tmp/appgog-security-install.sh --host security.example.com
 ```
 
-这条命令自动补齐基础依赖并安装服务；私有源码的**读权限、可信提交 SHA 和 SSH 主机身份**必须由管理员独立提供。首次配对前，从本机控制台独立记录安装器输出的 CA SHA-256 指纹，业务机配对时输入该指纹。多次运行同一提交可做重装检查；升级先审查新提交并提高项目版本。安装成功不代表已与授权/打包节点配对，也不代表跨机容灾演练通过。
+没有域名时，把 `security.example.com` 换成固定公网 IPv4。首次成功后，引导器保存为 `/opt/appgog-security/install.sh`，以后输入 `appgog-security update` 即可走同一套签名更新流程。
+
+私有仓库首次安装时，先从已登录的 GitHub 仓库 **Code** 页面下载并核对可信的 `install.sh`，再上传到服务器；已经成功安装过的服务器可复用保存于 `/opt/appgog-security/install.sh` 的引导器。随后为服务器创建仅限本仓库 `Contents: Read` 的细粒度令牌，写入 root 专用文件，不把令牌放进命令行、`.env` 或日志：
+
+```sh
+sudo install -d -m 700 /etc/appgog-security
+sudo install -m 600 /dev/stdin /etc/appgog-security/github-release.token
+sudo sh ./install.sh --host security.example.com
+```
+
+第二行会等待管理员从终端标准输入粘贴令牌并按 `Ctrl-D` 结束。之后同样使用 `appgog-security update`；引导器只把令牌发送给 GitHub API，跟随到对象存储的下载请求不会携带授权头。公共与私有模式下载后都必须通过同一套签名、发布合同、包内版本和哈希检查，任一不一致立即停止。
+
+配置、证书和身份保存在 `/etc/appgog-security`，运行状态和加密备份保存在 `/var/lib/appgog-security`，版本程序保存在 `/opt/appgog-security/releases`。备份密钥 `/etc/appgog-security/backup.key` 不包含在备份包内，必须单独离线保管；密钥丢失时加密备份无法恢复。正式环境不要把这三个目录或任何令牌、私钥提交到 Git。
+
+安装完成输入 `appgog-security` 打开 Linux 管理菜单，可查看状态、启停、日志、诊断、安全更新、加密备份、事务恢复和保留数据卸载。首次配对前，从服务器控制台独立记录安装器输出的 CA SHA-256 指纹，业务机连接时必须核对。安装成功只证明云端本机通过认证健康检查，不代表授权/打包节点已配对，也不代表双机或三机容灾演练已经完成。
+
+源码方式仅用于开发维护：在可信源码目录运行 `sudo bash scripts/install-linux.sh --host security.example.com`。它不能替代正式签名 Release。
 
 ## 注册和交付凭据
 

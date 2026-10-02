@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "product": "appgog-cloud-security-center",
+  "artifact_prefix": "APPGOG-Cloud-Security-Center",
+  "node_version": "24.19.0",
+  "node_major": 24,
+  "architectures": ["amd64", "arm64"],
+  "service": "appgog-security.service",
+  "install_root": "/opt/appgog-security",
+  "config_root": "/etc/appgog-security",
+  "data_root": "/var/lib/appgog-security"
+}

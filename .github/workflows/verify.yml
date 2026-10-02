@@ -18,9 +18,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Validate Linux install and identity scripts
-        run: bash -n scripts/install-linux.sh scripts/lib/identity-config.sh scripts/enroll-node.sh scripts/export-business-bundle.sh scripts/rotate-identity.sh tests/identity-scripts.test.sh
+      - name: Validate every shell script independently
+        run: |
+          while IFS= read -r file; do
+            echo "Checking $file"
+            bash -n "$file"
+          done < <(find . -type f \( -name '*.sh' -o -name '*.run' \) -not -path './.git/*' -print | sort)
+      - name: Validate release verifier syntax
+        run: node --check scripts/verify-release.js
       - name: Test Linux identity migration, enrollment and rotation
         run: sudo bash tests/identity-scripts.test.sh
       - name: Run monitor and real mutual TLS tests
         run: node --test
+      - name: Test signed install, update, rollback, backup and restore
+        run: sudo env "PATH=$PATH" bash tests/release-install.test.sh

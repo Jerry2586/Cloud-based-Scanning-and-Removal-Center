@@ -1,0 +1,67 @@
+name: Publish signed cloud security center release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Enforce exact release tag and package version
+        run: |
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          version=$(node -p "JSON.parse(require('fs').readFileSync('package.json')).version")
+          [[ "$GITHUB_REF_NAME" == "v$version" ]]
+      - name: Repeat release quality gates
+        run: |
+          while IFS= read -r file; do bash -n "$file"; done < <(find . -type f -name '*.sh' -not -path './.git/*' -print | sort)
+          node --check scripts/verify-release.js
+          node --test
+          sudo env "PATH=$PATH" bash tests/identity-scripts.test.sh
+          sudo env "PATH=$PATH" bash tests/release-install.test.sh
+      - name: Materialize signing key only in runner temporary storage
+        env:
+          SIGNING_KEY: ${{ secrets.APPGOG_SECURITY_RELEASE_PRIVATE_KEY }}
+        run: |
+          [[ -n "$SIGNING_KEY" ]]
+          install -m 600 /dev/null "$RUNNER_TEMP/appgog-release-private.pem"
+          printf '%s\n' "$SIGNING_KEY" > "$RUNNER_TEMP/appgog-release-private.pem"
+          unset SIGNING_KEY
+      - name: Build and independently verify six release assets
+        run: |
+          bash scripts/package-release.sh --signing-key "$RUNNER_TEMP/appgog-release-private.pem" --output-dir dist
+          node scripts/verify-release.js --dir dist --public-key release-public.pem
+          (cd dist && sha256sum -c APPGOG-Cloud-Security-Center-*.tar.gz.sha256)
+          (cd dist && sha256sum -c APPGOG-Cloud-Security-Center-*.run.sha256)
+          mapfile -t assets < <(find dist -maxdepth 1 -type f -printf '%f\n' | sort)
+          [[ ${#assets[@]} -eq 6 ]]
+          printf '%s\n' "${assets[@]}" | diff -u <(printf '%s\n' \
+            "APPGOG-Cloud-Security-Center-${GITHUB_REF_NAME#v}.run" \
+            "APPGOG-Cloud-Security-Center-${GITHUB_REF_NAME#v}.run.sha256" \
+            "APPGOG-Cloud-Security-Center-${GITHUB_REF_NAME#v}.tar.gz" \
+            "APPGOG-Cloud-Security-Center-${GITHUB_REF_NAME#v}.tar.gz.sha256" \
+            'release-manifest.json' 'release-manifest.json.sig') -
+          rm -f "$RUNNER_TEMP/appgog-release-private.pem"
+      - name: Publish immutable GitHub Release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/APPGOG-Cloud-Security-Center-*.run \
+            dist/APPGOG-Cloud-Security-Center-*.run.sha256 \
+            dist/APPGOG-Cloud-Security-Center-*.tar.gz \
+            dist/APPGOG-Cloud-Security-Center-*.tar.gz.sha256 \
+            dist/release-manifest.json \
+            dist/release-manifest.json.sig \
+            --verify-tag --generate-notes --title "APPGOG Cloud Security Center $GITHUB_REF_NAME"
