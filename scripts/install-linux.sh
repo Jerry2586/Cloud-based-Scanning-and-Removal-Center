@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 # Run from an authenticated checkout of the private cloud-security repository.
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+source scripts/lib/identity-config.sh
 BASE=${SECURITY_INSTALL_DIR:-/opt/appgog-security}
 CONF=${SECURITY_CONFIG_DIR:-/etc/appgog-security}
 DATA=${SECURITY_DATA_DIR:-/var/lib/appgog-security}
@@ -82,9 +84,19 @@ if [[ ! -f $CONF/credentials/reader.key ]]; then
   openssl rand -hex 32 > "$CONF/credentials/reader.token"
 fi
 if [[ ! -f $CONF/config.json ]]; then
-  FP=$(openssl x509 -in "$CONF/credentials/reader.crt" -noout -fingerprint -sha256 | cut -d= -f2)
-  TOKEN=$(cat "$CONF/credentials/reader.token")
-  jq -n --arg fp "$FP" --arg token "$TOKEN" '{nodes:{},readers:[{fingerprint256:$fp,token:$token}]}' > "$CONF/config.json"
+  printf '{}\n' > "$CONF/config.json"
+fi
+TMP=$(mktemp "$CONF/config.XXXXXX")
+if appgog_normalize_reader_config "$CONF/config.json" "$CONF/credentials/reader.crt" \
+    "$CONF/credentials/reader.token" > "$TMP" \
+    && chown appgog-security:appgog-security "$TMP" \
+    && chmod 600 "$TMP" \
+    && mv "$TMP" "$CONF/config.json"; then
+  :
+else
+  result=$?
+  rm -f "$TMP"
+  exit "$result"
 fi
 chmod 600 "$CONF/config.json" "$CONF/credentials/"*.key "$CONF/credentials/"*.token
 chown appgog-security:appgog-security "$CONF/config.json"

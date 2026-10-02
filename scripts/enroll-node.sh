@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 ROLE=${1:-}
 HEALTH_URL=${2:-}
 BASELINE_FILE=${3:-}
@@ -15,9 +16,13 @@ openssl x509 -req -in "$CONF/credentials/$ROLE.csr" -CA "$CONF/ca.crt" -CAkey "$
 openssl rand -hex 32 > "$CONF/credentials/$ROLE.token"
 FP=$(openssl x509 -in "$CONF/credentials/$ROLE.crt" -noout -fingerprint -sha256 | cut -d= -f2)
 TOKEN=$(cat "$CONF/credentials/$ROLE.token")
+ISSUED_AT=$(date -u -d "$(openssl x509 -in "$CONF/credentials/$ROLE.crt" -noout -startdate | cut -d= -f2-)" +%Y-%m-%dT%H:%M:%SZ)
+NOT_AFTER=$(date -u -d "$(openssl x509 -in "$CONF/credentials/$ROLE.crt" -noout -enddate | cut -d= -f2-)" +%Y-%m-%dT%H:%M:%SZ)
 TMP=$(mktemp "$CONF/config.XXXXXX")
-jq --arg role "$ROLE" --arg url "$HEALTH_URL" --arg fp "$FP" --arg token "$TOKEN" --slurpfile baseline "$BASELINE_FILE" \
-  '.nodes[$role] = {health_url:$url,fingerprint256:$fp,token:$token,baseline:$baseline[0]}' "$CONF/config.json" > "$TMP"
+jq --arg role "$ROLE" --arg url "$HEALTH_URL" --arg fp "$FP" --arg token "$TOKEN" \
+  --arg issued "$ISSUED_AT" --arg expires "$NOT_AFTER" --slurpfile baseline "$BASELINE_FILE" \
+  '.nodes[$role] = {role:$role,health_url:$url,identities:[{fingerprint256:$fp,token:$token,status:"active",issued_at:$issued,cert_not_after:$expires}],baseline:$baseline[0]}' \
+  "$CONF/config.json" > "$TMP"
 chmod 600 "$TMP"
 chown appgog-security:appgog-security "$TMP"
 mv "$TMP" "$CONF/config.json"

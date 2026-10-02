@@ -1,9 +1,12 @@
 name: Verify cloud security center
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
-    branches: [main]
+    branches:
+      - main
+      - 'candidate/**'
 
 jobs:
   verify:
@@ -16,6 +19,8 @@ jobs:
         with:
           node-version: '24'
       - name: Validate Linux install and identity scripts
-        run: bash -n scripts/install-linux.sh scripts/enroll-node.sh scripts/export-business-bundle.sh scripts/rotate-identity.sh
+        run: bash -n scripts/install-linux.sh scripts/lib/identity-config.sh scripts/enroll-node.sh scripts/export-business-bundle.sh scripts/rotate-identity.sh tests/identity-scripts.test.sh
+      - name: Test Linux identity migration, enrollment and rotation
+        run: sudo bash tests/identity-scripts.test.sh
       - name: Run monitor and real mutual TLS tests
         run: node --test
