@@ -226,6 +226,10 @@ test('dashboard is server-rendered behind reader mTLS plus Basic token and secur
   assert.match(page.text, /等待在 Linux 管理菜单中注册/);
   assert.match(page.text, /双机总架构/);
   assert.match(page.text, /三机总架构/);
+  assert.match(page.text, /首次对接进度/);
+  assert.match(page.text, /云端服务已安装/);
+  assert.match(page.text, /当前步骤/);
+  assert.match(page.text, /sudo appgog-security/);
   assert.equal(page.text.includes(reader.token), false);
   for (const secret of ['ca.key', 'reader.key', '/etc/appgog-security', 'private key']) {
     assert.equal(page.text.includes(secret), false);
@@ -234,6 +238,25 @@ test('dashboard is server-rendered behind reader mTLS plus Basic token and secur
     authorization: `Basic ${Buffer.from('reader:wrong').toString('base64')}` });
   assert.equal(denied.status, 401);
   assert.match(denied.headers['www-authenticate'], /^Basic /);
+});
+
+test('dashboard quick-start reaches complete only after both business roles report', async () => {
+  const license = { ...node, token: 'l'.repeat(40), status: 'active', cert_not_after: '2027-10-02T00:00:00Z' };
+  const build = { ...node, token: 'b'.repeat(40), status: 'active', cert_not_after: '2027-10-02T00:00:00Z' };
+  const monitor = createMonitor({ nodes: { 'license-center': license, 'build-center': build }, readers: [reader],
+    probe: async () => ({ state: 'healthy' }) });
+  const host_scan = { state: 'ok', checked_at: new Date().toISOString(),
+    counts: { ok: 6, warning: 0, finding: 0, unavailable: 0 } };
+  await monitor.runProbes();
+  for (const credential of [license, build]) {
+    const result = await call(monitor, { url: '/v1/report', method: 'POST', credential,
+      body: JSON.stringify({ files: { 'app.js': 'a'.repeat(64) }, host_scan }) });
+    assert.equal(result.status, 200);
+  }
+  const authorization = `Basic ${Buffer.from(`reader:${reader.token}`).toString('base64')}`;
+  const page = await callRaw(monitor, { url: '/dashboard', credential: reader, authorization });
+  assert.match(page.text, /首次对接已完成/);
+  assert.match(page.text, /两个业务角色均已通过 mTLS 认证并开始上报/);
 });
 
 test('deployment and pairing states cover enrollment, authenticated connection, staleness and findings', async () => {

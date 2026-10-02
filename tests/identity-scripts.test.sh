@@ -55,7 +55,7 @@ if (( EUID != 0 )); then
 fi
 
 printf '#!/usr/bin/env bash\nexit 0\n' > "$WORK/bin/chown"
-printf '#!/usr/bin/env bash\nif [[ -n ${SYSTEMCTL_FAIL_ONCE_FILE:-} && -f $SYSTEMCTL_FAIL_ONCE_FILE ]]; then rm -f "$SYSTEMCTL_FAIL_ONCE_FILE"; exit 1; fi\nexit 0\n' > "$WORK/bin/systemctl"
+printf '#!/usr/bin/env bash\nif [[ -n ${SYSTEMCTL_FAIL_COUNT_FILE:-} && -f $SYSTEMCTL_FAIL_COUNT_FILE ]]; then count=$(cat "$SYSTEMCTL_FAIL_COUNT_FILE"); if ((count <= 1)); then rm -f "$SYSTEMCTL_FAIL_COUNT_FILE"; exit 1; else printf "%%s\\n" "$((count - 1))" > "$SYSTEMCTL_FAIL_COUNT_FILE"; fi; fi\nif [[ -n ${SYSTEMCTL_FAIL_ONCE_FILE:-} && -f $SYSTEMCTL_FAIL_ONCE_FILE ]]; then rm -f "$SYSTEMCTL_FAIL_ONCE_FILE"; exit 1; fi\nexit 0\n' > "$WORK/bin/systemctl"
 chmod +x "$WORK/bin/chown" "$WORK/bin/systemctl"
 export PATH="$WORK/bin:$PATH"
 cp "$CONF/empty.normalized.json" "$CONF/config.json"
@@ -231,5 +231,80 @@ for role in reader license-center build-center; do
   [[ $(stat -c %a "$CONF/credentials/$role.token") == 600 ]] || fail "$role token permissions are not 600"
   compgen -G "$CONF/credentials/$role.next.*" >/dev/null && fail "$role commit left next artifacts"
 done
+
+SETUP_BASE="$WORK/setup-base"
+SETUP_CONF="$WORK/setup-config"
+SETUP_DATA="$WORK/setup-data"
+SETUP_SYSTEMD="$WORK/setup-systemd"
+SETUP_BIN="$WORK/setup-bin"
+mkdir -p "$SETUP_BASE/current" "$SETUP_CONF/credentials" "$SETUP_DATA" "$SETUP_SYSTEMD" "$SETUP_BIN"
+printf '{"version":"test"}\n' > "$SETUP_BASE/current/package.json"
+cp "$CONF/ca.crt" "$CONF/ca.key" "$SETUP_CONF/"
+for suffix in key csr crt token; do cp "$CONF/credentials/reader.$suffix" "$SETUP_CONF/credentials/"; done
+jq '{nodes:{},readers:.readers,policy:.policy}' "$CONF/config.json" > "$SETUP_CONF/config.json"
+
+run_setup() {
+  SECURITY_INSTALL_DIR="$SETUP_BASE" SECURITY_CONFIG_DIR="$SETUP_CONF" SECURITY_DATA_DIR="$SETUP_DATA" \
+    SECURITY_SYSTEMD_DIR="$SETUP_SYSTEMD" SECURITY_BIN_DIR="$SETUP_BIN" SECURITY_SYSTEMCTL=systemctl \
+    SECURITY_SERVICE_NAME=appgog-security-test.service SECURITY_ENROLL_SCRIPT="$ROOT/scripts/enroll-node.sh" \
+    SECURITY_EXPORT_SCRIPT="${SETUP_EXPORT_SCRIPT:-$ROOT/scripts/export-business-bundle.sh}" \
+    bash "$ROOT/scripts/appgog-security.sh" setup "$@"
+}
+
+run_setup shared https://license.example.test/health "$WORK/baseline.json" \
+  https://build.example.test/health "$WORK/baseline.json" "$WORK/setup-shared-export" >/dev/null
+assert_jq '(.nodes | keys | sort) == ["build-center","license-center"]' \
+  "$SETUP_CONF/config.json" 'shared setup did not register both roles'
+[[ -s $WORK/setup-shared-export/license.key && -s $WORK/setup-shared-export/build.key ]] \
+  || fail 'shared setup did not export both business identities'
+setup_hash=$(sha256sum "$SETUP_CONF/config.json" | awk '{print $1}')
+if run_setup shared https://license.example.test/health "$WORK/baseline.json" \
+  https://build.example.test/health "$WORK/baseline.json" "$WORK/setup-duplicate-export" >/dev/null 2>&1; then
+  fail 'setup overwrote existing business identities'
+fi
+[[ $(sha256sum "$SETUP_CONF/config.json" | awk '{print $1}') == "$setup_hash" ]] \
+  || fail 'rejected duplicate setup changed configuration'
+
+rm -f "$SETUP_CONF/credentials/license-center."* "$SETUP_CONF/credentials/build-center."*
+jq '.nodes = {}' "$SETUP_CONF/config.json" > "$SETUP_CONF/config.empty.json"
+mv "$SETUP_CONF/config.empty.json" "$SETUP_CONF/config.json"
+setup_hash=$(sha256sum "$SETUP_CONF/config.json" | awk '{print $1}')
+printf '2\n' > "$WORK/systemctl-fail-count"
+if SYSTEMCTL_FAIL_COUNT_FILE="$WORK/systemctl-fail-count" run_setup separate \
+  https://license.example.test/health "$WORK/baseline.json" \
+  https://build.example.test/health "$WORK/baseline.json" "$WORK/setup-rollback-export" >/dev/null 2>&1; then
+  fail 'setup succeeded after the second enrollment restart failed'
+fi
+[[ $(sha256sum "$SETUP_CONF/config.json" | awk '{print $1}') == "$setup_hash" ]] \
+  || fail 'failed setup did not restore its original configuration'
+compgen -G "$SETUP_CONF/credentials/license-center.*" >/dev/null \
+  && fail 'failed setup left license identity artifacts'
+compgen -G "$SETUP_CONF/credentials/build-center.*" >/dev/null \
+  && fail 'failed setup left build identity artifacts'
+[[ ! -e $WORK/setup-rollback-export ]] || fail 'failed setup left an export directory'
+
+printf '#!/usr/bin/env bash\nmkdir -p -- "$2"\nprintf partial > "$2/partial"\nexit 1\n' > "$WORK/bin/export-fail"
+chmod +x "$WORK/bin/export-fail"
+setup_hash=$(sha256sum "$SETUP_CONF/config.json" | awk '{print $1}')
+if SETUP_EXPORT_SCRIPT="$WORK/bin/export-fail" run_setup shared \
+  https://license.example.test/health "$WORK/baseline.json" \
+  https://build.example.test/health "$WORK/baseline.json" "$WORK/setup-export-failure" >/dev/null 2>&1; then
+  fail 'setup succeeded after identity export failed'
+fi
+[[ $(sha256sum "$SETUP_CONF/config.json" | awk '{print $1}') == "$setup_hash" ]] \
+  || fail 'export failure did not restore its original configuration'
+compgen -G "$SETUP_CONF/credentials/license-center.*" >/dev/null \
+  && fail 'export failure left license identity artifacts'
+compgen -G "$SETUP_CONF/credentials/build-center.*" >/dev/null \
+  && fail 'export failure left build identity artifacts'
+[[ ! -e $WORK/setup-export-failure ]] || fail 'export failure left a partial identity bundle'
+
+run_setup separate https://license.example.test/health "$WORK/baseline.json" \
+  https://build.example.test/health "$WORK/baseline.json" "$WORK/setup-separate-export" >/dev/null
+[[ -s $WORK/setup-separate-export/license-center/license.key \
+  && ! -e $WORK/setup-separate-export/license-center/build.key \
+  && -s $WORK/setup-separate-export/build-center/build.key \
+  && ! -e $WORK/setup-separate-export/build-center/license.key ]] \
+  || fail 'separate setup crossed or omitted business identities'
 
 echo 'Identity migration, enrollment, and rotation tests passed.'

@@ -2,19 +2,30 @@
 
 此仓库运行在独立 Linux 服务器。Node 24 服务通过私有 CA 签发的客户端证书和独立令牌识别授权中心、打包中心与只读后台；定时从公网 HTTPS 健康端点探测两个业务节点，并比较业务节点上报的文件摘要与可信发布包的基线。它是文件完整性和可用性监测器，不是病毒特征查杀器；云端本身不远程执行命令或删除业务文件。
 
-## 签名 Release 一键安装与更新
+## 小白一键安装和更新
 
-正式安装只信任 GitHub Release 中的版本化 `.run`、Ed25519 签名清单和 SHA-256，不以 Git 分支源码作为生产更新源。同一条命令在未安装时执行首装，已安装时检查并升级到最新正式版；同版本健康时幂等退出，拒绝自动降级。升级前自动创建完整加密备份，安装、systemd 或认证健康检查失败时自动恢复旧版本、旧配置、数据和原服务状态。
-
-支持带 systemd 的 Debian、Ubuntu、CentOS、RHEL、Rocky Linux、AlmaLinux、Fedora、Oracle Linux，支持 amd64/arm64。安装器自动补齐 CA、curl、OpenSSL、coreutils、jq 等基础工具，下载并校验合同固定的 Node 24 运行时，生成独立 CA 与服务身份并开放本机管理入口。服务器需放通 TCP 9443。
-
-公共仓库可在干净 Linux 上执行：
+以后只需要记住下面这一条命令。**第一次执行是安装，以后再次执行同一条命令就是检查并更新**，不用区分“安装命令”和“升级命令”：
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Jerry2586/Cloud-based-Scanning-and-Removal-Center/main/install.sh -o /tmp/appgog-security-install.sh && sudo sh /tmp/appgog-security-install.sh --host security.example.com
 ```
 
-没有域名时，把 `security.example.com` 换成固定公网 IPv4。首次成功后，引导器保存为 `/opt/appgog-security/install.sh`，以后输入 `appgog-security update` 即可走同一套签名更新流程。
+只需要把最后的 `security.example.com` 换成你的安全中心域名。没有域名时，直接换成这台安全服务器的固定公网 IP，例如：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Jerry2586/Cloud-based-Scanning-and-Removal-Center/main/install.sh -o /tmp/appgog-security-install.sh && sudo sh /tmp/appgog-security-install.sh --host 203.0.113.10
+```
+
+这条命令会自动判断：
+
+- 服务器没有安装：自动补齐环境并完成首次安装。
+- 服务器已经安装旧版本：先创建加密备份，再更新到最新正式版。
+- 服务器已经是最新版：完成健康检查后安全退出，不重复安装。
+- 更新过程中出现错误：自动恢复更新前的程序、配置和服务。
+
+不需要手动安装 Node.js，不需要执行 `git pull`，也不需要自己配置 systemd。支持 Debian、Ubuntu、CentOS、RHEL、Rocky Linux、AlmaLinux、Fedora、Oracle Linux，支持 x86_64 和 arm64。安装前只需确保使用 root 权限，并在服务器防火墙和云厂商安全组放通 TCP `9443`。
+
+### 私有仓库只需额外配置一次
 
 私有仓库首次安装时，先从已登录的 GitHub 仓库 **Code** 页面下载并核对可信的 `install.sh`，再上传到服务器；已经成功安装过的服务器可复用保存于 `/opt/appgog-security/install.sh` 的引导器。随后为服务器创建仅限本仓库 `Contents: Read` 的细粒度令牌，写入 root 专用文件，不把令牌放进命令行、`.env` 或日志：
 
@@ -24,26 +35,48 @@ sudo install -m 600 /dev/stdin /etc/appgog-security/github-release.token
 sudo sh ./install.sh --host security.example.com
 ```
 
-第二行会等待管理员从终端标准输入粘贴令牌并按 `Ctrl-D` 结束。之后同样使用 `appgog-security update`；引导器只把令牌发送给 GitHub API，跟随到对象存储的下载请求不会携带授权头。公共与私有模式下载后都必须通过同一套签名、发布合同、包内版本和哈希检查，任一不一致立即停止。
+第二行会等待管理员粘贴令牌，粘贴后按 `Ctrl-D` 保存。这个令牌只配置一次，以后重复执行下面同一条命令就是更新：
+
+```sh
+sudo sh /opt/appgog-security/install.sh --host security.example.com
+```
+
+引导器只把令牌发送给 GitHub API，不会把令牌写进命令行、业务配置或日志。公共与私有模式下载后都会自动核对数字签名、版本和文件哈希，任何一项不一致都会停止安装。
 
 配置、证书和身份保存在 `/etc/appgog-security`，运行状态和加密备份保存在 `/var/lib/appgog-security`，版本程序保存在 `/opt/appgog-security/releases`。备份密钥 `/etc/appgog-security/backup.key` 不包含在备份包内，必须单独离线保管；密钥丢失时加密备份无法恢复。正式环境不要把这三个目录或任何令牌、私钥提交到 Git。
 
-安装完成输入 `appgog-security` 打开 Linux 可视化管理菜单。菜单既负责状态、启停、日志、诊断、签名更新、加密备份、事务恢复和保留数据卸载，也提供授权中心与打包中心的注册、身份包导出、连接状态和两阶段身份轮换。首次配对前，从服务器控制台独立记录安装器输出的 CA SHA-256 指纹，业务机连接时必须核对。安装成功只证明云端本机通过认证健康检查，不代表授权/打包节点已配对，也不代表双机或三机容灾演练已经完成。
+安装完成后不要再拼长命令，只输入：
+
+```sh
+sudo appgog-security
+```
+
+然后选择 `1. 首次配置向导（推荐）`。向导会用中文依次询问双机/三机部署方式、授权中心和打包中心的 HTTPS 健康地址、可信基线文件，并自动创建两个独立身份、检查服务、生成正确的业务身份包。任一步失败都会撤销本次向导产生的配置和身份，不留下“只配好一半”的状态。
+
+以后需要更新时，重新执行最上面首次安装用的同一条命令即可；也可以打开这个菜单后选择 `4. 检查并更新`。
+
+主菜单只保留六类常用操作：首次配置、查看状态、查看面板地址、检查更新、备份恢复和高级管理。原来的启停、日志、诊断、手动注册、单独导出、身份轮换和卸载仍在“高级管理”中，没有删除。
+
+首次配对前，从服务器控制台独立记录安装器输出的 CA SHA-256 指纹，业务机连接时必须核对。安装成功只证明云端本机通过认证健康检查，不代表授权/打包节点已配对，也不代表双机或三机容灾演练已经完成。
 
 网页只读面板地址固定为 `https://HOST:9443/dashboard`。它显示节点注册、认证连接、报告新鲜度、文件完整性、宿主检查、证书状态和安全事件，不提供远程终端、远程删除或云端主动修复。页面使用 reader 客户端证书与独立 Basic 凭据双重认证；reader 身份只交付管理员浏览器，绝不能复制到授权或打包业务服务器。
 
-Linux 管理菜单中的节点对接项为：
+小白操作顺序只有三步：
 
-| 菜单 | 功能 |
-|---|---|
-| 11 | 进入单双机拓扑节点对接子菜单 |
-| 12 | 注册授权中心的 HTTPS 健康地址和可信文件基线 |
-| 13 | 注册打包中心的 HTTPS 健康地址和可信文件基线 |
-| 14 | 导出授权与打包同机部署所需的双角色身份包 |
-| 15 | 仅导出独立授权服务器身份包 |
-| 16 | 仅导出独立打包服务器身份包 |
-| 17 | 查看节点注册、认证连接、探测、完整性、证书和处置建议 |
-| 18 | 对 reader、授权或打包身份执行 `stage` / `commit` 两阶段轮换 |
+1. 执行上面的一键安装/更新命令。
+2. 输入 `sudo appgog-security`，选择 `1`，跟着中文提示填写。
+3. 按向导最后的提示，把身份包安全导入业务服务器，再打开网页面板查看五步对接进度。
+
+熟悉命令行的管理员也可直接执行非交互式向导：
+
+```sh
+sudo appgog-security setup shared \
+  https://auth.example.com/health /root/auth-baseline.json \
+  https://build.example.com/health /root/build-baseline.json \
+  /root/appgog-business-pairing
+```
+
+把 `shared` 改为 `separate` 时，输出目录会包含 `license-center` 和 `build-center` 两个互不混用的子目录。
 
 源码方式仅用于开发维护：在可信源码目录运行 `sudo bash scripts/install-linux.sh --host security.example.com`。它不能替代正式签名 Release。
 

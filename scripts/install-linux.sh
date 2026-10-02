@@ -328,3 +328,9 @@ TRANSACTION_ACTIVE=false
 echo "Cloud security center v$VERSION ready at https://$HOST:9443"
 echo 'CA fingerprint (verify through an independent administrator channel):'
 openssl x509 -in "$CONF/ca.crt" -noout -fingerprint -sha256
+echo
+echo '下一步只需两步：'
+echo '  1. 输入：sudo appgog-security'
+echo '  2. 选择：1. 首次配置向导（推荐）'
+echo '向导会按中文提示完成授权中心、打包中心注册并生成业务身份包。'
+echo '以后更新：重新执行首次安装的同一条命令，系统会自动识别并安全更新；也可在管理菜单选择 4。'
