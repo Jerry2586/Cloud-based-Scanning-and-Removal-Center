@@ -171,6 +171,15 @@ bash "$WORK/dist-015/APPGOG-Cloud-Security-Center-0.1.5.run" --host 127.0.0.1
 [[ $(jq -r .sentinel "$SECURITY_DATA_DIR/runtime/state.json") == preserved ]]
 [[ ! -e $SECURITY_DATA_DIR/state.json ]]
 find "$SECURITY_DATA_DIR/backups" -type f -name '*.tar.gz.enc' -print -quit | grep -q .
+for script in appgog-security.sh enroll-node.sh export-business-bundle.sh rotate-identity.sh; do
+  [[ -s $SECURITY_INSTALL_DIR/current/scripts/$script ]]
+done
+grep -q '节点对接管理' "$SECURITY_INSTALL_DIR/current/scripts/appgog-security.sh"
+grep -q 'nodes) nodes' "$SECURITY_INSTALL_DIR/current/scripts/appgog-security.sh"
+grep -q 'enroll) enroll_node' "$SECURITY_INSTALL_DIR/current/scripts/appgog-security.sh"
+grep -q 'export) export_bundle' "$SECURITY_INSTALL_DIR/current/scripts/appgog-security.sh"
+grep -q 'rotate) rotate_identity' "$SECURITY_INSTALL_DIR/current/scripts/appgog-security.sh"
+bash "$SECURITY_INSTALL_DIR/current/scripts/appgog-security.sh" doctor >/dev/null
 
 cp "$SECURITY_INSTALL_DIR/releases/0.1.5/scripts/appgog-security.sh" "$WORK/original-menu.sh"
 printf '\n# conflict\n' >> "$SECURITY_INSTALL_DIR/releases/0.1.5/scripts/appgog-security.sh"

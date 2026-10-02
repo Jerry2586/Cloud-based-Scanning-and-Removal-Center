@@ -4,6 +4,8 @@ umask 077
 ACTION=${1:-}
 ROLE=${2:-}
 CONF=${SECURITY_CONFIG_DIR:-/etc/appgog-security}
+SYSTEMCTL=${SECURITY_SYSTEMCTL:-systemctl}
+SERVICE=${SECURITY_SERVICE_NAME:-appgog-security.service}
 [[ $EUID -eq 0 && $ACTION =~ ^(stage|commit)$ && $ROLE =~ ^(reader|license-center|build-center)$ ]] || {
   echo 'Usage: sudo rotate-identity.sh stage|commit reader|license-center|build-center' >&2; exit 2;
 }
@@ -27,14 +29,16 @@ validate_single_active() {
 }
 
 install_config() {
-  local candidate=$1 backup=$2
-  chown appgog-security:appgog-security "$candidate"
+  local candidate=$1 backup=$2 owner group
+  owner=$(stat -c '%U' "$CONF/config.json")
+  group=$(stat -c '%G' "$CONF/config.json")
+  chown "$owner:$group" "$candidate"
   chmod 600 "$candidate"
   cp -p "$CONF/config.json" "$backup"
   mv "$candidate" "$CONF/config.json"
-  if ! systemctl restart appgog-security.service; then
+  if ! "$SYSTEMCTL" restart "$SERVICE"; then
     mv "$backup" "$CONF/config.json"
-    systemctl restart appgog-security.service >/dev/null 2>&1 || true
+    "$SYSTEMCTL" restart "$SERVICE" >/dev/null 2>&1 || true
     return 1
   fi
   rm -f "$backup"

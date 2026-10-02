@@ -212,17 +212,55 @@ test('status fails closed and identity, audit and pull-only policy never expose 
 
 test('dashboard is server-rendered behind reader mTLS plus Basic token and security headers', async () => {
   const monitor = createMonitor({ nodes: {}, readers: [reader] });
+  const status = monitor.status();
+  assert.equal(status.deployment.state, 'not-enrolled');
+  assert.deepEqual(status.deployment.configured_roles, []);
   const authorization = `Basic ${Buffer.from(`reader:${reader.token}`).toString('base64')}`;
   const page = await callRaw(monitor, { url: '/dashboard', credential: reader, authorization });
   assert.equal(page.status, 200);
   assert.match(page.headers['content-type'], /^text\/html/);
   assert.match(page.headers['content-security-policy'], /default-src 'none'/);
-  assert.match(page.text, /APPGOG Cloud Security Center/);
+  assert.match(page.text, /APPGOG 云端安全监测中心/);
+  assert.match(page.text, /授权中心/);
+  assert.match(page.text, /打包中心/);
+  assert.match(page.text, /等待在 Linux 管理菜单中注册/);
+  assert.match(page.text, /双机总架构/);
+  assert.match(page.text, /三机总架构/);
   assert.equal(page.text.includes(reader.token), false);
+  for (const secret of ['ca.key', 'reader.key', '/etc/appgog-security', 'private key']) {
+    assert.equal(page.text.includes(secret), false);
+  }
   const denied = await callRaw(monitor, { url: '/dashboard', credential: reader,
     authorization: `Basic ${Buffer.from('reader:wrong').toString('base64')}` });
   assert.equal(denied.status, 401);
   assert.match(denied.headers['www-authenticate'], /^Basic /);
+});
+
+test('deployment and pairing states cover enrollment, authenticated connection, staleness and findings', async () => {
+  let current = Date.parse('2026-10-02T00:00:00Z');
+  const pairedNode = { ...node, status: 'active', cert_not_after: '2027-10-02T00:00:00Z' };
+  const monitor = createMonitor({ nodes: { 'license-center': pairedNode }, readers: [reader], now: () => current,
+    probe: async () => ({ state: 'healthy' }) });
+  let snapshot = monitor.status();
+  assert.equal(snapshot.deployment.state, 'partial');
+  assert.deepEqual(snapshot.deployment.configured_roles, ['license-center']);
+  assert.equal(snapshot.nodes['license-center'].pairing_state, 'waiting-first-report');
+
+  await monitor.runProbes();
+  const hostScan = { state: 'ok', checked_at: new Date(current).toISOString(),
+    counts: { ok: 6, warning: 0, finding: 0, unavailable: 0 } };
+  await call(monitor, { url: '/v1/report', method: 'POST', credential: pairedNode,
+    body: JSON.stringify({ files: { 'app.js': 'a'.repeat(64) }, host_scan: hostScan }) });
+  snapshot = monitor.status();
+  assert.equal(snapshot.nodes['license-center'].pairing_state, 'connected');
+  assert.deepEqual(snapshot.deployment.connected_roles, ['license-center']);
+
+  current += 121000;
+  assert.equal(monitor.status().nodes['license-center'].pairing_state, 'stale');
+  await call(monitor, { url: '/v1/report', method: 'POST', credential: pairedNode,
+    body: JSON.stringify({ files: { 'app.js': 'b'.repeat(64) },
+      host_scan: { ...hostScan, checked_at: new Date(current).toISOString() } }) });
+  assert.equal(monitor.status().nodes['license-center'].pairing_state, 'attention-required');
 });
 
 test('identity posture warns on staged or unknown certificates and fails on expiration', () => {

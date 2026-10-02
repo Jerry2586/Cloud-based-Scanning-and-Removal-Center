@@ -28,7 +28,22 @@ sudo sh ./install.sh --host security.example.com
 
 配置、证书和身份保存在 `/etc/appgog-security`，运行状态和加密备份保存在 `/var/lib/appgog-security`，版本程序保存在 `/opt/appgog-security/releases`。备份密钥 `/etc/appgog-security/backup.key` 不包含在备份包内，必须单独离线保管；密钥丢失时加密备份无法恢复。正式环境不要把这三个目录或任何令牌、私钥提交到 Git。
 
-安装完成输入 `appgog-security` 打开 Linux 管理菜单，可查看状态、启停、日志、诊断、安全更新、加密备份、事务恢复和保留数据卸载。首次配对前，从服务器控制台独立记录安装器输出的 CA SHA-256 指纹，业务机连接时必须核对。安装成功只证明云端本机通过认证健康检查，不代表授权/打包节点已配对，也不代表双机或三机容灾演练已经完成。
+安装完成输入 `appgog-security` 打开 Linux 可视化管理菜单。菜单既负责状态、启停、日志、诊断、签名更新、加密备份、事务恢复和保留数据卸载，也提供授权中心与打包中心的注册、身份包导出、连接状态和两阶段身份轮换。首次配对前，从服务器控制台独立记录安装器输出的 CA SHA-256 指纹，业务机连接时必须核对。安装成功只证明云端本机通过认证健康检查，不代表授权/打包节点已配对，也不代表双机或三机容灾演练已经完成。
+
+网页只读面板地址固定为 `https://HOST:9443/dashboard`。它显示节点注册、认证连接、报告新鲜度、文件完整性、宿主检查、证书状态和安全事件，不提供远程终端、远程删除或云端主动修复。页面使用 reader 客户端证书与独立 Basic 凭据双重认证；reader 身份只交付管理员浏览器，绝不能复制到授权或打包业务服务器。
+
+Linux 管理菜单中的节点对接项为：
+
+| 菜单 | 功能 |
+|---|---|
+| 11 | 进入单双机拓扑节点对接子菜单 |
+| 12 | 注册授权中心的 HTTPS 健康地址和可信文件基线 |
+| 13 | 注册打包中心的 HTTPS 健康地址和可信文件基线 |
+| 14 | 导出授权与打包同机部署所需的双角色身份包 |
+| 15 | 仅导出独立授权服务器身份包 |
+| 16 | 仅导出独立打包服务器身份包 |
+| 17 | 查看节点注册、认证连接、探测、完整性、证书和处置建议 |
+| 18 | 对 reader、授权或打包身份执行 `stage` / `commit` 两阶段轮换 |
 
 源码方式仅用于开发维护：在可信源码目录运行 `sudo bash scripts/install-linux.sh --host security.example.com`。它不能替代正式签名 Release。
 
@@ -43,7 +58,22 @@ sudo bash scripts/enroll-node.sh build-center https://build.example.com/health /
 sudo bash scripts/export-business-bundle.sh all /root/business-pairing
 ```
 
-同机业务安装用 `all` 导出的身份包，复制到该机的私有目录，再运行其版本化 `scripts/security-connect.sh`。三台服务器分别安装时，只能分别导出 `license` 和 `build`，禁止给打包机发放 `reader` 身份。业务仓库的安装器支持 `--role license` 和 `--role build`；打包分机首装需要授权后台分别签发的两个节点凭据。分机方案仍需在真实 Linux 主机上完成首装、升级和断线验收。
+同机业务安装用 `all` 导出的身份包，复制到该机的私有目录，再运行其版本化 `scripts/security-connect.sh`。这对应双机总架构：一台独立云端安全中心，加一台同时运行授权中心和打包中心的业务服务器。命令行等价操作是：
+
+```sh
+sudo appgog-security enroll license-center https://auth.example.com/health /root/appgog-baseline.json
+sudo appgog-security enroll build-center https://build.example.com/health /root/appgog-baseline.json
+sudo appgog-security export all /root/business-pairing
+```
+
+三机总架构中，云端、授权中心、打包中心各占一台服务器。必须分别导出 `license` 和 `build` 身份包并只交付给对应主机，禁止混发角色，更禁止给业务服务器发放 `reader` 身份：
+
+```sh
+sudo appgog-security export license /root/license-pairing
+sudo appgog-security export build /root/build-pairing
+```
+
+业务仓库的安装器支持 `--role license` 和 `--role build`；打包分机首装需要授权后台分别签发的两个节点凭据。双机和三机方案都必须在真实 Linux 主机上完成首装、签名升级、错误凭据拒绝、断线自治和恢复验收。身份包包含对应角色的客户端证书、私钥、独立令牌、CA 证书与拓扑元数据，不包含云端 CA 私钥、reader 身份或后台令牌。
 
 ### 只读 API 与安全面板
 

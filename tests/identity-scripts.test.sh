@@ -61,12 +61,75 @@ export PATH="$WORK/bin:$PATH"
 cp "$CONF/empty.normalized.json" "$CONF/config.json"
 printf '{"app.js":"%064d"}\n' 0 > "$WORK/baseline.json"
 
+if (cd "$WORK" && SECURITY_CONFIG_DIR="$CONF" bash "$ROOT/scripts/enroll-node.sh" \
+  license-center https://license.example.test/health baseline.json >/dev/null 2>&1); then
+  fail 'relative baseline path was accepted'
+fi
+ln -s "$WORK/baseline.json" "$WORK/baseline-link.json"
+if SECURITY_CONFIG_DIR="$CONF" bash "$ROOT/scripts/enroll-node.sh" license-center \
+  https://license.example.test/health "$WORK/baseline-link.json" >/dev/null 2>&1; then
+  fail 'symbolic-link baseline was accepted'
+fi
+printf '{}\n' > "$WORK/empty-baseline.json"
+if SECURITY_CONFIG_DIR="$CONF" bash "$ROOT/scripts/enroll-node.sh" license-center \
+  https://license.example.test/health "$WORK/empty-baseline.json" >/dev/null 2>&1; then
+  fail 'empty baseline was accepted'
+fi
+if SECURITY_CONFIG_DIR="$CONF" bash "$ROOT/scripts/enroll-node.sh" license-center \
+  'https://user@example.test/health' "$WORK/baseline.json" >/dev/null 2>&1; then
+  fail 'credential-bearing health URL was accepted'
+fi
+
+config_hash=$(sha256sum "$CONF/config.json" | awk '{print $1}')
+touch "$WORK/systemctl-fail-once"
+if SYSTEMCTL_FAIL_ONCE_FILE="$WORK/systemctl-fail-once" SECURITY_CONFIG_DIR="$CONF" \
+  bash "$ROOT/scripts/enroll-node.sh" license-center https://license.example.test/health \
+  "$WORK/baseline.json" >/dev/null 2>&1; then
+  fail 'enrollment succeeded after service restart failure'
+fi
+[[ $(sha256sum "$CONF/config.json" | awk '{print $1}') == "$config_hash" ]] \
+  || fail 'enrollment restart failure did not restore configuration'
+compgen -G "$CONF/credentials/license-center.*" >/dev/null \
+  && fail 'enrollment restart failure left role credentials'
+
 for role in license-center build-center; do
   SECURITY_CONFIG_DIR="$CONF" bash "$ROOT/scripts/enroll-node.sh" "$role" \
     "https://$role.example.test/health" "$WORK/baseline.json" >/dev/null
   assert_jq ".nodes[\"$role\"].role == \"$role\" and (.nodes[\"$role\"].identities | length == 1)" \
     "$CONF/config.json" "$role enrollment failed"
 done
+
+for profile in all license build; do
+  destination="$WORK/export-$profile"
+  SECURITY_CONFIG_DIR="$CONF" bash "$ROOT/scripts/export-business-bundle.sh" "$profile" "$destination" >/dev/null
+  [[ -s $destination/ca.crt && -s $destination/bundle.json ]] || fail "$profile export is incomplete"
+  [[ ! -e $destination/ca.key && ! -e $destination/reader.crt && ! -e $destination/reader.key \
+    && ! -e $destination/reader.token ]] || fail "$profile export leaked cloud or reader credentials"
+  assert_jq ".profile == \"$profile\" and .ca_sha256_fingerprint == \"$(openssl x509 -in "$CONF/ca.crt" -noout -fingerprint -sha256 | cut -d= -f2)\"" \
+    "$destination/bundle.json" "$profile bundle metadata is invalid"
+done
+jq -e '.roles == ["license","build"]' "$WORK/export-all/bundle.json" >/dev/null \
+  || fail 'all export roles are invalid'
+jq -e '.roles == ["license"]' "$WORK/export-license/bundle.json" >/dev/null \
+  || fail 'license export roles are invalid'
+jq -e '.roles == ["build"]' "$WORK/export-build/bundle.json" >/dev/null \
+  || fail 'build export roles are invalid'
+[[ -s $WORK/export-all/license.key && -s $WORK/export-all/build.key ]] || fail 'all export missed a business identity'
+[[ -s $WORK/export-license/license.key && ! -e $WORK/export-license/build.key ]] || fail 'license export crossed role boundary'
+[[ -s $WORK/export-build/build.key && ! -e $WORK/export-build/license.key ]] || fail 'build export crossed role boundary'
+
+mkdir -p "$WORK/existing-export"
+if SECURITY_CONFIG_DIR="$CONF" bash "$ROOT/scripts/export-business-bundle.sh" all \
+  "$WORK/existing-export" >/dev/null 2>&1; then
+  fail 'existing export destination was accepted'
+fi
+if (cd "$WORK" && SECURITY_CONFIG_DIR="$CONF" bash "$ROOT/scripts/export-business-bundle.sh" all \
+  relative-export >/dev/null 2>&1); then
+  fail 'relative export destination was accepted'
+fi
+if SECURITY_CONFIG_DIR="$CONF" bash "$ROOT/scripts/export-business-bundle.sh" all /root >/dev/null 2>&1; then
+  fail 'dangerous export destination was accepted'
+fi
 
 for role in reader license-center build-center; do
   old_fp=$(jq -r "if \"$role\" == \"reader\" then .readers[0].identities[0].fingerprint256 else .nodes[\"$role\"].identities[0].fingerprint256 end" "$CONF/config.json")

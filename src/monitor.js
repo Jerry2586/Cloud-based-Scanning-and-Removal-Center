@@ -166,13 +166,25 @@ export function createMonitor({ nodes, readers, policy, stateFile, now = () => D
     const reportFresh = Boolean(state.reports[name]?.at && now() >= Date.parse(state.reports[name].at)
       && now() - Date.parse(state.reports[name].at) < 120000);
     const hostScan = hostSnapshot(name);
+    const certificate = certificateState(config.identities ?? [config], now());
     const summaryState = worst([
       integrity.state === 'changed' ? 'finding' : integrity.state === 'matched' ? 'ok' : 'unavailable',
       probeState.state === 'healthy' ? 'ok' : 'unavailable', reportFresh ? 'ok' : (integrity.state === 'unknown' ? 'unavailable' : 'stale'),
       ['ok', 'warning', 'finding', 'stale'].includes(hostScan.state) ? hostScan.state : 'unavailable',
+      certificate.state === 'expired' ? 'finding' : certificate.state === 'healthy' ? 'ok' : 'warning',
     ]);
+    const pairingState = !state.reports[name] ? 'waiting-first-report'
+      : certificate.state === 'expired' || summaryState === 'finding' ? 'attention-required'
+        : !reportFresh ? 'stale' : summaryState === 'ok' ? 'connected' : 'attention-required';
+    const recommendedAction = pairingState === 'waiting-first-report' ? '将该角色身份包安全导入业务服务器并启动本地上报代理'
+      : pairingState === 'stale' ? '检查业务代理、网络与证书，恢复经过认证的定时上报'
+        : pairingState === 'attention-required' ? '核对完整性、宿主检查、证书与公网健康探测'
+          : '保持本地代理运行并按计划轮换身份';
     return {
-      role: config.role ?? name, summary_state: summaryState,
+      role: config.role ?? name, configured: true, summary_state: summaryState,
+      identity_state: 'identity-created', certificate_state: certificate.state,
+      certificate_not_after: certificate.not_after, pairing_state: pairingState,
+      recommended_action: recommendedAction,
       probe: state.probes[name] ?? { state: 'unknown' },
       integrity,
       last_report_at: state.reports[name]?.at ?? null,
@@ -200,10 +212,23 @@ export function createMonitor({ nodes, readers, policy, stateFile, now = () => D
     const nodeStatuses = Object.fromEntries(Object.entries(nodes).map(([name, config]) => [name, nodeSnapshot(name, config)]));
     const nodeStates = Object.values(nodeStatuses).map(node => node.summary_state);
     const operationalState = nodeStates.length ? worst(nodeStates) : 'unavailable';
+    const requiredRoles = ['license-center', 'build-center'];
+    const configuredRoles = requiredRoles.filter(role => Object.hasOwn(nodeStatuses, role));
+    const connectedRoles = configuredRoles.filter(role => nodeStatuses[role].pairing_state === 'connected');
+    const deploymentState = configuredRoles.length === 0 ? 'not-enrolled'
+      : configuredRoles.length < requiredRoles.length ? 'partial' : 'ready';
     return {
     generated_at: new Date(now()).toISOString(),
     summary_state: worst([operationalState, identityStatus().summary_state]),
     identity_state: identityStatus().summary_state,
+    deployment: {
+      state: deploymentState,
+      mode: configuredRoles.length === requiredRoles.length ? 'combined-or-split' : 'incomplete',
+      supported_modes: ['combined-business', 'split-business'],
+      configured_roles: configuredRoles,
+      connected_roles: connectedRoles,
+      required_roles: requiredRoles,
+    },
     nodes: nodeStatuses,
     events: state.events.slice(0, 40),
   }; };
