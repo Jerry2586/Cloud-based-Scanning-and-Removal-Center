@@ -28,6 +28,8 @@ jobs:
           done < <(find . -type f \( -name '*.sh' -o -name '*.run' \) -not -path './.git/*' -print | sort)
       - name: Test environment preparation and bootstrap failure decisions (mocked, non-destructive)
         run: bash tests/install-environment.test.sh
+      - name: Check copyable Git install commands match the tested entry
+        run: node scripts/render-git-install.js --check
       - name: Validate release verifier syntax
         run: node --check scripts/verify-release.js
       - name: Test Linux identity migration, enrollment and rotation
