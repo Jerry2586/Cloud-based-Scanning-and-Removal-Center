@@ -91,7 +91,7 @@ ic_tx_recover() {
   fi
   if [[ -s $snapshot/install.json ]]; then
     ic_load || return 1
-    if [[ -f $snapshot/container-running ]]; then ic_compose up -d || result=1; ic_wait || result=1; fi
+    if [[ -f $snapshot/container-running ]]; then ic_compose up -d || result=1; ic_wait || result=1; [[ $ROLE != local ]] || ic_scan_wait || result=1; fi
   fi
   if ((result)); then echo '恢复尚未通过健康检查，事务记录保留，下一次运行将继续恢复。' >&2; return 1; fi
   rm -f -- "$BASE/transaction.json" || return 1

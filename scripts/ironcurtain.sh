@@ -92,7 +92,7 @@ os.chmod(file,0o600)
   python3 "$SOURCE/src/host/agent.py" --validate-profile --profile "$STAGE/profile.json"
   ic_admin_begin profile
   install -m 600 "$STAGE/profile.json" "$CONF/profile.json.new"; mv -f "$CONF/profile.json.new" "$CONF/profile.json"
-  if ! systemctl restart ironcurtain-agent.service || ! ic_agent_wait; then
+  if ! systemctl restart ironcurtain-agent.service || ! ic_scan_wait; then
     ic_fail '扫描代理未启动，将恢复之前的保护配置'
   fi
   audit profile-saved; ic_admin_finish; echo '保护配置已保存。缺少签名基线或病毒引擎的项目会显示未就绪。'

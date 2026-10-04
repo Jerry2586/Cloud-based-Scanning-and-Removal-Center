@@ -39,13 +39,14 @@ ic_compose() {
 ic_load() { IMAGE=fixture; }
 ic_wait() { [[ $FAIL_HEALTH == false ]]; }
 ic_agent_wait() { [[ $AGENT_RUNNING == true && $FAIL_HEALTH == false ]]; }
+ic_scan_wait() { [[ $AGENT_RUNNING == true && $CONTAINER_RUNNING == true && $FAIL_SCAN == false ]]; }
 number=0
 fixture() {
   number=$((number+1)); ROLE=local
   BASE=$WORK/case-$number/base; CONF=$WORK/case-$number/config; DATA=$WORK/case-$number/data
   MENU=$WORK/case-$number/menu; AGENT_UNIT=$WORK/case-$number/agent.service
   CONTAINER=fixture; CONTAINER_RUNNING=true; AGENT_RUNNING=true; AGENT_ENABLED=true
-  FAIL_DOWN=false; FAIL_HEALTH=false; IC_ADMIN_TX=''; IC_TX=''
+  FAIL_DOWN=false; FAIL_HEALTH=false; FAIL_SCAN=false; IC_ADMIN_TX=''; IC_TX=''
   install -d -m 750 "$BASE/releases/1.0.0" "$CONF" "$DATA"
   printf '{"schema":1}\n' > "$BASE/install.json"; chmod 600 "$BASE/install.json"
   ln -s "$BASE/releases/1.0.0" "$BASE/current"
@@ -101,6 +102,14 @@ assert_old
 [[ $(cat "$DATA/value") == old-data && $(cat "$MENU") == old-menu && $(cat "$AGENT_UNIT") == old-agent ]]
 [[ $CONTAINER_RUNNING == true && $AGENT_RUNNING == true && $AGENT_ENABLED == true ]]
 pass 'installation restores configuration, data, menu and agent'
+fixture
+ic_tx_begin; ic_tx_mutating; printf changed > "$CONF/value"
+FAIL_SCAN=true
+if ic_tx_recover; then echo 'Expected scanner channel failure' >&2; exit 1; fi
+[[ -f $BASE/transaction.json ]]; assert_old
+FAIL_SCAN=false; ic_tx_recover; assert_old
+[[ ! -e $BASE/transaction.json ]]
+pass 'installation recovery waits for restored scanner channel and supports retry'
 fixture
 CONTAINER_RUNNING=false; AGENT_RUNNING=false; AGENT_ENABLED=false
 ic_tx_begin; ic_tx_mutating; printf changed > "$CONF/value"; ic_tx_recover

@@ -96,7 +96,7 @@ if [[ -f $BASE/current/package.json ]]; then
     [[ $DIGEST == "$(cat "$BASE/current/.payload-sha256")" && $(payload_digest "$BASE/current") == "$DIGEST" ]] || ic_fail '相同版本源码内容不同，需发布新版本'
     ic_load
     ic_healthy || ic_fail '当前版本服务不健康，请从菜单诊断，避免自动覆盖'
-    [[ $ROLE != local ]] || ic_agent_wait || ic_fail '本地扫描代理不可用，请运行 ironcurtain doctor'
+    [[ $ROLE != local ]] || ic_scan_wait || ic_fail '本地扫描代理不可用，请运行 ironcurtain doctor'
     echo "当前版本 $VERSION 已安装且健康。"; exit 0
   fi
 fi
@@ -215,7 +215,7 @@ ic_compose config --quiet
 ic_compose up -d --wait --wait-timeout 90
 ic_wait || ic_fail '容器 HTTPS 身份健康检查未通过'
 if [[ $ROLE == local ]]; then
-  ic_agent_wait || ic_fail '宿主扫描器或容器扫描通道不可用'
+  ic_scan_wait || ic_fail '宿主扫描器或容器扫描通道不可用'
 fi
 ic_tx_finish
 SUCCESS=true

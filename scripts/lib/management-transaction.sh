@@ -55,6 +55,7 @@ ic_admin_recover() {
     if [[ -f $snapshot/container-running ]]; then
       ic_compose up -d || result=1
       ic_wait || result=1
+      if [[ $ROLE == local && -f $snapshot/agent-active ]]; then ic_scan_wait || result=1; fi
     fi
     (( result == 0 )) || { echo '旧配置恢复未通过健康检查，恢复记录保留。' >&2; return 1; }
   fi

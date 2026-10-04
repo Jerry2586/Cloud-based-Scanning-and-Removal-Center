@@ -61,7 +61,7 @@ runtime_inode=$(stat -c '%d:%i' /run/ironcurtain)
 systemctl stop ironcurtain-agent.service
 [[ $(stat -c '%d:%i' /run/ironcurtain) == "$runtime_inode" ]]
 systemctl start ironcurtain-agent.service
-ic_agent_wait
+ic_scan_wait
 [[ $(stat -c '%d:%i' /run/ironcurtain) == "$runtime_inode" ]]
 node "$SOURCE/tests/helpers/independent-deployment-probe.js"
 bash "$SOURCE/scripts/install-independent.sh" --role local
