@@ -162,11 +162,11 @@ private_release_file() (
     printf '%s\n' "$api" | grep -Eq '^http://(127\.0\.0\.1|localhost):[0-9]+/' || return 1
   fi
   if [ "$release" = latest ]; then endpoint="$api/latest"; else endpoint="$api/tags/v$release"; fi
-  curl -fsS --connect-timeout 15 --max-time 180 --retry 2 \
+  curl -q -fsS --connect-timeout 15 --max-time 180 --retry 2 \
     -H @"$scratch/headers" -H 'Accept: application/vnd.github+json' "$endpoint" -o "$scratch/release" || return 1
   asset=$(jq -er --arg name "$name" '.assets[] | select(.name == $name and .state == "uploaded") | .url' "$scratch/release") || return 1
   printf '%s\n' "$asset" | grep -Eq "^$api/assets/[0-9]+$" || return 1
-  status=$(curl -fsS --connect-timeout 15 --max-time 180 --retry 2 -D "$scratch/asset.headers" \
+  status=$(curl -q -fsS --connect-timeout 15 --max-time 180 --retry 2 -D "$scratch/asset.headers" \
     -H @"$scratch/headers" -H 'Accept: application/octet-stream' "$asset" -o "$destination" -w '%{http_code}') || return 1
   case "$status" in
     200) return 0 ;;
@@ -184,19 +184,26 @@ private_release_file() (
     *) return 1 ;;
   esac
   printf '%s\n' "$location" | grep -Eq '^[a-z]+://[^/@]+(:[0-9]+)?/[^[:space:]]+$' || return 1
-  curl -fsS --connect-timeout 15 --max-time 300 --retry 2 "$location" -o "$destination"
+  curl -q -fsS --connect-timeout 15 --max-time 300 --retry 2 "$location" -o "$destination"
 )
 
 download_file() {
   base=$1 name=$2 destination=$3
+  RELEASE_FAILURE=download
   case "$base" in
     private:*) private_release_file "${base#private:}" "$name" "$destination" ;;
     http://127.0.0.1:*|http://localhost:*)
       [ "${APPGOG_SECURITY_ALLOW_INSECURE_TEST_SOURCE:-false}" = true ] || return 1
       [ "${SECURITY_TEST_MODE:-false}" = true ] && [ "${APPGOG_SECURITY_ALLOW_TEST_MODE:-false}" = true ] || return 1
-      curl --proto =http -fsSL --connect-timeout 5 --max-time 30 "${base%/}/$name" -o "$destination"
+      curl -q --proto =http -fsSL --connect-timeout 5 --max-time 30 "${base%/}/$name" -o "$destination"
       ;;
-    *) curl --proto =https --proto-redir =https -fsSL --connect-timeout 15 --max-time 300 --retry 2 "${base%/}/$name" -o "$destination" ;;
+    *)
+      if curl -q --proto =https --proto-redir =https -fsSL --connect-timeout 15 --max-time 300 --retry 2 \
+        "${base%/}/$name" -o "$destination" -w '%{http_code}' > "$WORK/http-status"; then return 0; fi
+      case "$(cat "$WORK/http-status")" in 401|404) RELEASE_FAILURE=auth ;; esac
+      printf '公开下载失败：%s（HTTP %s）。\n' "$name" "$(cat "$WORK/http-status")" >&2
+      return 1
+      ;;
   esac
 }
 
@@ -209,7 +216,7 @@ write_public_key() {
   fi
   cat > "$destination" <<'EOF'
 -----BEGIN PUBLIC KEY-----
-MCowBQYDK2VwAyEASovXSUYB8pbR/a1ChjO/OFlqQhHECKP5lh0FzJ2ypvI=
+MCowBQYDK2VwAyEAVBI4YhrFDROYGYbD6FvJTnYvn5+ryDmCcJSL5TszJfY=
 -----END PUBLIC KEY-----
 EOF
 }
@@ -218,8 +225,12 @@ try_release() {
   base=$1
   download_file "$base" release-manifest.json "$WORK/release-manifest.json" || return 1
   download_file "$base" release-manifest.json.sig "$WORK/release-manifest.json.sig" || return 1
+  RELEASE_FAILURE=signature
   openssl pkeyutl -verify -pubin -inkey "$WORK/release-public.pem" -rawin \
-    -in "$WORK/release-manifest.json" -sigfile "$WORK/release-manifest.json.sig" >/dev/null 2>&1 || return 1
+    -in "$WORK/release-manifest.json" -sigfile "$WORK/release-manifest.json.sig" >/dev/null 2>&1 || {
+      printf '发布清单签名验证失败；停止安装，不需要输入 Token。\n' >&2; return 1;
+    }
+  RELEASE_FAILURE=manifest
   schema=$(jq -er '.schema' "$WORK/release-manifest.json") || return 1
   product=$(jq -er '.product' "$WORK/release-manifest.json") || return 1
   TARGET_VERSION=$(jq -er '.version' "$WORK/release-manifest.json") || return 1
@@ -231,6 +242,7 @@ try_release() {
   printf '%s\n' "$RUN_SHA256" | grep -Eq '^[0-9a-f]{64}$' || return 1
   [ -z "$REQUESTED_VERSION" ] || [ "$REQUESTED_VERSION" = "$TARGET_VERSION" ] || return 1
   download_file "$base" "$RUN_NAME" "$WORK/installer.run" || return 1
+  RELEASE_FAILURE=hash
   printf '%s  %s\n' "$RUN_SHA256" "$WORK/installer.run" | sha256sum -c - >/dev/null 2>&1 || return 1
 }
 
@@ -255,12 +267,12 @@ case "$SOURCE_MODE" in
   custom) try_release "$RELEASE_BASE" || fail '自定义发布源不可用或签名校验失败。' ;;
   auto|github)
     if try_release "$SELECTED_BASE"; then :
-    elif ! private_release_enabled && request_release_token; then
+    elif [ "$RELEASE_FAILURE" = auth ] && ! private_release_enabled && request_release_token; then
       check_token_file
       if [ -n "$REQUESTED_VERSION" ]; then SELECTED_BASE="private:$REQUESTED_VERSION"; else SELECTED_BASE=private:latest; fi
       try_release "$SELECTED_BASE" || fail '认证下载或签名/哈希验证失败；检查令牌仓库权限、正式 Release 和网络。'
     else
-      fail '下载或签名/哈希验证失败。私有仓库需本仓库只读 Token：交互执行可隐藏输入；自动化请用 --token-file /绝对路径/令牌文件。'
+      fail "正式包安装被阻止（阶段：$RELEASE_FAILURE）。请检查上方下载/验签错误；已保存 Token 时另核对其仓库权限。"
     fi ;;
 esac
 

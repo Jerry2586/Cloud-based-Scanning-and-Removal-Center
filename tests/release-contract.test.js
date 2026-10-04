@@ -23,3 +23,12 @@ test('signed release contracts preserve legacy and require independent roles on 
   }
   assert.deepEqual(current, { ...legacyContract, independent: independentContract });
 });
+
+// The standalone bootstrap must pin this product's release key, never APPGOG's key.
+test('standalone installer pins exactly the independent release public key', () => {
+  const installer = readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
+  const key = installer.match(/-----BEGIN PUBLIC KEY-----[\s\S]*?-----END PUBLIC KEY-----/);
+  assert.ok(key, 'bootstrap public key is missing');
+  assert.equal(key[0].trim(), readFileSync(new URL('../release-public.pem', import.meta.url), 'utf8').replaceAll('\r', '').trim());
+  assert.notEqual(key[0].trim(), readFileSync(new URL('../integrations/appgog/release-public.pem', import.meta.url), 'utf8').replaceAll('\r', '').trim());
+});
