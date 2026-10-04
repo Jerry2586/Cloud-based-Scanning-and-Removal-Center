@@ -55,6 +55,15 @@ ic_role local; ic_load
 mv "$PAIR/identity" "$CONF/runtime/cloud"
 chown root:10001 "$CONF/runtime/cloud" "$CONF/runtime/cloud/"*; chmod 750 "$CONF/runtime/cloud"; chmod 640 "$CONF/runtime/cloud/"*
 node "$SOURCE/tests/helpers/independent-deployment-probe.js"
+# Agent restarts must preserve the directory inode bound into the web container.
+[[ $(stat -c '%a:%u:%g' /run/ironcurtain) == 750:0:10001 ]]
+runtime_inode=$(stat -c '%d:%i' /run/ironcurtain)
+systemctl stop ironcurtain-agent.service
+[[ $(stat -c '%d:%i' /run/ironcurtain) == "$runtime_inode" ]]
+systemctl start ironcurtain-agent.service
+ic_agent_wait
+[[ $(stat -c '%d:%i' /run/ironcurtain) == "$runtime_inode" ]]
+node "$SOURCE/tests/helpers/independent-deployment-probe.js"
 bash "$SOURCE/scripts/install-independent.sh" --role local
 bash "$SOURCE/scripts/install-independent.sh" --role cloud
 before=$(sha256sum /etc/ironcurtain/local/runtime/panel-auth.json /etc/ironcurtain/cloud/ca.key)

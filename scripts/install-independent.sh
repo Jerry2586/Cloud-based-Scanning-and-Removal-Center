@@ -159,13 +159,14 @@ After=network-online.target docker.service
 [Service]
 Type=simple
 User=root
+Group=10001
 ExecStart=/usr/bin/python3 $BASE/current/src/host/agent.py --profile $CONF/profile.json --state $DATA/agent --socket /run/ironcurtain/scan.sock --allowed-uid 10001 --group 10001
 Restart=on-failure
 RestartSec=5
 UMask=0077
 RuntimeDirectory=ironcurtain
 RuntimeDirectoryMode=0750
-ExecStartPre=/usr/bin/chown root:10001 /run/ironcurtain
+RuntimeDirectoryPreserve=yes
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
@@ -208,7 +209,7 @@ ic_compose config --quiet
 ic_compose up -d --wait --wait-timeout 90
 ic_wait || ic_fail '容器 HTTPS 身份健康检查未通过'
 if [[ $ROLE == local ]]; then
-  curl -fsS --unix-socket /run/ironcurtain/scan.sock http://localhost/status >/dev/null || ic_fail '宿主扫描器不可用'
+  ic_agent_wait || ic_fail '宿主扫描器或容器扫描通道不可用'
 fi
 ic_tx_finish
 SUCCESS=true

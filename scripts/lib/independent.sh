@@ -76,7 +76,8 @@ ic_certificate() {
 ic_agent_wait() {
   local i
   for i in {1..20}; do
-    if systemctl is-active --quiet ironcurtain-agent.service && curl --max-time 2 -fsS --unix-socket /run/ironcurtain/scan.sock http://localhost/status >/dev/null 2>&1; then return 0; fi
+    if systemctl is-active --quiet ironcurtain-agent.service && curl --max-time 2 -fsS --unix-socket /run/ironcurtain/scan.sock http://localhost/status >/dev/null 2>&1 &&
+      docker exec "$CONTAINER" node --input-type=module -e 'import {localSecurityScan} from "./src/local/scan-client.js"; const result=await localSecurityScan("status"); if(result.state==="unavailable")process.exit(1);' >/dev/null 2>&1; then return 0; fi
     sleep 1
   done
   return 1
