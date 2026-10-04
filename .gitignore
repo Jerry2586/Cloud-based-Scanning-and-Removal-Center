@@ -11,3 +11,8 @@ state.json
 node_modules/
 var/
 .codex/
+
+# Generated build/test artifacts.
+__pycache__/
+*.py[cod]
+dist/
