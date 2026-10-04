@@ -318,8 +318,8 @@ health_check() (
 repair_install_permissions() {
   local path
   [[ -d $RELEASE && -x $BASE/runtime/bin/node && -d $CONF && -d $DATA ]] || return 1
-  ensure_backup_key "$CONF/backup.key"
-  ensure_backup_key "$CONF/backup.mac.key"
+  ensure_backup_key "$CONF/backup.key" || return 1
+  ensure_backup_key "$CONF/backup.mac.key" || return 1
 
   chown "root:$SERVICE_GROUP" "$BASE" "$BASE/runtime" "$BASE/runtime/bin" "$BASE/releases"
   chmod 750 "$BASE" "$BASE/runtime" "$BASE/runtime/bin" "$BASE/releases"

@@ -18,9 +18,11 @@ for container in ironcurtain-local ironcurtain-cloud; do
 done
 # GitHub hosted runners keep /opt group-writable for tool caches. This test's
 # explicit disposable-runner gate allows preparing the production trust boundary.
-[[ -d /opt && ! -L /opt && $(realpath /opt) == /opt ]] || { echo 'Unsafe runner /opt path.' >&2; exit 1; }
-chown root:root /opt
-chmod 755 /opt
+for directory in /opt /usr /usr/local /usr/local/bin; do
+  [[ -d $directory && ! -L $directory && $(realpath "$directory") == "$directory" ]] || { echo 'Unsafe runner installation ancestor.' >&2; exit 1; }
+  chown root:root "$directory"
+  chmod 755 "$directory"
+done
 WORK=$(mktemp -d /opt/ironcurtain-deployment-test.XXXXXXXX)
 # Keep installed files on this ephemeral runner for diagnostics. Runner teardown removes them.
 install -d -m 750 "$WORK/source"
