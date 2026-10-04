@@ -32,6 +32,8 @@ jobs:
         run: sudo bash tests/identity-scripts.test.sh
       - name: Run monitor and real mutual TLS tests
         run: node --test
+      - name: Test root-owned signed program delivery and snapshot boundaries
+        run: sudo env "PATH=$PATH" node --test tests/release-delivery.test.js
       - name: Test signed install, update, rollback, backup and restore
         run: sudo env "PATH=$PATH" bash tests/release-install.test.sh
       - name: Test independent root transaction recovery (simulated services)

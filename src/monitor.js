@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { ruleSource, ruleSummary } from './rules.js';
 import { createServer } from 'node:https';
 import { renderDashboard } from './dashboard.js';
+import { releaseSource } from './release-store.js';
 
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 const equal = (left, right) => {
@@ -141,7 +142,7 @@ export function validateConfiguration(config) {
   return config;
 }
 
-export function createMonitor({ nodes, readers, policy, stateFile, now = () => Date.now(), probe = defaultProbe, rules = () => ({error:'RULE_MISSING'}) }) {
+export function createMonitor({ nodes, readers, policy, stateFile, now = () => Date.now(), probe = defaultProbe, rules = () => ({error:'RULE_MISSING'}), releases }) {
   const state = { probes: {}, reports: {}, reportFreshness: {}, reportIds: {}, hostReports: {}, hostReportState: {}, events: [] };
   if (stateFile) {
     try { Object.assign(state, normalizePersistedState(JSON.parse(readFileSync(stateFile, 'utf8')))); } catch (error) {
@@ -255,6 +256,7 @@ export function createMonitor({ nodes, readers, policy, stateFile, now = () => D
     nodes: nodeStatuses,
     events: state.events.slice(0, 40),
     rules: rulesStatus(),
+    releases: releases?.summary() ?? {state:'missing',delivery:'pull-only',activation:'local-admin'},
   }; };
   const rulesStatus = () => {const value=rules();return value.error ? {state:value.error==='RULE_MISSING'?'missing':'unavailable',delivery:'pull-only'} : ruleSummary(value);};
   const audit = () => {
@@ -308,6 +310,7 @@ export function createMonitor({ nodes, readers, policy, stateFile, now = () => D
     persist();
     return status();
   }
+  let releaseTransfers=0;
   async function handler(req, res) {
     const path = new URL(req.url, 'https://localhost').pathname;
     if (req.method === 'GET' && path === '/health') return reply(res, 200, { ok: true });
@@ -322,10 +325,29 @@ export function createMonitor({ nodes, readers, policy, stateFile, now = () => D
       const value=rules();
       return value.error ? reply(res,503,{error:'RULE_UNAVAILABLE'}) : reply(res,200,value.envelope);
     }
+    if (path.startsWith('/v1/releases/')) {
+      if (!readers.some(reader=>identity(req,reader)) && !Object.values(nodes).some(node=>identity(req,node))) return reply(res,403,{error:'AUTH_REQUIRED'});
+      if(req.method!=='GET' || new URL(req.url,'https://localhost').search) return reply(res,404,{error:'NOT_FOUND'});
+      if(!releases) return reply(res,503,{error:'RELEASE_UNAVAILABLE'});
+      if(path==='/v1/releases/latest') {
+        try {return reply(res,200,releases.latest());} catch {return reply(res,503,{error:'RELEASE_UNAVAILABLE'});}
+      }
+      const match=/^\/v1\/releases\/([0-9]+\.[0-9]+\.[0-9]+)\/([A-Za-z0-9.-]+)$/.exec(path);
+      if(!match)return reply(res,404,{error:'NOT_FOUND'});
+      if(releaseTransfers>=2)return reply(res,503,{error:'RELEASE_BUSY'});
+      releaseTransfers++; let finished=false;
+      const finish=()=>{if(!finished){finished=true;releaseTransfers--;}};
+      res.once('close',finish);res.once('finish',finish);
+      try {
+        const bytes=releases.asset(match[1],match[2]);
+        res.writeHead(200,{'content-type':'application/octet-stream','content-length':bytes.length,...securityHeaders});
+        return res.end(bytes);
+      } catch(error) {finish();return reply(res,error.message==='RELEASE_NOT_FOUND'?404:503,{error:'RELEASE_UNAVAILABLE'});}
+    }
     if (req.method === 'GET' && path === '/v1/node/status') {
       const entry = Object.entries(nodes).find(([, config]) => identity(req, config));
       if (!entry) return reply(res, 403, { error: 'AUTH_REQUIRED' });
-      return reply(res, 200, { identity: entry[0], generated_at: new Date(now()).toISOString(), node: nodeSnapshot(...entry), policy: publicPolicy(policy), rules: rulesStatus() });
+      return reply(res, 200, { identity: entry[0], generated_at: new Date(now()).toISOString(), node: nodeSnapshot(...entry), policy: publicPolicy(policy), rules: rulesStatus(), releases: releases?.summary() ?? {state:'missing'} });
     }
     if (req.method === 'GET' && path === '/v1/status') {
       if (!readers.some(reader => identity(req, reader))) return reply(res, 403, { error: 'AUTH_REQUIRED' });
@@ -424,7 +446,8 @@ export function startFromEnvironment(env = process.env) {
   const config = validateConfiguration(JSON.parse(readFileSync(env.SECURITY_CONFIG, 'utf8')));
   const monitor = createMonitor({ nodes: config.nodes ?? {}, readers: config.readers ?? [], policy: config.policy,
     stateFile: env.SECURITY_STATE_FILE ?? './var/state.json',
-    rules: ruleSource(join(dirname(env.SECURITY_CONFIG),'rules.json'),readFileSync(new URL('../release-public.pem',import.meta.url))) });
+    rules: ruleSource(join(dirname(env.SECURITY_CONFIG),'rules.json'),readFileSync(new URL('../release-public.pem',import.meta.url))),
+    releases: env.SECURITY_RELEASE_DIR ? releaseSource(env.SECURITY_RELEASE_DIR,readFileSync(new URL('../release-public.pem',import.meta.url))) : undefined });
   const server = createServer({ key: readFileSync(env.SECURITY_TLS_KEY), cert: readFileSync(env.SECURITY_TLS_CERT),
     ca: readFileSync(env.SECURITY_CLIENT_CA), requestCert: true, rejectUnauthorized: true }, monitor.handler);
   server.listen(Number(env.SECURITY_PORT ?? 9443), env.SECURITY_HOST ?? '0.0.0.0');

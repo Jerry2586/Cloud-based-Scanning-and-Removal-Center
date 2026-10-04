@@ -11,10 +11,10 @@
 发布回取命令仅用于开发/发布环境：
 
 ~~~sh
-node scripts/verify-published-release.js --tag v0.2.0 --expected-commit <已验收的40位提交> --output-dir <尚不存在的验收目录>
+node scripts/verify-published-release.js --tag v0.2.1 --expected-commit <已验收的40位提交> --output-dir <尚不存在的验收目录>
 ~~~
 
-如果签名、包内版本、标签、安装或回取验证失败，发布不能记为验收通过；修复后重新进入候选流程，不强推已发布标签。程序更新通过固定引导器验签安装；规则自动同步只更新数据规则，不自动运行新程序。
+如果签名、包内版本、标签、安装或回取验证失败，发布不能记为验收通过；修复后重新进入候选流程，不强推已发布标签。程序更新通过固定引导器，或由本地 root 菜单从玄武拉取、独立验签后安装；规则自动同步只更新数据规则，不自动运行新程序。候选与正式工作流均执行 root 文件缓存与快照边界测试，真实 Docker 部署验收包含云端菜单导入、损坏包拒绝与签名程序激活。
 
 官方病毒库公网获取有独立的人工触发工作流 Accept official antivirus database retrieval。它在一次性 Linux runner 调用真实 systemd 更新器、验证官方 CVD/CLD、加载并扫描正常与 EICAR 测试样本。CDN、限流或超时直接失败，不能改用测试库冒充联网成功。它与常规真实引擎的确定性测试分别报告。
 

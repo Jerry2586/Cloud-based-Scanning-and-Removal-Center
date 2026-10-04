@@ -1,7 +1,7 @@
 import { validateReleaseContract } from './release-contract.js';
 import { isDeepStrictEqual } from 'node:util';
 import { execFileSync } from 'node:child_process';
-import { createHash, verify } from 'node:crypto';
+import { createHash, createPublicKey, verify } from 'node:crypto';
 import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
@@ -34,11 +34,10 @@ function boundedFile(directory, name, maximum = MAX_ASSET_BYTES) {
   return readFileSync(file);
 }
 
-export function verifyRelease({ directory, publicKey, expectedVersion } = {}) {
-  directory = resolve(directory);
-  const manifestBytes = boundedFile(directory, 'release-manifest.json', 64 * 1024);
-  const signature = boundedFile(directory, 'release-manifest.json.sig', 64);
-  if (signature.length !== 64 || !verify(null, manifestBytes, publicKey, signature)) {
+export function verifyReleaseManifest({ manifestBytes, signature, publicKey, expectedVersion }) {
+  if (!Buffer.isBuffer(manifestBytes) || manifestBytes.length > 65536 || !Buffer.isBuffer(signature)) throw Error('Invalid manifest bytes');
+  const key = publicKey?.type === 'public' ? publicKey : createPublicKey(publicKey);
+  if (key.asymmetricKeyType !== 'ed25519' || signature.length !== 64 || !verify(null, manifestBytes, key, signature)) {
     throw Error('Release manifest signature verification failed');
   }
   const manifest = JSON.parse(manifestBytes);
@@ -47,6 +46,19 @@ export function verifyRelease({ directory, publicKey, expectedVersion } = {}) {
     || manifest.schema !== 1 || manifest.product !== 'appgog-cloud-security-center'
     || !/^\d+\.\d+\.\d+$/.test(manifest.version)) throw Error('Release manifest identity is invalid');
   if (expectedVersion !== undefined && manifest.version !== expectedVersion) throw Error('Unexpected release version');
+  validateReleaseContract(manifest.environment, manifest.version);
+  const prefix = 'APPGOG-Cloud-Security-Center-' + manifest.version;
+  for (const [field, extension] of [['tar', '.tar.gz'], ['run', '.run']]) {
+    if (manifest[field + '_name'] !== prefix + extension || !/^[a-f0-9]{64}$/.test(manifest[field + '_sha256'])) throw Error('Invalid artifact name or digest');
+  }
+  return manifest;
+}
+
+export function verifyRelease({ directory, publicKey, expectedVersion } = {}) {
+  directory = resolve(directory);
+  const manifestBytes = boundedFile(directory, 'release-manifest.json', 64 * 1024);
+  const signature = boundedFile(directory, 'release-manifest.json.sig', 64);
+  const manifest = verifyReleaseManifest({ manifestBytes, signature, publicKey, expectedVersion });
   if (!isDeepStrictEqual(readdirSync(directory).sort(), releaseAssetNames(manifest.version))) {
     throw Error('Release must contain exactly six expected assets');
   }

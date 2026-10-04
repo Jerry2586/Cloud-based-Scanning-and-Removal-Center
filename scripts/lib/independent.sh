@@ -50,6 +50,7 @@ ic_load() {
 }
 ic_env() {
   export IRONCURTAIN_IMAGE=$IMAGE IRONCURTAIN_CONFIG=$CONF IRONCURTAIN_DATA=$DATA/runtime
+  export IRONCURTAIN_RELEASES=$DATA/releases
   export IRONCURTAIN_PUBLIC_HOST=$HOST IRONCURTAIN_BIND=$BIND
 }
 ic_compose() { docker compose --project-name "$PROJECT" -f "$BASE/current/docker/compose.$ROLE.yml" "$@"; }

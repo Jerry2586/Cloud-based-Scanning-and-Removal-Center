@@ -1,5 +1,6 @@
 import { request } from 'node:https';
 import { sanitizeRules } from '../contracts/rule-status.js';
+import { sanitizeRelease } from '../contracts/release-status.js';
 import { randomUUID } from 'node:crypto';
 import { open, lstat } from 'node:fs/promises';
 import { constants } from 'node:fs';
@@ -70,7 +71,7 @@ export class CloudClient {
   async status() {
     const data=await this.call('/v1/node/status');
     if(data.identity!==this.nodeId || !data.node || !data.policy || data.policy.delivery!=='pull-only' || data.policy.remote_execution!==false) throw Error('CLOUD_IDENTITY_MISMATCH');
-    return {state:'connected', connected:true, generated_at:data.generated_at, node_id:this.nodeId, node:data.node, nodes:{[this.nodeId]:data.node}, policy:data.policy,rules:sanitizeRules(data.rules)};
+    return {state:'connected', connected:true, generated_at:data.generated_at, node_id:this.nodeId, node:data.node, nodes:{[this.nodeId]:data.node}, policy:data.policy,rules:sanitizeRules(data.rules),releases:sanitizeRelease(data.releases)};
   }
   async report(snapshot) {
     if(!snapshot || !freshHostScan(snapshot.scan) || !['complete','unavailable'].includes(snapshot.files_state) || !snapshot.files || typeof snapshot.files!=='object' || Array.isArray(snapshot.files) || Object.entries(snapshot.files).some(([name,digest])=>name.length>500 || !name.startsWith('/') || name.split('/').includes('..') || !/^[a-f0-9]{64}$/.test(digest))) throw Error('INCOMPLETE_LOCAL_REPORT');

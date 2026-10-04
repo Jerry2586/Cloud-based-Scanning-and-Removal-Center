@@ -22,9 +22,11 @@ services:
       SECURITY_CLIENT_CA: /etc/xuanwu/ca.crt
       SECURITY_CONFIG: /etc/xuanwu/config.json
       SECURITY_STATE_FILE: /var/lib/xuanwu/state.json
+      SECURITY_RELEASE_DIR: /var/lib/xuanwu-releases
     volumes:
       - ${IRONCURTAIN_CONFIG:?}/runtime:/etc/xuanwu:ro
       - ${IRONCURTAIN_DATA:?}:/var/lib/xuanwu
+      - ${IRONCURTAIN_RELEASES:?}:/var/lib/xuanwu-releases:ro
     healthcheck:
       test: [CMD, node, src/healthcheck.js]
       interval: 10s

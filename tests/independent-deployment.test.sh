@@ -99,7 +99,36 @@ bash "$SOURCE/scripts/install-independent.sh" --role cloud
 systemctl disable --now ironcurtain-rules-sync.timer
 before=$(sha256sum /etc/ironcurtain/local/runtime/panel-auth.json /etc/ironcurtain/cloud/ca.key)
 node -e 'const fs=require("fs"),p=process.argv[1],v=JSON.parse(fs.readFileSync(p));v.version=v.version.split(".").map((n,i)=>i===2?String(Number(n)+1):n).join(".");fs.writeFileSync(p,JSON.stringify(v,null,2)+"\n");' "$SOURCE/package.json"
-bash "$SOURCE/scripts/install-independent.sh" --role local --antivirus skip
+# Build the actual six-asset signed package with the isolated CI publisher.
+# The cloud imports through its real root menu; the local host pulls over mTLS.
+install -d -m 700 "$WORK/program-assets"
+bash "$SOURCE/scripts/package-release.sh" --source-dir "$SOURCE" --output-dir "$WORK/program-assets" --signing-key "$WORK/rules-publisher.key"
+version=$(jq -er .version "$SOURCE/package.json")
+python3 "$SOURCE/tests/helpers/release-menu-input.py" "$WORK/program-assets"
+/usr/local/bin/xuanwu release-status | jq -e --arg version "$version" '.state == "ready" and .version == $version' >/dev/null
+# Cache is read-only in the live non-root cloud container.
+[[ $(docker inspect ironcurtain-cloud --format '{{.Config.User}}') == 10001:10001 ]]
+[[ $(docker inspect ironcurtain-cloud --format '{{range .Mounts}}{{if eq .Destination "/var/lib/xuanwu-releases"}}{{.RW}}{{end}}{{end}}') == false ]]
+profile_before=$(sha256sum /etc/ironcurtain/local/profile.json)
+cloud_identity_before=$(sha256sum /etc/ironcurtain/local/runtime/cloud/*)
+rules_before=$(sha256sum /etc/ironcurtain/local/rules.json /etc/ironcurtain/local/rules.highwater.json)
+# Refuse a damaged downloaded RUN while retaining installed identity and version.
+active_run="/var/lib/ironcurtain/cloud/releases/$version/APPGOG-Cloud-Security-Center-$version.run"
+cp "$active_run" "$WORK/program-valid.run"
+printf damage >> "$active_run"
+installed_before=$(sha256sum /opt/ironcurtain/local/install.json)
+if /usr/local/bin/ironcurtain release-update; then echo 'Damaged cloud program accepted' >&2; exit 1; fi
+[[ $(sha256sum /opt/ironcurtain/local/install.json) == "$installed_before" ]]
+install -m 640 -o root -g 10001 "$WORK/program-valid.run" "$active_run"
+/usr/local/bin/ironcurtain release-update
+[[ $(jq -er .version /opt/ironcurtain/local/install.json) == "$version" ]]
+[[ $(jq -er .antivirus /opt/ironcurtain/local/install.json) == skip ]]
+[[ $(sha256sum /etc/ironcurtain/local/profile.json) == "$profile_before" ]]
+[[ $(sha256sum /etc/ironcurtain/local/runtime/cloud/*) == "$cloud_identity_before" ]]
+[[ $(sha256sum /etc/ironcurtain/local/rules.json /etc/ironcurtain/local/rules.highwater.json) == "$rules_before" ]]
+IRONCURTAIN_EXPECT_RULE_SEQUENCE=1 IRONCURTAIN_EXPECT_RELEASE_VERSION="$version" node "$SOURCE/tests/helpers/independent-deployment-probe.js"
+# Same signed cloud program can be re-downloaded and safely reused.
+/usr/local/bin/ironcurtain release-update
 bash "$SOURCE/scripts/install-independent.sh" --role cloud
 after=$(sha256sum /etc/ironcurtain/local/runtime/panel-auth.json /etc/ironcurtain/cloud/ca.key)
 [[ $before == "$after" ]] || { echo 'Upgrade replaced existing identity.' >&2; exit 1; }

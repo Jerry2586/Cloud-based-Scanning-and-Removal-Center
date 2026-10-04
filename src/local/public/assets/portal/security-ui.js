@@ -183,7 +183,7 @@ export function createSecurityUi({ state, can, request, notify }) {
     scanGeneration++;
     consoleView.clear('请登录后查看');
     securityRenderGeneration++;
-    for (const id of ['security-cloud-state', 'security-cloud-reason', 'security-identity', 'security-build-probe', 'security-license-probe', 'security-integrity', 'security-host-scan', 'security-build-host-scan', 'security-event-title', 'security-event-message', 'security-cloud-rules', 'security-local-rules']) {
+    for (const id of ['security-cloud-state', 'security-cloud-reason', 'security-identity', 'security-build-probe', 'security-license-probe', 'security-integrity', 'security-host-scan', 'security-build-host-scan', 'security-event-title', 'security-event-message', 'security-cloud-rules', 'security-local-rules', 'security-cloud-release']) {
       const node = $(id); if (node) node.textContent = '请登录后查看';
     }
     const status = $('security-local-state');
@@ -213,6 +213,7 @@ export function createSecurityUi({ state, can, request, notify }) {
       if (!data.connected) throw new Error(data.reason ?? '云端不可达');
       set('security-cloud-state', '云端已连接');
       set('security-cloud-rules',ruleLabel(data.rules));
+      set('security-cloud-release', data.releases?.state === 'ready' ? '云端提供 v' + data.releases.version + ' · Linux 菜单验签安装' : data.releases?.state === 'missing' ? '云端尚未导入程序包' : '云端发布状态无法核验');
       set('security-cloud-reason', `验证于 ${data.generated_at ?? '未知时间'}`);
       set('security-identity', '双重身份验证通过');
       const own = data.node ?? Object.values(data.nodes ?? {})[0];
@@ -233,6 +234,7 @@ export function createSecurityUi({ state, can, request, notify }) {
     } catch (error) {
       if (!current()) return;
       set('security-cloud-rules','云端规则状态无法核验');
+      set('security-cloud-release','云端发布状态无法核验');
       set('security-cloud-state', '无法验证'); set('security-cloud-reason', error.message);
       set('security-identity', '验证失败 / 未配置'); set('security-build-probe', '未知');
       set('security-license-probe', '未知'); set('security-integrity', '未知'); set('security-host-scan', '未知'); set('security-build-host-scan', '未知');

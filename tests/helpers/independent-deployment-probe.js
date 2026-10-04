@@ -55,4 +55,10 @@ if(process.env.IRONCURTAIN_EXPECT_RULE_SEQUENCE){
 const cloud=await call('/api/cloud/status');
 assert.equal(cloud.status,200);assert.equal(cloud.data.connected,true);assert.equal(cloud.data.node_id,'node-ci');
 assert.equal(cloud.data.policy.remote_execution,false);
+if(process.env.IRONCURTAIN_EXPECT_RELEASE_VERSION){
+ assert.equal(cloud.data.releases.state,'ready');
+ assert.equal(cloud.data.releases.version,process.env.IRONCURTAIN_EXPECT_RELEASE_VERSION);
+ assert.equal(cloud.data.releases.activation,'local-admin');
+ console.log('Authenticated live dashboard release metadata passed.');
+}
 console.log('Live independent HTTPS login, CSRF, host scanning and mTLS node connection passed.');

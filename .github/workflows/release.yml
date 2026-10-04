@@ -28,6 +28,7 @@ jobs:
           while IFS= read -r file; do bash -n "$file"; done < <(find . -type f -name '*.sh' -not -path './.git/*' -print | sort)
           node --check scripts/verify-release.js
           node --test
+          sudo env "PATH=$PATH" node --test tests/release-delivery.test.js
           sudo env "PATH=$PATH" bash tests/identity-scripts.test.sh
           sudo env "PATH=$PATH" bash tests/release-install.test.sh
           sudo env "PATH=$PATH" bash tests/independent-transactions.test.sh

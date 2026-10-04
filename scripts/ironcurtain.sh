@@ -12,7 +12,7 @@ source "$SOURCE/scripts/lib/management-transaction.sh"
 ic_role "$ROLE"
 ic_load
 [[ ! -e $BASE/transaction.json ]] || ic_fail '存在未完成的安装事务，请先重复运行安装命令恢复'
-STAGE='' IC_ADMIN_TX='' MANAGEMENT_LOCKED=false
+STAGE='' RELEASE_STAGE='' IC_ADMIN_TX='' MANAGEMENT_LOCKED=false
 cleanup() {
   local result=$?
   trap - EXIT INT TERM
@@ -23,6 +23,11 @@ cleanup() {
     [[ $STAGE == "$CONF/.admin."* && $(dirname "$STAGE") == "$CONF" ]] || exit 1
     ic_check_dir "$STAGE"
     rm -rf -- "$STAGE"
+  fi
+  if [[ -n $RELEASE_STAGE && -e $RELEASE_STAGE ]]; then
+    [[ $RELEASE_STAGE == "$DATA/.release."* && $(dirname "$RELEASE_STAGE") == "$DATA" ]] || exit 1
+    ic_check_dir "$RELEASE_STAGE"
+    rm -rf -- "$RELEASE_STAGE"
   fi
   exit "$result"
 }
@@ -274,6 +279,43 @@ rules_action() {
     python3 "$SOURCE/scripts/rules-client.py" "$ROLE" "$operation"
   fi
 }
+release_stage() {
+  ic_check_dir "$DATA"
+  RELEASE_STAGE=$(mktemp -d "$DATA/.release.XXXXXXXX")
+  chmod 700 "$RELEASE_STAGE"
+}
+release_cache() {
+  docker run --rm --network none --user 0:10001 --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 32 --memory 384m \
+    --mount "type=bind,source=$DATA/releases,target=/store" \
+    --mount "type=bind,source=$RELEASE_STAGE,target=/input,readonly" "$IMAGE" node scripts/release-cache.js "$1"
+}
+release_action() {
+  local operation=$1 input='' result='' run_name='' version=''
+  lock; release_stage
+  if [[ $ROLE == cloud ]]; then
+    [[ $operation != release-update ]] || ic_fail '玄武程序自身更新请选择签名安全更新'
+    if [[ $operation == release-import ]]; then
+      ask '六个正式签名附件所在的绝对目录：' input
+      [[ $input == /* ]] || ic_fail '请输入绝对目录'
+      python3 "$SOURCE/scripts/release-snapshot.py" "$input" "$RELEASE_STAGE"
+      release_cache import
+      audit release-import
+    else release_cache status; fi
+  else
+    [[ $operation == release-update ]] || ic_fail '本地程序从玄武更新请选择 release-update'
+    [[ -d $CONF/runtime/cloud ]] || ic_fail '请先加密配对玄武'
+    version=$(jq -er .version "$BASE/install.json")
+    result=$(docker run --rm --network bridge --user 0:0 --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 32 --memory 384m \
+      --mount "type=bind,source=$CONF/runtime/cloud,target=/identity,readonly" \
+      --mount "type=bind,source=$RELEASE_STAGE,target=/output" "$IMAGE" node scripts/release-pull.js "$version")
+    run_name=$(printf '%s' "$result" | jq -er 'select(.state == "verified") | .run_name')
+    [[ $run_name =~ ^APPGOG-Cloud-Security-Center-[0-9]+\.[0-9]+\.[0-9]+\.run$ ]] || ic_fail '验证结果无效'
+    audit release-pull-verified
+    # The installer takes this same lock and performs the existing transaction.
+    flock -u 9; exec 9>&-; MANAGEMENT_LOCKED=false
+    bash "$RELEASE_STAGE/$run_name" --role local --host "$HOST" --bind "$BIND"
+  fi
+}
 dispatch() {
   case "$1" in
     status) status ;; logs) ic_compose logs --tail 100 ;;
@@ -285,6 +327,7 @@ dispatch() {
     quarantine|restore-file) response "$([[ $1 == quarantine ]] && echo quarantine || echo restore)" ;;
     backup|verify-backup|restore-backup) recovery "$1" ;;
     rules-sync|rules-status) rules_action "$1" ;;
+    release-import|release-status|release-update) release_action "$1" ;;
     update) update ;; doctor) doctor ;; scan) scan ;; profile) profile ;;
     pair) pair ;; cloud-status) cloud_status ;; unpair) unpair ;;
     register) register ;; revoke) revoke ;; nodes) [[ $ROLE == cloud ]] || ic_fail '仅用于玄武'; jq -r '.nodes | keys[]' "$CONF/runtime/config.json" ;;
@@ -309,6 +352,7 @@ while true; do
   fi
   echo '22. 创建加密恢复包   23. 验证恢复包   24. 同机恢复（保留当前身份）'
   [[ $ROLE == local ]] && echo '25. 从玄武验签更新哈希规则   26. 本机规则状态' || echo '25. 导入已签名哈希规则   26. 云端规则状态'
+  [[ $ROLE == local ]] && echo '27. 从玄武验签下载并更新铁幕程序' || echo '27. 导入正式签名程序包   28. 云端程序发布状态'
   echo ' 0. 退出'
   ask '选择：' choice
   case "$choice" in
@@ -329,6 +373,8 @@ while true; do
     21) [[ $ROLE == local ]] || continue; action=restore-file ;;
     22) action=backup ;; 23) action=verify-backup ;; 24) action=restore-backup ;;
     25) action=rules-sync ;; 26) action=rules-status ;;
+    27) [[ $ROLE == local ]] && action=release-update || action=release-import ;;
+    28) [[ $ROLE == cloud ]] || continue; action=release-status ;;
     *) echo '请选择有效菜单项'; continue ;;
   esac
   bash "$SOURCE/scripts/ironcurtain.sh" --role "$ROLE" "$action" || echo '操作未完成；现有状态请运行诊断核对。'

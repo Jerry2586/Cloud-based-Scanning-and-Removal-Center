@@ -5,13 +5,13 @@ SOURCE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$SOURCE/scripts/lib/independent.sh"
 source "$SOURCE/scripts/lib/install-transaction.sh"
 source "$SOURCE/scripts/lib/management-transaction.sh"
-ROLE='' HOST='' BIND='' ENGINE_MODE=auto
+ROLE='' HOST='' BIND='' ENGINE_MODE=auto ENGINE_REQUESTED=false
 while (($#)); do
   case "$1" in
     --role) ROLE=${2:?missing role}; shift 2 ;;
     --host) HOST=${2:?missing host}; shift 2 ;;
     --bind) BIND=${2:?missing bind}; shift 2 ;;
-    --antivirus) ENGINE_MODE=${2:?missing antivirus mode}; shift 2 ;;
+    --antivirus) ENGINE_MODE=${2:?missing antivirus mode}; ENGINE_REQUESTED=true; shift 2 ;;
     *) ic_fail '用法：--role local|cloud [--host 域名或IPv4] [--bind IPv4]' ;;
   esac
 done
@@ -81,6 +81,8 @@ HOST=$REQUESTED_HOST BIND=$REQUESTED_BIND
 if [[ -e $BASE/install.json || -L $BASE/install.json ]]; then
   ic_load
   ic_admin_recover || ic_fail '上次管理操作尚未恢复，请先运行菜单诊断'
+  if ! $ENGINE_REQUESTED; then ENGINE_MODE=$(jq -er '.antivirus // "auto"' "$BASE/install.json"); fi
+  [[ $ENGINE_MODE == auto || $ENGINE_MODE == skip ]] || ic_fail '已保存的病毒引擎模式无效'
   old_host=$(jq -er '.host' "$BASE/install.json"); old_bind=$(jq -er '.bind' "$BASE/install.json")
   HOST=${REQUESTED_HOST:-$old_host}; BIND=${REQUESTED_BIND:-$old_bind}
   [[ $HOST == "$old_host" && $BIND == "$old_bind" ]] || ic_fail '更新保留原访问地址；变更地址需另行重签证书'
@@ -156,6 +158,11 @@ ic_env
 install -d -m 750 -o root -g 10001 "$CONF/runtime"
 install -d -m 700 "$CONF/credentials"
 install -d -m 700 -o 10001 -g 10001 "$DATA/runtime"
+if [[ $ROLE == cloud ]]; then
+  ic_trusted_dir "$DATA/releases"
+  chown root:10001 "$DATA/releases"
+  chmod 750 "$DATA/releases"
+fi
 if [[ $ROLE == local ]]; then
   if [[ ! -f $CONF/runtime/panel-auth.json ]]; then
     [[ -f $CONF/credentials/panel-auth.json ]] || ic_helper "$CONF/credentials" init-local
@@ -260,7 +267,7 @@ else
   chown root:10001 "$CONF/runtime/"*; chmod 640 "$CONF/runtime/"*
   chmod 600 "$CONF/ca.key"
 fi
-jq -n --arg role "$ROLE" --arg host "$HOST" --arg bind "$BIND" --arg image "$IMAGE" --arg version "$VERSION" '{schema:1,role:$role,host:$host,bind:$bind,image:$image,version:$version}' > "$BASE/install.json.new"
+jq -n --arg role "$ROLE" --arg host "$HOST" --arg bind "$BIND" --arg image "$IMAGE" --arg version "$VERSION" --arg antivirus "$ENGINE_MODE" '{schema:1,role:$role,host:$host,bind:$bind,image:$image,version:$version,antivirus:$antivirus}' > "$BASE/install.json.new"
 chmod 600 "$BASE/install.json.new"; mv -f "$BASE/install.json.new" "$BASE/install.json"
 ln -sfn "$RELEASE" "$BASE/current.next"; mv -Tf "$BASE/current.next" "$BASE/current"
 ic_check_dir /usr/local/bin
