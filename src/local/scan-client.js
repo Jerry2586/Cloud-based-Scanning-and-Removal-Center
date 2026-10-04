@@ -41,7 +41,7 @@ export function sanitizeFindings(value) {
   for (const item of value.findings) {
     if (!item || !/^[a-f0-9]{64}$/.test(item.id) || !/^[a-f0-9]{64}$/.test(item.sha256) ||
         typeof item.path !== 'string' || item.path.length > 1024 || !item.path.startsWith('/') || /[\x00-\x1f\x7f]/.test(item.path) ||
-        item.path.split('/').includes('..') || typeof item.signature !== 'string' || typeof item.signature!=='string' || !/^[A-Za-z0-9_.:/()!+\-]{1,160}$/.test(item.signature) ||
+        item.path.split('/').includes('..') || typeof item.signature !== 'string' || !/^[A-Za-z0-9_.:/()!+\-]{1,160}$/.test(item.signature) ||
         !safeTimestamp(item.observed_at) || !Number.isSafeInteger(item.size) || item.size < 0 || item.size > 67108864) return unavailable;
     items.push({id:item.id, path:item.path, signature:item.signature, sha256:item.sha256, size:item.size, observed_at:item.observed_at});
   }

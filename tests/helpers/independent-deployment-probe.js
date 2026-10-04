@@ -37,7 +37,12 @@ for(let attempt=0;attempt<90;attempt++){
 assert.ok(finished,'Actual host scan must complete');
 assert.equal(finished.progress.completed,finished.progress.total);
 assert.ok(finished.checks.length>=25);
-assert.equal(finished.checks.find(check=>check.id==='response.containment').state,'unavailable');
+// Fresh local installation has a readable, empty quarantine journal.
+// This check confirms the journal, not process blocking or automatic cleanup.
+assert.equal(finished.checks.find(check=>check.id==='response.containment').state,'ok');
+assert.deepEqual(finished.quarantine,{state:'empty',items:[],count:0,pending:0});
+assert.equal(finished.findings.length,0);
+assert.equal(finished.findings_total,0);
 const cloud=await call('/api/cloud/status');
 assert.equal(cloud.status,200);assert.equal(cloud.data.connected,true);assert.equal(cloud.data.node_id,'node-ci');
 assert.equal(cloud.data.policy.remote_execution,false);
