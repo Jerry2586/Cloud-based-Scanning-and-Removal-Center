@@ -80,6 +80,8 @@ jobs:
           docker info >/dev/null
           docker compose version
           docker buildx version
+      - name: Actual mirror pull and build after injected official registry timeout
+        run: sudo env "PATH=$PATH" GITHUB_ACTIONS=true IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER=1 bash tests/install-image-mirror.test.sh
       - name: Real independent local and cloud Docker installation and upgrade
         run: sudo env "PATH=$PATH" IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER=1 bash tests/independent-deployment.test.sh
       - name: Diagnose independent scanner failure
