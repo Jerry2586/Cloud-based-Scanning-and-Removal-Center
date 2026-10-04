@@ -248,6 +248,19 @@ reset_password() {
   install -m 600 "$STAGE/initial-credentials.txt" "$CONF/credentials/initial-credentials.txt"
   audit password-reset; ic_admin_finish; credentials
 }
+recovery() {
+  local operation=$1 path='' confirmation=''
+  if [[ $operation != backup ]]; then
+    ask '加密恢复包绝对路径：' path
+    if [[ $operation == restore-backup ]]; then
+      echo '仅恢复同一机器、同一角色、同一程序版本；短暂停服，保留当前身份与撤销状态。'
+      echo '程序源码、病毒库与其他网站数据不在此恢复包范围内。'
+      ask '确认请输入 SAME-HOST-RESTORE：' confirmation
+      [[ $confirmation == SAME-HOST-RESTORE ]] || ic_fail '恢复取消'
+    fi
+  fi
+  exec bash "$SOURCE/scripts/independent-backup.sh" "$ROLE" "$operation" "$path" "$confirmation"
+}
 dispatch() {
   case "$1" in
     status) status ;; logs) ic_compose logs --tail 100 ;;
@@ -257,6 +270,7 @@ dispatch() {
     engine-install|engine-update|engine-status) [[ $ROLE == local ]] || ic_fail '病毒引擎仅用于铁幕'; lock; bash "$SOURCE/scripts/antivirus-engine.sh" "${1#engine-}" ;;
     findings|quarantine-list) response "$([[ $1 == findings ]] && echo findings || echo list)" ;;
     quarantine|restore-file) response "$([[ $1 == quarantine ]] && echo quarantine || echo restore)" ;;
+    backup|verify-backup|restore-backup) recovery "$1" ;;
     update) update ;; doctor) doctor ;; scan) scan ;; profile) profile ;;
     pair) pair ;; cloud-status) cloud_status ;; unpair) unpair ;;
     register) register ;; revoke) revoke ;; nodes) [[ $ROLE == cloud ]] || ic_fail '仅用于玄武'; jq -r '.nodes | keys[]' "$CONF/runtime/config.json" ;;
@@ -279,6 +293,7 @@ while true; do
     echo ' 8. 登记节点与加密导出   9. 撤销节点   10. 查看节点'
     echo '11. 浏览器面板证书'
   fi
+  echo '22. 创建加密恢复包   23. 验证恢复包   24. 同机恢复（保留当前身份）'
   echo ' 0. 退出'
   ask '选择：' choice
   case "$choice" in
@@ -297,6 +312,7 @@ while true; do
     19) [[ $ROLE == local ]] || continue; action=quarantine ;;
     20) [[ $ROLE == local ]] || continue; action=quarantine-list ;;
     21) [[ $ROLE == local ]] || continue; action=restore-file ;;
+    22) action=backup ;; 23) action=verify-backup ;; 24) action=restore-backup ;;
     *) echo '请选择有效菜单项'; continue ;;
   esac
   bash "$SOURCE/scripts/ironcurtain.sh" --role "$ROLE" "$action" || echo '操作未完成；现有状态请运行诊断核对。'

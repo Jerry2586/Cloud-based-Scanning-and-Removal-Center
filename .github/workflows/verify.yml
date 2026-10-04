@@ -36,6 +36,8 @@ jobs:
         run: sudo env "PATH=$PATH" bash tests/release-install.test.sh
       - name: Test independent root transaction recovery (simulated services)
         run: sudo env "PATH=$PATH" bash tests/independent-transactions.test.sh
+      - name: Test authenticated independent recovery archives
+        run: sudo env "PATH=$PATH" python3 tests/recovery-archive.test.py
       - name: Test generic Linux host scanner
         run: sudo env "PATH=$PATH" python3 tests/host-agent.test.py
       - name: Test pinned findings and bounded local quarantine

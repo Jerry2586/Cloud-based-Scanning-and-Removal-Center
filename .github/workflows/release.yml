@@ -32,6 +32,10 @@ jobs:
           sudo env "PATH=$PATH" bash tests/release-install.test.sh
           sudo env "PATH=$PATH" bash tests/independent-transactions.test.sh
           sudo env "PATH=$PATH" python3 tests/host-agent.test.py
+          sudo env "PATH=$PATH" python3 tests/findings.test.py
+          sudo env "PATH=$PATH" python3 tests/response.test.py
+          sudo env "PATH=$PATH" python3 tests/antivirus-metadata.test.py
+          sudo env "PATH=$PATH" python3 tests/recovery-archive.test.py
       - name: Check disposable runner Docker prerequisites
         run: |
           sudo systemctl start docker
@@ -40,6 +44,8 @@ jobs:
           docker buildx version
       - name: Real independent Docker deployment gate
         run: sudo env "PATH=$PATH" IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER=1 bash tests/independent-deployment.test.sh
+      - name: Real ClamAV engine and pinned rescan gate
+        run: sudo env "PATH=$PATH" GITHUB_ACTIONS=true bash tests/antivirus-engine.test.sh
       - name: Materialize signing key only in runner temporary storage
         env:
           SIGNING_KEY: ${{ secrets.APPGOG_SECURITY_RELEASE_PRIVATE_KEY }}

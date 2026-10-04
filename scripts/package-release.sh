@@ -15,7 +15,7 @@ while (($#)); do
   esac
 done
 
-for required in .dockerignore docker/Dockerfile docker/compose.local.yml docker/compose.cloud.yml scripts/install-independent.sh scripts/ironcurtain.sh scripts/control.js scripts/lib/independent.sh scripts/lib/install-transaction.sh scripts/lib/management-transaction.sh package.json release-contract.json release-public.pem install.sh scripts/install-linux.sh scripts/appgog-security.sh scripts/backup.sh scripts/backup-auth.js scripts/restore.sh src/server.js src/local/server.js src/local/public/index.html src/contracts/host-scan-contract.js src/host/agent.py src/host/cloudflare.py src/host/antivirus.py src/host/findings.py src/host/response.py src/local/scan-client.js; do
+for required in .dockerignore docker/Dockerfile docker/compose.local.yml docker/compose.cloud.yml scripts/install-independent.sh scripts/ironcurtain.sh scripts/control.js scripts/lib/independent.sh scripts/lib/install-transaction.sh scripts/lib/management-transaction.sh package.json release-contract.json release-public.pem install.sh scripts/install-linux.sh scripts/appgog-security.sh scripts/backup.sh scripts/backup-auth.js scripts/recovery-archive.py scripts/independent-backup.sh scripts/restore.sh src/server.js src/local/server.js src/local/public/index.html src/contracts/host-scan-contract.js src/host/agent.py src/host/cloudflare.py src/host/antivirus.py src/host/findings.py src/host/response.py src/local/scan-client.js; do
   [[ -f $SOURCE/$required ]] || { echo "Missing release input: $required" >&2; exit 1; }
 done
 [[ -n $SIGNING_KEY && -s $SIGNING_KEY ]] || { echo 'Set APPGOG_SECURITY_RELEASE_PRIVATE_KEY or use --signing-key.' >&2; exit 1; }
@@ -35,6 +35,7 @@ cp "$SOURCE/package.json" "$SOURCE/release-contract.json" "$SOURCE/release-publi
 cp -a "$SOURCE/src/." "$PAYLOAD/src/"
 find "$PAYLOAD/src" -type d -name __pycache__ -prune -exec rm -rf -- {} +
 cp "$SOURCE/scripts/"*.sh "$PAYLOAD/scripts/"
+cp "$SOURCE/scripts/recovery-archive.py" "$PAYLOAD/scripts/"
 cp "$SOURCE/scripts/backup-auth.js" "$SOURCE/scripts/control.js" "$PAYLOAD/scripts/"
 cp -a "$SOURCE/docker" "$PAYLOAD/"
 cp "$SOURCE/.dockerignore" "$PAYLOAD/"

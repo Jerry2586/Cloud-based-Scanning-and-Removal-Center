@@ -75,4 +75,36 @@ after=$(sha256sum /etc/ironcurtain/local/runtime/panel-auth.json /etc/ironcurtai
 /usr/local/bin/ironcurtain doctor
 /usr/local/bin/xuanwu doctor
 node "$SOURCE/tests/helpers/independent-deployment-probe.js"
+# Authenticated same-host recovery uses the REAL role containers and root agent.
+# Other website files and credentials are never touched by the backup mechanism.
+for recovery_role in local cloud; do
+  ic_role "$recovery_role"; ic_load
+  printf before-recovery > "$DATA/runtime/recovery-fixture"; chmod 600 "$DATA/runtime/recovery-fixture"
+  identity_before=$(sha256sum "$CONF/runtime/"*.crt)
+  bash "$SOURCE/scripts/independent-backup.sh" "$ROLE" backup > "$WORK/$ROLE-recovery.log"
+  package=$(find "$BASE/backups" -name '*.icbackup' -type f | sort | tail -n 1)
+  [[ -n $package ]]
+  bash "$SOURCE/scripts/independent-backup.sh" "$ROLE" verify-backup "$package"
+  printf after-backup > "$DATA/runtime/recovery-fixture"
+  if [[ $ROLE == cloud ]]; then
+    # Revoke AFTER snapshot. Restoring the old archive must not restore this identity.
+    jq 'del(.nodes["node-ci"])' "$CONF/runtime/config.json" > "$WORK/config-revoked.json"
+    install -m 640 -o root -g 10001 "$WORK/config-revoked.json" "$CONF/runtime/config.json"
+  fi
+  bash "$SOURCE/scripts/independent-backup.sh" "$ROLE" restore-backup "$package" SAME-HOST-RESTORE
+  [[ $(cat "$DATA/runtime/recovery-fixture") == before-recovery ]]
+  [[ $(sha256sum "$CONF/runtime/"*.crt) == "$identity_before" ]]
+  ic_healthy
+  if [[ $ROLE == cloud ]]; then jq -e '.nodes | has("node-ci") | not' "$CONF/runtime/config.json" >/dev/null; fi
+  cp "$package" "$WORK/$ROLE-corrupt.icbackup"
+  printf corrupt >> "$WORK/$ROLE-corrupt.icbackup"; chmod 600 "$WORK/$ROLE-corrupt.icbackup"
+  if bash "$SOURCE/scripts/independent-backup.sh" "$ROLE" restore-backup "$WORK/$ROLE-corrupt.icbackup" SAME-HOST-RESTORE; then
+    echo 'Corrupt archive was accepted' >&2; exit 1
+  fi
+  [[ $(cat "$DATA/runtime/recovery-fixture") == before-recovery ]]; ic_healthy
+  [[ ! -e $BASE/transaction.json ]]
+done
+/usr/local/bin/ironcurtain doctor
+/usr/local/bin/xuanwu doctor
+echo 'Real encrypted local/cloud recovery passed; current identity and revocation state retained.'
 echo 'Real local/cloud Docker first installation, rerun and upgrade passed; identities preserved.'
