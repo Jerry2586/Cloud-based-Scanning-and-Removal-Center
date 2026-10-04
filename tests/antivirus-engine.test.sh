@@ -34,6 +34,8 @@ systemctl() {
 }
 export -f systemctl
 bash "$ROOT/scripts/antivirus-engine.sh" install
+# Existing installs also reconcile policy without downloading a database.
+bash "$ROOT/scripts/antivirus-engine.sh" policy
 [[ $(stat -c %a /etc/ironcurtain-antivirus) == 755 ]]
 [[ $(stat -c %a /var/lib/ironcurtain-antivirus) == 755 ]]
 [[ $(stat -c %a /var/lib/ironcurtain-antivirus/database) == 755 ]]

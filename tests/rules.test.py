@@ -26,7 +26,7 @@ class RulesTests(unittest.TestCase):
         data=self.envelope();self.assertEqual(r.verify(data,self.public)[0]['sequence'],1)
         parsed=json.loads(data);parsed['payload']=base64.b64encode(b'tampered').decode()
         with self.assertRaises(ValueError):r.verify(json.dumps(parsed).encode(),self.public)
-        for changes in [{'command':'id'},{'sequence':True},{'sequence':9007199254740992},{'expires_at':self.now},{'issued_at':self.now+600},{'expires_at':self.now+2678401,'issued_at':self.now},{'minimum_agent_version':'0.2.1'},{'indicators':[{'id':'bad','sha256':'a'*64,'label':chr(10)}]}]:
+        for changes in [{'command':'id'},{'sequence':True},{'sequence':9007199254740992},{'expires_at':self.now},{'issued_at':self.now+600},{'expires_at':self.now+2678401,'issued_at':self.now},{'minimum_agent_version':'999999.0.0'},{'indicators':[{'id':'bad','sha256':'a'*64,'label':chr(10)}]}]:
             with self.subTest(changes=changes):
                 with self.assertRaises(ValueError):r.verify(self.envelope(self.payload(**changes)),self.public)
         with self.assertRaises(ValueError):r.verify(data,b'-----BEGIN PRIVATE KEY-----'+bytes([10])+self.public.splitlines()[1]+bytes([10])+b'-----END PRIVATE KEY-----'+bytes([10]))

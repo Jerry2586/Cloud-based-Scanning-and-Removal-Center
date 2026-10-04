@@ -5,8 +5,9 @@ umask 077
 ACTION=${1:-status}
 SOURCE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$SOURCE/scripts/lib/independent.sh"
+source "$SOURCE/scripts/lib/antivirus-apparmor.sh"
 [[ $EUID == 0 && $(uname -s) == Linux ]] || ic_fail '病毒引擎管理需要 Linux root'
-case "$ACTION" in status|install|update) ;; *) ic_fail '仅支持 status、install、update' ;; esac
+case "$ACTION" in status|install|update|policy) ;; *) ic_fail '仅支持 status、install、update、policy' ;; esac
 if [[ $ACTION == status ]]; then python3 "$SOURCE/src/host/antivirus.py"; exit; fi
 exec 8>/run/lock/ironcurtain-antivirus.lock
 flock -n 8 || ic_fail '病毒引擎安装或更新正在运行'
@@ -86,6 +87,8 @@ EOF
   systemctl enable --now ironcurtain-antivirus-update.timer
 fi
 [[ -f $UNIT && ! -L $UNIT && -f $CONF/freshclam.conf && ! -L $CONF/freshclam.conf ]] || ic_fail '请先运行 ironcurtain engine-install'
+ic_av_apparmor
+[[ $ACTION != policy ]] || exit 0
 if ! systemctl start ironcurtain-antivirus-update.service; then
   echo '病毒库更新失败；保留现有库，尚未就绪请核对网络及更新日志。' >&2
   python3 "$SOURCE/src/host/antivirus.py"

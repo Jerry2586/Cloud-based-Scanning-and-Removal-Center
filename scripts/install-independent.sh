@@ -25,9 +25,10 @@ RULES_SERVICE=/etc/systemd/system/ironcurtain-rules-sync.service
 RULES_TIMER=/etc/systemd/system/ironcurtain-rules-sync.timer
 engine_setup() {
   [[ $ROLE == local && $ENGINE_MODE == auto ]] || return 0
-  if command -v clamscan >/dev/null && [[ -f /etc/systemd/system/ironcurtain-antivirus-update.timer ]]; then return 0; fi
+  local engine_action=install
+  if command -v clamscan >/dev/null && [[ -f /etc/systemd/system/ironcurtain-antivirus-update.timer ]]; then engine_action=policy; fi
   install -d -m 700 "$DATA/logs"
-  if ! bash "$BASE/current/scripts/antivirus-engine.sh" install > "$DATA/logs/antivirus-install.log" 2>&1; then
+  if ! bash "$BASE/current/scripts/antivirus-engine.sh" "$engine_action" > "$DATA/logs/antivirus-install.log" 2>&1; then
     echo "病毒引擎尚未就绪；安装记录：$DATA/logs/antivirus-install.log。请运行 ironcurtain engine-install 重试。" >&2
   fi
 }

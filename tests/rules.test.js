@@ -18,9 +18,11 @@ test('signed rules verify exact publisher bytes and reject tampering, wrong key 
  for(const value of [payload({command:'id'}),payload({baseline:{}}),payload({paths:['/etc']}),payload({indicators:[{...payload().indicators[0],command:'id'}]})])assert.throws(()=>verifyRuleEnvelope(envelope(value),key,now));
 });
 test('signed rules enforce freshness, safe integers, compatibility and bounded indicator identity',()=>{
- const bad=[{sequence:0},{sequence:true},{sequence:9007199254740992},{issued_at:now+301},{expires_at:now},{expires_at:now+2678401,issued_at:now},{version:'01.2.0'},{minimum_agent_version:'0.2.1'},{version:'1000000.0.0'},{indicators:Array(1025).fill(payload().indicators[0])},{indicators:[payload().indicators[0],payload().indicators[0]]},{indicators:[{...payload().indicators[0],label:'\ud800'}]},{indicators:[{...payload().indicators[0],label:'a\n'}]},{indicators:[{...payload().indicators[0],id:['bad']}]}];
+ const bad=[{sequence:0},{sequence:true},{sequence:9007199254740992},{issued_at:now+301},{expires_at:now},{expires_at:now+2678401,issued_at:now},{version:'01.2.0'},{minimum_agent_version:'999999.0.0'},{version:'1000000.0.0'},{indicators:Array(1025).fill(payload().indicators[0])},{indicators:[payload().indicators[0],payload().indicators[0]]},{indicators:[{...payload().indicators[0],label:'\ud800'}]},{indicators:[{...payload().indicators[0],label:'a\n'}]},{indicators:[{...payload().indicators[0],id:['bad']}]}];
  for(const changes of bad)assert.throws(()=>verifyRuleEnvelope(envelope(payload(changes)),key,now));
  assert.equal(validateRules(payload({minimum_agent_version:'0.1.99'}),now).sequence,1);
+ assert.equal(validateRules(payload({minimum_agent_version:'0.2.1'}),now,'0.2.1').sequence,1);
+ assert.throws(()=>validateRules(payload({minimum_agent_version:'0.2.1'}),now,'0.2.0'),/COMPATIBILITY/);
  for(const agentVersion of ['garbage','9','9.9',null,9])assert.throws(()=>validateRules(payload({minimum_agent_version:'9.9.9'}),now,agentVersion),/COMPATIBILITY/);
 });
 test('strict JSON rejects duplicates including escaped keys, floats, invalid UTF8 and deep nesting',()=>{
