@@ -23,7 +23,7 @@ assert.equal(login.status,200);cookie=login.headers['set-cookie'][0].split(';')[
 assert.ok(csrf);
 assert.equal((await call('/api/scan',{}, {'X-CSRF-Token':'invalid'})).status,403);
 const initial=await call('/api/scan');
-assert.equal(initial.status,200);assert.notEqual(initial.data.state,'unavailable');
+assert.equal(initial.status,200);assert.notEqual(initial.data.state,'unavailable', 'Local scan unavailable: '+(initial.data.reason || 'no reason'));
 const started=await call('/api/scan',{});
 assert.ok([202,503].includes(started.status));
 if(started.status===503) assert.match(started.data.reason,/频率/);

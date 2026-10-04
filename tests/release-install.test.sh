@@ -391,7 +391,10 @@ recovery_dir=$(printf '%s\n' "$rollback_output" | sed -n 's/^Installation recove
 assert_service_state inactive enabled
 ln -sfn "$SECURITY_INSTALL_DIR/releases/0.1.5" "$SECURITY_INSTALL_DIR/current.repair"
 mv -Tf "$SECURITY_INSTALL_DIR/current.repair" "$SECURITY_INSTALL_DIR/current"
-bash "$SECURITY_INSTALL_DIR/current/scripts/restore.sh" --backup "$manual_backup" --no-service
+# The injected catastrophic recovery clears install.env; pass the original
+# service identity explicitly, as an administrator must do during that recovery.
+SECURITY_SERVICE_USER="$SECURITY_TEST_SERVICE_USER" \
+  bash "$SECURITY_INSTALL_DIR/current/scripts/restore.sh" --backup "$manual_backup" --no-service
 printf 'healthy\n' > "$SECURITY_TEST_HEALTH_FILE"
 set_service_state active enabled
 
