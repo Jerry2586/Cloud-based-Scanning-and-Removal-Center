@@ -1,0 +1,36 @@
+services:
+  ironcurtain:
+    image: ${IRONCURTAIN_IMAGE:?}
+    container_name: ironcurtain-local
+    user: "10001:10001"
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1.0
+    tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=32m"]
+    ports: ["${IRONCURTAIN_BIND:-127.0.0.1}:8790:8790"]
+    environment:
+      IRONCURTAIN_ROLE: local
+      IRONCURTAIN_PUBLIC_HOST: ${IRONCURTAIN_PUBLIC_HOST:?}
+      IRONCURTAIN_LISTEN_HOST: 0.0.0.0
+      IRONCURTAIN_PORT: 8790
+      IRONCURTAIN_PUBLIC_ORIGIN: "https://${IRONCURTAIN_PUBLIC_HOST}:8790"
+      IRONCURTAIN_TLS_CERT: /etc/ironcurtain/panel.crt
+      IRONCURTAIN_TLS_KEY: /etc/ironcurtain/panel.key
+      IRONCURTAIN_SCAN_SOCKET: /run/ironcurtain/scan.sock
+    volumes:
+      - ${IRONCURTAIN_CONFIG:?}/runtime:/etc/ironcurtain:ro
+      - /run/ironcurtain:/run/ironcurtain:ro
+    healthcheck:
+      test: [CMD, node, src/healthcheck.js]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createServer, request as httpsRequest } from 'node:https';
-import { createHash, X509Certificate } from 'node:crypto';
+import { createHash, randomUUID, X509Certificate } from 'node:crypto';
 import { createMonitor } from '../src/monitor.js';
 
 const binary = process.platform === 'win32' ? 'C:/Program Files/Git/usr/bin/openssl.exe' : 'openssl';
@@ -18,6 +18,7 @@ const openssl = (cwd, ...args) => {
 };
 function request(port, { ca, cert, key, token, path = '/v1/status', body }) {
   return new Promise((resolve, reject) => {
+    const payload = body ? JSON.stringify({ observed_at: new Date().toISOString(), report_id: randomUUID(), ...body }) : undefined;
     const req = httpsRequest(`https://localhost:${port}${path}`, { ca, cert, key, method: body ? 'POST' : 'GET', rejectUnauthorized: true,
       headers: { authorization: `Bearer ${token}` } }, res => {
       let data = '';
@@ -25,7 +26,7 @@ function request(port, { ca, cert, key, token, path = '/v1/status', body }) {
       res.on('end', () => resolve({ status: res.statusCode, data: JSON.parse(data) }));
     });
     req.on('error', reject);
-    req.end(body ? JSON.stringify(body) : undefined);
+    req.end(payload);
   });
 }
 test('actual mutual TLS: valid identity, wrong token, missing certificate, wrong CA and rotation', { skip: !available }, async () => {

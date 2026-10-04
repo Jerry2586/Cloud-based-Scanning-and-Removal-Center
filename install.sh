@@ -9,7 +9,9 @@ SOURCE_MODE=${APPGOG_SECURITY_SOURCE:-auto}
 RELEASE_BASE=${APPGOG_SECURITY_RELEASE_BASE:-}
 REQUESTED_VERSION=${APPGOG_SECURITY_VERSION:-}
 PUBLIC_HOST=${APPGOG_SECURITY_HOST:-}
-TOKEN_FILE=${APPGOG_SECURITY_GITHUB_TOKEN_FILE:-/etc/appgog-security/github-release.token}
+INSTALL_ROLE=${IRONCURTAIN_ROLE:-}
+LISTEN_BIND=${IRONCURTAIN_BIND:-}
+TOKEN_FILE=${IRONCURTAIN_GITHUB_TOKEN_FILE:-${APPGOG_SECURITY_GITHUB_TOKEN_FILE:-}}
 
 log() { printf '\n==> %s\n' "$*"; }
 fail() { printf '错误：%s\n' "$*" >&2; exit 1; }
@@ -29,6 +31,8 @@ for argument do
       base) RELEASE_BASE=$argument ;;
       version) REQUESTED_VERSION=${argument#v} ;;
       host) PUBLIC_HOST=$argument ;;
+      role) INSTALL_ROLE=$argument ;;
+      bind) LISTEN_BIND=$argument ;;
     esac
     expect=''
     continue
@@ -38,9 +42,17 @@ for argument do
     --release-base) expect=base ;;
     --version) expect=version ;;
     --host) expect=host ;;
+    --role) expect=role ;;
+    --bind) expect=bind ;;
     *) fail "未知参数：$argument" ;;
   esac
 done
+case "$INSTALL_ROLE" in ""|local|cloud) ;; *) fail "--role 只能是 local 或 cloud。" ;; esac
+if [ -z "$TOKEN_FILE" ]; then
+  if [ -n "$INSTALL_ROLE" ]; then TOKEN_FILE=/etc/ironcurtain/github-release.token;
+  else TOKEN_FILE=/etc/appgog-security/github-release.token; fi
+fi
+[ -z "$LISTEN_BIND" ] || [ -n "$INSTALL_ROLE" ] || fail '--bind 只用于独立 local/cloud 安装。'
 [ -z "$expect" ] || fail "参数 --$expect 缺少值。"
 case "$SOURCE_MODE" in auto|github|custom) ;; *) fail '--source 只能是 auto、github 或 custom。' ;; esac
 [ "$SOURCE_MODE" != custom ] || [ -n "$RELEASE_BASE" ] || fail '--source custom 必须同时提供 --release-base。'
@@ -179,6 +191,7 @@ case "$SOURCE_MODE" in
   auto) try_release "$SELECTED_BASE" || fail '发布源不可用、私有令牌权限不正确，或签名/哈希校验失败。' ;;
 esac
 
+case "$INSTALL_ROLE" in local) INSTALL_ROOT=/opt/ironcurtain/local ;; cloud) INSTALL_ROOT=/opt/ironcurtain/cloud ;; esac
 installed=''
 if [ -f "$INSTALL_ROOT/current/package.json" ]; then installed=$(jq -er '.version' "$INSTALL_ROOT/current/package.json" 2>/dev/null || true); fi
 if [ -n "$installed" ] && [ "$installed" != "$TARGET_VERSION" ]; then
@@ -187,4 +200,8 @@ if [ -n "$installed" ] && [ "$installed" != "$TARGET_VERSION" ]; then
 fi
 
 log "发布清单签名与安装包 SHA-256 已验证：v$TARGET_VERSION"
-if [ -n "$PUBLIC_HOST" ]; then bash "$WORK/installer.run" --host "$PUBLIC_HOST"; else bash "$WORK/installer.run"; fi
+set --
+[ -z "$PUBLIC_HOST" ] || set -- "$@" --host "$PUBLIC_HOST"
+[ -z "$INSTALL_ROLE" ] || set -- "$@" --role "$INSTALL_ROLE"
+[ -z "$LISTEN_BIND" ] || set -- "$@" --bind "$LISTEN_BIND"
+bash "$WORK/installer.run" "$@"

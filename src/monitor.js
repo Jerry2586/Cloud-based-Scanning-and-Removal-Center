@@ -43,20 +43,37 @@ const certificateState = (identities, now) => {
 };
 const fingerprintPattern = /^(?:[A-F0-9]{2}:){31}[A-F0-9]{2}$/;
 const digestPattern = /^[0-9a-f]{64}$/;
+const reportIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const reportTimestampPattern = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T([01]\d|2[0-3]):[0-5]\d:[0-5]\d\.\d{3}Z$/;
+const parseReportTimestamp = value => {
+  if (typeof value !== 'string' || !reportTimestampPattern.test(value)) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value ? parsed : null;
+};
+const reportMaxAgeMs = 120000;
+const reportFutureSkewMs = 60000;
+const reportReplayCacheSize = 256;
 const allowedNodeRoles = new Set(['license-center', 'build-center']);
+const genericNode = name => /^node-[a-z0-9][a-z0-9-]{0,63}$/.test(name);
 const publicPolicy = policy => ({ version: String(policy?.version ?? '1'), delivery: 'pull-only', remote_execution: false,
-  remediation: 'local-agent-only', report_max_age_seconds: 120, host_scan_max_age_seconds: 900,
+  remediation: 'local-agent-only', report_max_age_seconds: reportMaxAgeMs / 1000, host_scan_max_age_seconds: 900,
   rules: { require_signed_updates: true, allow_remote_commands: false, allow_cloud_push: false } });
 const plainObject = value => value !== null && typeof value === 'object' && !Array.isArray(value)
   && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
-const stateObjectFields = ['probes', 'reports', 'reportFreshness', 'hostReports', 'hostReportState'];
+const stateObjectFields = ['probes', 'reports', 'reportFreshness', 'reportIds', 'hostReports', 'hostReportState'];
 const normalizePersistedState = value => {
   if (!plainObject(value)) throw Error('persisted state root must be an object');
-  const normalized = { probes: {}, reports: {}, reportFreshness: {}, hostReports: {}, hostReportState: {}, events: [] };
+  const normalized = { probes: {}, reports: {}, reportFreshness: {}, reportIds: {}, hostReports: {}, hostReportState: {}, events: [] };
   for (const field of stateObjectFields) {
     if (value[field] === undefined) continue;
     if (!plainObject(value[field])) throw Error(`persisted state ${field} must be an object`);
     normalized[field] = value[field];
+  }
+  for (const [name, identifiers] of Object.entries(normalized.reportIds)) {
+    if (!Array.isArray(identifiers) || identifiers.some(identifier => typeof identifier !== 'string' || !reportIdPattern.test(identifier))) {
+      throw Error(`persisted state reportIds.${name} must contain UUIDv4 values`);
+    }
+    normalized.reportIds[name] = identifiers.slice(-reportReplayCacheSize);
   }
   if (value.events !== undefined) {
     if (!Array.isArray(value.events)) throw Error('persisted state events must be an array');
@@ -104,11 +121,13 @@ export function validateConfiguration(config) {
   };
   validateSubject(readers[0], 'reader');
   for (const [name, subject] of Object.entries(nodes)) {
-    if (!allowedNodeRoles.has(name)) throw Error(`Unsupported node role: ${name}`);
-    validateSubject(subject, name);
-    let health;
-    try { health = new URL(subject.health_url); } catch { throw Error(`Invalid HTTPS health URL for ${name}`); }
-    if (health.protocol !== 'https:' || health.username || health.password) throw Error(`Invalid HTTPS health URL for ${name}`);
+    if (!allowedNodeRoles.has(name) && !genericNode(name)) throw Error(`Unsupported node role: ${name}`);
+    validateSubject(subject, genericNode(name) ? 'ironcurtain-node' : name);
+    if (subject.health_url !== undefined || !genericNode(name)) {
+      let health;
+      try { health = new URL(subject.health_url); } catch { throw Error(`Invalid HTTPS health URL for ${name}`); }
+      if (health.protocol !== 'https:' || health.username || health.password || health.hash) throw Error(`Invalid HTTPS health URL for ${name}`);
+    }
     if (!subject.baseline || typeof subject.baseline !== 'object' || Array.isArray(subject.baseline)
       || Object.values(subject.baseline).some(value => typeof value !== 'string' || !digestPattern.test(value))) {
       throw Error(`Invalid SHA-256 baseline for ${name}`);
@@ -122,7 +141,7 @@ export function validateConfiguration(config) {
 }
 
 export function createMonitor({ nodes, readers, policy, stateFile, now = () => Date.now(), probe = defaultProbe }) {
-  const state = { probes: {}, reports: {}, reportFreshness: {}, hostReports: {}, hostReportState: {}, events: [] };
+  const state = { probes: {}, reports: {}, reportFreshness: {}, reportIds: {}, hostReports: {}, hostReportState: {}, events: [] };
   if (stateFile) {
     try { Object.assign(state, normalizePersistedState(JSON.parse(readFileSync(stateFile, 'utf8')))); } catch (error) {
       if (error.code !== 'ENOENT') throw Error(`Invalid persisted security state: ${error.message}`, { cause: error });
@@ -152,7 +171,7 @@ export function createMonitor({ nodes, readers, policy, stateFile, now = () => D
     const report = state.hostReports[name];
     const reportAt = Date.parse(state.reports[name]?.at ?? '');
     const checkedAt = Date.parse(report?.checked_at ?? '');
-    const reportFresh = Number.isFinite(reportAt) && now() >= reportAt && now() - reportAt < 120000;
+    const reportFresh = Number.isFinite(reportAt) && now() >= reportAt && now() - reportAt < reportMaxAgeMs;
     const scanFresh = Number.isFinite(checkedAt) && now() >= checkedAt && now() - checkedAt < 900000;
     const current = Boolean(report && reportFresh && (scanFresh || report.state === 'unavailable'));
     const assessed = !report ? 'unavailable' : !reportFresh ? 'stale'
@@ -166,7 +185,7 @@ export function createMonitor({ nodes, readers, policy, stateFile, now = () => D
     const probeState = state.probes[name] ?? { state: 'unknown' };
     const integrity = state.reports[name] ?? { state: 'unknown' };
     const reportFresh = Boolean(state.reports[name]?.at && now() >= Date.parse(state.reports[name].at)
-      && now() - Date.parse(state.reports[name].at) < 120000);
+      && now() - Date.parse(state.reports[name].at) < reportMaxAgeMs);
     const hostScan = hostSnapshot(name);
     const certificate = certificateState(config.identities ?? [config], now());
     const summaryState = worst([
@@ -214,7 +233,8 @@ export function createMonitor({ nodes, readers, policy, stateFile, now = () => D
     const nodeStatuses = Object.fromEntries(Object.entries(nodes).map(([name, config]) => [name, nodeSnapshot(name, config)]));
     const nodeStates = Object.values(nodeStatuses).map(node => node.summary_state);
     const operationalState = nodeStates.length ? worst(nodeStates) : 'unavailable';
-    const requiredRoles = ['license-center', 'build-center'];
+    const independent = Object.keys(nodes).some(genericNode);
+    const requiredRoles = independent ? Object.keys(nodes) : ['license-center', 'build-center'];
     const configuredRoles = requiredRoles.filter(role => Object.hasOwn(nodeStatuses, role));
     const connectedRoles = configuredRoles.filter(role => nodeStatuses[role].pairing_state === 'connected');
     const deploymentState = configuredRoles.length === 0 ? 'not-enrolled'
@@ -225,8 +245,8 @@ export function createMonitor({ nodes, readers, policy, stateFile, now = () => D
     identity_state: identityStatus().summary_state,
     deployment: {
       state: deploymentState,
-      mode: configuredRoles.length === requiredRoles.length ? 'combined-or-split' : 'incomplete',
-      supported_modes: ['combined-business', 'split-business'],
+      mode: independent ? 'independent-endpoints' : configuredRoles.length === requiredRoles.length ? 'combined-or-split' : 'incomplete',
+      supported_modes: independent ? ['independent-endpoints'] : ['combined-business', 'split-business'],
       configured_roles: configuredRoles,
       connected_roles: connectedRoles,
       required_roles: requiredRoles,
@@ -251,10 +271,13 @@ export function createMonitor({ nodes, readers, policy, stateFile, now = () => D
     if (value.counts !== undefined) {
       if (!value.counts || typeof value.counts !== 'object' || Array.isArray(value.counts)
         || Object.keys(value.counts).sort().join(',') !== 'finding,ok,unavailable,warning'
-        || Object.values(value.counts).some(count => !Number.isSafeInteger(count) || count < 0 || count > 20)
-        || Object.values(value.counts).reduce((a, b) => a + b, 0) > 20) throw Error('INVALID_HOST_COUNTS');
+        || Object.values(value.counts).some(count => !Number.isSafeInteger(count) || count < 0 || count > 25)
+        || Object.values(value.counts).reduce((a, b) => a + b, 0) > 25) throw Error('INVALID_HOST_COUNTS');
     }
     if (['ok', 'warning', 'finding'].includes(value.state) && (!value.checked_at || !value.counts)) throw Error('INCOMPLETE_HOST');
+    if (value.counts && ((value.counts.finding > 0 && value.state !== 'finding')
+      || (value.state === 'ok' && (value.counts.warning || value.counts.unavailable || value.counts.ok === 0))
+      || (value.state === 'finding' && value.counts.finding === 0))) throw Error('CONTRADICTORY_HOST_COUNTS');
     return { state: value.state, checked_at: value.checked_at ?? null, counts: value.counts ?? null };
   };
   async function runProbes() {
@@ -268,7 +291,7 @@ export function createMonitor({ nodes, readers, policy, stateFile, now = () => D
     }));
     for (const name of Object.keys(nodes)) {
       const at = Date.parse(state.reports[name]?.at ?? '');
-      const fresh = Number.isFinite(at) && now() - at < 120000 && now() >= at;
+      const fresh = Number.isFinite(at) && now() - at < reportMaxAgeMs && now() >= at;
       if (!fresh && state.reportFreshness[name] !== 'stale') {
         event('report.stale', name, state.reports[name]?.at ? 'report expired' : 'no report received');
       }
@@ -290,6 +313,11 @@ export function createMonitor({ nodes, readers, policy, stateFile, now = () => D
         : Object.entries(nodes).find(([, config]) => identity(req, config))?.[0];
       if (!actor) return reply(res, 403, { error: 'AUTH_REQUIRED' });
       return reply(res, 200, { identity: actor });
+    }
+    if (req.method === 'GET' && path === '/v1/node/status') {
+      const entry = Object.entries(nodes).find(([, config]) => identity(req, config));
+      if (!entry) return reply(res, 403, { error: 'AUTH_REQUIRED' });
+      return reply(res, 200, { identity: entry[0], generated_at: new Date(now()).toISOString(), node: nodeSnapshot(...entry), policy: publicPolicy(policy) });
     }
     if (req.method === 'GET' && path === '/v1/status') {
       if (!readers.some(reader => identity(req, reader))) return reply(res, 403, { error: 'AUTH_REQUIRED' });
@@ -327,17 +355,29 @@ export function createMonitor({ nodes, readers, policy, stateFile, now = () => D
           text += chunk;
         }
         const data = JSON.parse(text);
-        if (!data || typeof data.files !== 'object' || Array.isArray(data.files)
+        if (!data || !plainObject(data.files) || typeof data.files !== 'object' || Array.isArray(data.files)
           || Object.values(data.files).some(value => typeof value !== 'string' || !digestPattern.test(value))) throw Error('INVALID');
+        const observedAt = parseReportTimestamp(data.observed_at);
+        if (observedAt === null || !reportIdPattern.test(data.report_id ?? '')) {
+          return reply(res, 400, { error: 'INVALID_REPORT_METADATA' });
+        }
+        const receivedAt = now();
+        if (observedAt > receivedAt + reportFutureSkewMs) return reply(res, 400, { error: 'REPORT_TIME_IN_FUTURE' });
+        if (receivedAt - observedAt >= reportMaxAgeMs) return reply(res, 409, { error: 'REPORT_STALE' });
+        const seenIds = state.reportIds[name] ?? [];
+        if (seenIds.includes(data.report_id)) return reply(res, 409, { error: 'REPORT_REPLAYED' });
         const host = data.host_scan === undefined ? { state: 'unavailable', checked_at: null, counts: null }
           : validateHostScan(data.host_scan);
         const baseline = config.baseline ?? {};
         const missing = Object.keys(baseline).filter(path => !Object.hasOwn(data.files, path));
         const changed = Object.keys(baseline).filter(path => Object.hasOwn(data.files, path) && data.files[path] !== baseline[path]);
         const added = Object.keys(data.files).filter(path => !Object.hasOwn(baseline, path));
-        const check = { state: Object.keys(baseline).length ? (missing.length || changed.length || added.length ? 'changed' : 'matched') : 'unconfigured',
-          at: new Date(now()).toISOString(), missing, changed, added };
+        if (data.files_state !== undefined && !['complete','unavailable'].includes(data.files_state)) throw Error('INVALID_FILES_STATE');
+        const check = { state: data.files_state === 'unavailable' ? 'unavailable' : Object.keys(baseline).length ? (missing.length || changed.length || added.length ? 'changed' : 'matched') : 'unconfigured',
+          at: new Date(observedAt).toISOString(), received_at: new Date(receivedAt).toISOString(), report_id: data.report_id,
+          missing: data.files_state === 'unavailable' ? [] : missing, changed: data.files_state === 'unavailable' ? [] : changed, added: data.files_state === 'unavailable' ? [] : added };
         state.reports[name] = check;
+        state.reportIds[name] = [...seenIds, data.report_id].slice(-reportReplayCacheSize);
         state.hostReports[name] = host;
         const hostState = hostSnapshot(name).state;
         if (hostState !== state.hostReportState[name]) {

@@ -1,0 +1,7 @@
+FROM node:24.19.0-bookworm-slim
+WORKDIR /app
+COPY package.json ./
+COPY src ./src
+COPY scripts/control.js ./scripts/control.js
+USER 10001:10001
+CMD ["node", "src/local/server.js"]

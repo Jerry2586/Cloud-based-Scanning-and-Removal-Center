@@ -4,9 +4,36 @@
   "artifact_prefix": "APPGOG-Cloud-Security-Center",
   "node_version": "24.19.0",
   "node_major": 24,
-  "architectures": ["amd64", "arm64"],
+  "architectures": [
+    "amd64",
+    "arm64"
+  ],
   "service": "appgog-security.service",
   "install_root": "/opt/appgog-security",
   "config_root": "/etc/appgog-security",
-  "data_root": "/var/lib/appgog-security"
+  "data_root": "/var/lib/appgog-security",
+  "independent": {
+    "roles": [
+      "local",
+      "cloud"
+    ],
+    "installer": "scripts/install-independent.sh",
+    "menu": {
+      "local": "ironcurtain",
+      "cloud": "xuanwu"
+    },
+    "container": {
+      "local": "ironcurtain-local",
+      "cloud": "ironcurtain-cloud"
+    },
+    "install_root": "/opt/ironcurtain/<role>",
+    "config_root": "/etc/ironcurtain/<role>",
+    "data_root": "/var/lib/ironcurtain/<role>",
+    "compose_min_version": "2.24.0",
+    "host_agent": "ironcurtain-agent.service",
+    "ports": {
+      "local": 8790,
+      "cloud": 9443
+    }
+  }
 }

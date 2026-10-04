@@ -1,0 +1,220 @@
+name: Build, test and release
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  local-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install real host inspection and antivirus runtimes
+        run: sudo apt-get update && sudo apt-get install -y python3 clamav clamav-freshclam curl jq nftables iptables
+      - name: Isolated systemd lifecycle, rollback, socket grants and ClamAV acceptance
+        run: sudo env GITHUB_ACTIONS=true sh scripts/verify-host-security-linux.sh
+  local-security-recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install official antivirus updater and isolated inspection runtimes
+        run: sudo apt-get update && sudo apt-get install -y python3 clamav clamav-freshclam curl jq nftables iptables openssl
+      - name: Fresh official database, real Docker containment and strict recovery
+        run: sudo env GITHUB_ACTIONS=true sh scripts/verify-host-security-recovery-linux.sh
+  verify:
+    needs: [local-security, local-security-recovery]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install locked production dependencies
+        run: corepack enable && pnpm install --frozen-lockfile
+      - name: Release contract source validation
+        run: node scripts/verify-release-contract.js --source
+      - name: PHP bridge test runtime
+        run: php -v
+      - name: Unit and integration tests
+        run: npm test
+      - name: Linux dual-tree bridge integrity performance
+        run: node scripts/verify-bridge-integrity-performance.js
+      - name: Fresh install, real build, update and complete restore
+        run: sh scripts/docker/verify.sh
+      - name: Standalone license and unpaired build Docker smoke
+        run: sh scripts/docker/verify-split.sh
+      - name: Package self-extracting installer
+        env:
+          APPGOG_ALLOW_UNSIGNED_ARTIFACTS: '1'
+        run: npm run cms:package
+      - name: Release contract artifact validation
+        env:
+          APPGOG_ALLOW_UNSIGNED_ARTIFACTS: '1'
+        run: node scripts/verify-release-contract.js --artifacts
+      - name: Resolve and validate release version
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          tag="v$version"
+          remote_sha=$(git ls-remote origin "refs/tags/$tag^{}" | awk '{print $1}')
+          if [ -z "$remote_sha" ]; then
+            remote_sha=$(git ls-remote origin "refs/tags/$tag" | awk '{print $1}')
+          fi
+          if [ -n "$remote_sha" ] && [ "$remote_sha" != "$GITHUB_SHA" ]; then
+            echo "Version $version is already published by commit $remote_sha; bump package.json before updating main." >&2
+            exit 1
+          fi
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG_EXISTS=$([ -n "$remote_sha" ] && echo true || echo false)" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appgog-single-container-installer
+          path: |
+            dist/*.zip
+            dist/*.zip.sha256
+            dist/*.run
+            dist/*.run.sha256
+            dist/install.sh
+            dist/release-manifest.json
+            dist/release-manifest.json.sig
+          retention-days: 30
+      - name: Service diagnostics on failure
+        if: failure()
+        run: |
+          docker compose ps -a
+          docker compose logs --tail=100 appgog
+  preflight-sign:
+    if: github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/candidate/')
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install locked production dependencies
+        run: corepack enable && pnpm install --frozen-lockfile
+      - name: Require production signing key
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.APPGOG_RELEASE_SIGNING_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          if [ -z "$RELEASE_SIGNING_KEY" ]; then
+            echo 'APPGOG_RELEASE_SIGNING_PRIVATE_KEY is required for every production release.' >&2
+            exit 1
+          fi
+          key_path="$RUNNER_TEMP/appgog-release-signing-private.pem"
+          printf '%s' "$RELEASE_SIGNING_KEY" > "$key_path"
+          chmod 600 "$key_path"
+          echo "APPGOG_RELEASE_SIGNING_PRIVATE_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+      - name: Build and verify signed production artifacts
+        run: |
+          node scripts/verify-release-contract.js --source
+          npm run cms:package
+          node scripts/verify-release-contract.js --artifacts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appgog-signed-preflight
+          if-no-files-found: error
+          path: |
+            dist/*.zip
+            dist/*.zip.sha256
+            dist/*.run
+            dist/*.run.sha256
+            dist/install.sh
+            dist/release-manifest.json
+            dist/release-manifest.json.sig
+          retention-days: 7
+      - name: Remove temporary signing key
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/appgog-release-signing-private.pem"
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: appgog-production-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install locked production dependencies
+        run: corepack enable && pnpm install --frozen-lockfile
+      - name: Require production signing key
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.APPGOG_RELEASE_SIGNING_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          if [ -z "$RELEASE_SIGNING_KEY" ]; then
+            echo 'APPGOG_RELEASE_SIGNING_PRIVATE_KEY is required for every production release.' >&2
+            exit 1
+          fi
+          key_path="$RUNNER_TEMP/appgog-release-signing-private.pem"
+          printf '%s' "$RELEASE_SIGNING_KEY" > "$key_path"
+          chmod 600 "$key_path"
+          echo "APPGOG_RELEASE_SIGNING_PRIVATE_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+      - name: Build and verify signed production artifacts
+        run: |
+          node scripts/verify-release-contract.js --source
+          npm run cms:package
+          node scripts/verify-release-contract.js --artifacts
+      - name: Create immutable version tag
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          tag="v$version"
+          git fetch --tags --force
+          remote_sha=$(git rev-list -n 1 "$tag" 2>/dev/null || true)
+          if [ -n "$remote_sha" ] && [ "$remote_sha" != "$GITHUB_SHA" ]; then
+            echo "$tag already points to $remote_sha instead of $GITHUB_SHA; package.json must be bumped." >&2
+            exit 1
+          fi
+          if [ -z "$remote_sha" ]; then
+            git config user.name github-actions[bot]
+            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git tag -a "$tag" "$GITHUB_SHA" -m "APPGOG $version"
+            git push origin "$tag"
+          fi
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+      - name: Create or repair GitHub Latest Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          assets=(
+            "dist/APPGOG-Packaging-Licensing-System-$RELEASE_VERSION.zip"
+            "dist/APPGOG-Packaging-Licensing-System-$RELEASE_VERSION.zip.sha256"
+            "dist/APPGOG-Packaging-Licensing-System-$RELEASE_VERSION.run"
+            "dist/APPGOG-Packaging-Licensing-System-$RELEASE_VERSION.run.sha256"
+            "dist/install.sh"
+            "dist/release-manifest.json"
+            "dist/release-manifest.json.sig"
+          )
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease=false --latest
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" --verify-tag --latest --generate-notes --title "APPGOG $RELEASE_VERSION"
+          fi
+      - name: Download and verify the published Latest Release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/verify-published-release.js --tag "$RELEASE_TAG"
+      - name: Remove temporary signing key
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/appgog-release-signing-private.pem"

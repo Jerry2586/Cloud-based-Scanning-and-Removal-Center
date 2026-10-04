@@ -1,17 +1,30 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createMonitor, validateConfiguration } from '../src/monitor.js';
+import { renderDashboard } from '../src/dashboard.js';
 
 const fp = 'AA:'.repeat(31) + 'AA';
 const tokenDigest = value => createHash('sha256').update(value).digest('hex');
 const reader = { token: 'r'.repeat(40), token_sha256: tokenDigest('r'.repeat(40)), fingerprint256: fp };
 const node = { token: 'n'.repeat(40), token_sha256: tokenDigest('n'.repeat(40)), fingerprint256: fp,
   health_url: 'https://example.test/health', baseline: { 'app.js': 'a'.repeat(64) } };
-function callRaw(monitor, { url = '/v1/status', method = 'GET', credential = reader, authorized = true, body = '', authorization } = {}) {
+function callRaw(monitor, { url = '/v1/status', method = 'GET', credential = reader, authorized = true, body = '', authorization,
+  observedAt, reportId = randomUUID(), addReportMetadata = true } = {}) {
   return new Promise(resolve => {
-    const req = Readable.from([body]);
+    let payload = body;
+    if (addReportMetadata && method === 'POST' && url === '/v1/report') {
+      try {
+        const parsed = JSON.parse(body);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          parsed.observed_at ??= observedAt ?? parsed.host_scan?.checked_at ?? new Date().toISOString();
+          parsed.report_id ??= reportId;
+          payload = JSON.stringify(parsed);
+        }
+      } catch { /* malformed and oversized payload tests must reach the real parser unchanged */ }
+    }
+    const req = Readable.from([payload]);
     req.method = method; req.url = url;
     req.headers = { authorization: authorization ?? `Bearer ${credential?.token ?? ''}` };
     req.socket = { authorized, getPeerCertificate: () => ({ fingerprint256: credential?.fingerprint256 }) };
@@ -77,7 +90,7 @@ test('cloud records missing, stale and resumed node reports once per transition'
   await monitor.runProbes();
   assert.equal(monitor.status().events.filter(event => event.kind === 'report.stale').length, 1);
   const report = () => call(monitor, { url: '/v1/report', method: 'POST', credential: node,
-    body: JSON.stringify({ files: { 'app.js': 'a'.repeat(64) } }) });
+    observedAt: new Date(time).toISOString(), body: JSON.stringify({ files: { 'app.js': 'a'.repeat(64) } }) });
   assert.equal((await report()).status, 200);
   assert.equal(monitor.status().events.filter(event => event.kind === 'report.resumed').length, 1);
   time += 121000;
@@ -95,7 +108,7 @@ test('host self-report rejects malformed evidence, signals transitions and expir
   const monitor = createMonitor({ nodes: { 'license-center': node }, readers: [reader], now: () => time,
     probe: async () => ({ state: 'healthy' }) });
   const submit = host_scan => call(monitor, { url: '/v1/report', method: 'POST', credential: node,
-    body: JSON.stringify({ files: { 'app.js': 'a'.repeat(64) }, host_scan }) });
+    observedAt: new Date(time).toISOString(), body: JSON.stringify({ files: { 'app.js': 'a'.repeat(64) }, host_scan }) });
   const counts = { ok: 6, warning: 0, finding: 0, unavailable: 0 };
   assert.equal((await submit({ state: 'ok', checked_at: 'bad', counts })).status, 400);
   assert.equal((await submit({ state: 'ok', checked_at: new Date(time + 120000).toISOString(), counts })).status, 400);
@@ -136,11 +149,66 @@ test('existing persisted state upgrades without host fields or trusted host resu
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('report metadata rejects stale, future and replayed submissions across service restart', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cloud-replay-'));
+  try {
+    const stateFile = join(dir, 'state.json');
+    const time = Date.parse('2026-10-02T08:00:00.000Z');
+    const reportId = randomUUID();
+    const payload = JSON.stringify({ observed_at: new Date(time).toISOString(), report_id: reportId,
+      files: { 'app.js': 'a'.repeat(64) } });
+    let monitor = createMonitor({ nodes: { 'license-center': node }, readers: [reader], stateFile, now: () => time });
+    assert.equal((await call(monitor, { url: '/v1/report', method: 'POST', credential: node,
+      body: payload, addReportMetadata: false })).status, 200);
+    assert.equal(monitor.status().nodes['license-center'].integrity.report_id, reportId);
+    assert.equal((await call(monitor, { url: '/v1/report', method: 'POST', credential: node,
+      body: payload, addReportMetadata: false })).data.error, 'REPORT_REPLAYED');
+
+    monitor = createMonitor({ nodes: { 'license-center': node }, readers: [reader], stateFile, now: () => time });
+    const replay = await call(monitor, { url: '/v1/report', method: 'POST', credential: node,
+      body: payload, addReportMetadata: false });
+    assert.equal(replay.status, 409);
+    assert.equal(replay.data.error, 'REPORT_REPLAYED');
+
+    const stale = await call(monitor, { url: '/v1/report', method: 'POST', credential: node, addReportMetadata: false,
+      body: JSON.stringify({ observed_at: new Date(time - 120000).toISOString(), report_id: randomUUID(),
+        files: { 'app.js': 'b'.repeat(64) } }) });
+    assert.equal(stale.status, 409);
+    assert.equal(stale.data.error, 'REPORT_STALE');
+    const future = await call(monitor, { url: '/v1/report', method: 'POST', credential: node, addReportMetadata: false,
+      body: JSON.stringify({ observed_at: new Date(time + 60001).toISOString(), report_id: randomUUID(),
+        files: { 'app.js': 'b'.repeat(64) } }) });
+    assert.equal(future.status, 400);
+    assert.equal(future.data.error, 'REPORT_TIME_IN_FUTURE');
+    const malformed = await call(monitor, { url: '/v1/report', method: 'POST', credential: node, addReportMetadata: false,
+      body: JSON.stringify({ observed_at: new Date(time).toISOString(), report_id: 'not-a-uuid',
+        files: { 'app.js': 'b'.repeat(64) } }) });
+    assert.equal(malformed.status, 400);
+    assert.equal(malformed.data.error, 'INVALID_REPORT_METADATA');
+    for (const observedAt of [
+      '2026-10-02T08:00:00Z',
+      '2026-10-02 08:00:00.000Z',
+      '2026-10-02T08:00:00.000+00:00',
+      'Thu, 02 Oct 2026 08:00:00 GMT',
+      '2026-02-30T08:00:00.000Z',
+    ]) {
+      const nonCanonical = await call(monitor, { url: '/v1/report', method: 'POST', credential: node,
+        addReportMetadata: false, body: JSON.stringify({ observed_at: observedAt, report_id: randomUUID(),
+          files: { 'app.js': 'b'.repeat(64) } }) });
+      assert.equal(nonCanonical.status, 400, observedAt);
+      assert.equal(nonCanonical.data.error, 'INVALID_REPORT_METADATA', observedAt);
+      assert.equal(monitor.status().nodes['license-center'].integrity.report_id, reportId, observedAt);
+    }
+    assert.equal(monitor.status().nodes['license-center'].integrity.report_id, reportId);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('persisted state rejects malformed field shapes and ignores unrecognized fields', () => {
   const dir = mkdtempSync(join(tmpdir(), 'cloud-state-invalid-'));
   try {
     const stateFile = join(dir, 'state.json');
-    for (const invalid of [null, [], { reports: [] }, { events: {} }, { hostReportState: 'unsafe' }]) {
+    for (const invalid of [null, [], { reports: [] }, { events: {} }, { hostReportState: 'unsafe' },
+      { reportIds: { 'license-center': ['not-a-uuid'] } }]) {
       writeFileSync(stateFile, JSON.stringify(invalid));
       assert.throws(() => createMonitor({ nodes: { 'license-center': node }, readers: [reader], stateFile }),
         /Invalid persisted security state/);
@@ -225,12 +293,16 @@ test('dashboard is server-rendered behind reader mTLS plus Basic token and secur
   assert.equal(page.status, 200);
   assert.match(page.headers['content-type'], /^text\/html/);
   assert.match(page.headers['content-security-policy'], /default-src 'none'/);
-  assert.match(page.text, /APPGOG 云端安全监测中心/);
+  assert.match(page.text, /玄武引擎 · Xuanwu 云安全平台/);
   assert.match(page.text, /授权中心/);
   assert.match(page.text, /打包中心/);
   assert.match(page.text, /等待在 Linux 管理菜单中注册/);
-  assert.match(page.text, /双机总架构/);
-  assert.match(page.text, /三机总架构/);
+  assert.doesNotMatch(page.text, /双机总架构|三机总架构/);
+  for (const section of ['virus', 'policy', 'baseline', 'updates', 'events', 'connection']) {
+    assert.match(page.text, new RegExp(`id="${section}"`));
+  }
+  assert.match(page.text, /铁幕安全程序/);
+  assert.match(page.text, /发布服务待接入/);
   assert.match(page.text, /首次对接进度/);
   assert.match(page.text, /云端服务已安装/);
   assert.match(page.text, /当前步骤/);
@@ -243,6 +315,11 @@ test('dashboard is server-rendered behind reader mTLS plus Basic token and secur
     authorization: `Basic ${Buffer.from('reader:wrong').toString('base64')}` });
   assert.equal(denied.status, 401);
   assert.match(denied.headers['www-authenticate'], /^Basic /);
+  const untrusted = await callRaw(monitor, { url: '/dashboard', authorized: false, authorization });
+  assert.equal(untrusted.status, 401);
+  const wrongCertificate = await callRaw(monitor, { url: '/dashboard', credential: { ...reader, fingerprint256: 'BB' }, authorization });
+  assert.equal(wrongCertificate.status, 401);
+  assert.doesNotMatch(page.text, /两个业务角色均已通过 mTLS 认证并开始上报/);
 });
 
 test('dashboard quick-start reaches complete only after both business roles report', async () => {
@@ -439,4 +516,13 @@ test('configuration rejects any policy that permits unsafe update or control pat
     config.policy.rules[name] = value;
     assert.throws(() => validateConfiguration(config), /Unsafe policy configuration/);
   }
+});
+
+test('dashboard escapes untrusted report text without loading executable content', () => {
+ const hostile='<script>alert("unsafe")</script>';
+ const page=renderDashboard({status:{nodes:{},events:[{kind:hostile,node:hostile,details:hostile,at:hostile}]},identities:{roles:{}},policy:{version:hostile}});
+ assert.equal(page.includes(hostile),false);
+ assert.match(page,/&lt;script&gt;/);
+ assert.doesNotMatch(page,/<script[\s>]/i);
+ assert.doesNotMatch(page,/\son(?:click|load|error)=/i);
 });

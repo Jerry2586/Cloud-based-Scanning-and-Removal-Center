@@ -1,0 +1,241 @@
+{
+  "schema": 1,
+  "sourceRepository": "Jerry2586/Universal-authorization",
+  "sourceRevision": "fdd2cea33a79749f6c50d65b461fb79595114126",
+  "destinationRepository": "Jerry2586/Cloud-based-Scanning-and-Removal-Center",
+  "status": "migration-in-progress",
+  "files": [
+    {
+      "source": "apps/license-api/src/modules/operations/local-security-scan.js",
+      "target": "src/local/scan-client.js"
+    },
+    {
+      "source": "apps/license-api/src/modules/operations/security-status.js",
+      "target": "integrations/appgog/security-status.js"
+    },
+    {
+      "source": "apps/web/public/assets/portal/security-console.js",
+      "target": "src/local/public/assets/portal/security-console.js"
+    },
+    {
+      "source": "apps/web/public/assets/portal/security-poller.js",
+      "target": "src/local/public/assets/portal/security-poller.js"
+    },
+    {
+      "source": "apps/web/public/assets/portal/security-ui.js",
+      "target": "src/local/public/assets/portal/security-ui.js"
+    },
+    {
+      "source": "apps/web/public/assets/security-preview.css",
+      "target": "src/local/public/assets/security-preview.css"
+    },
+    {
+      "source": "docs/integrated-security-disaster-recovery-plan.md",
+      "target": "docs/integrated-security-disaster-recovery-plan.md"
+    },
+    {
+      "source": "docs/local-cloudflare-monitor.md",
+      "target": "docs/local-cloudflare-monitor.md"
+    },
+    {
+      "source": "docs/local-database-health.md",
+      "target": "docs/local-database-health.md"
+    },
+    {
+      "source": "docs/local-host-firewall-monitor.md",
+      "target": "docs/local-host-firewall-monitor.md"
+    },
+    {
+      "source": "docs/local-host-login-monitor.md",
+      "target": "docs/local-host-login-monitor.md"
+    },
+    {
+      "source": "docs/local-host-network-monitor.md",
+      "target": "docs/local-host-network-monitor.md"
+    },
+    {
+      "source": "docs/local-scan-report-contract.md",
+      "target": "docs/local-scan-report-contract.md"
+    },
+    {
+      "source": "docs/local-security-response.md",
+      "target": "docs/local-security-response.md"
+    },
+    {
+      "source": "docs/security-center-architecture.md",
+      "target": "docs/security-center-architecture.md"
+    },
+    {
+      "source": "docs/security-console.md",
+      "target": "docs/security-console.md"
+    },
+    {
+      "source": "packages/core/src/host-scan-contract.js",
+      "target": "src/contracts/host-scan-contract.js"
+    },
+    {
+      "source": "scripts/host-security-agent.py",
+      "target": "scripts/host-security-agent.py"
+    },
+    {
+      "source": "scripts/host-security-cloudflare.py",
+      "target": "scripts/host-security-cloudflare.py"
+    },
+    {
+      "source": "scripts/host-security-firewall.py",
+      "target": "scripts/host-security-firewall.py"
+    },
+    {
+      "source": "scripts/host-security-repair.py",
+      "target": "scripts/host-security-repair.py"
+    },
+    {
+      "source": "scripts/host-security-response.py",
+      "target": "scripts/host-security-response.py"
+    },
+    {
+      "source": "scripts/install-host-security.sh",
+      "target": "scripts/install-host-security.sh"
+    },
+    {
+      "source": "scripts/security-agent.js",
+      "target": "scripts/security-agent.js"
+    },
+    {
+      "source": "scripts/security-connect.sh",
+      "target": "scripts/security-connect.sh"
+    },
+    {
+      "source": "scripts/security-doctor.sh",
+      "target": "scripts/security-doctor.sh"
+    },
+    {
+      "source": "scripts/security-local.sh",
+      "target": "scripts/security-local.sh"
+    },
+    {
+      "source": "scripts/verify-host-security-engine.py",
+      "target": "scripts/verify-host-security-engine.py"
+    },
+    {
+      "source": "scripts/verify-host-security-firewall-linux.py",
+      "target": "scripts/verify-host-security-firewall-linux.py"
+    },
+    {
+      "source": "scripts/verify-host-security-linux.sh",
+      "target": "scripts/verify-host-security-linux.sh"
+    },
+    {
+      "source": "scripts/verify-host-security-recovery-linux.sh",
+      "target": "scripts/verify-host-security-recovery-linux.sh"
+    },
+    {
+      "source": "scripts/verify-host-security-response-linux.py",
+      "target": "scripts/verify-host-security-response-linux.py"
+    },
+    {
+      "source": "tests/fixtures/host-security-business-malware.py",
+      "target": "migration/legacy-tests/fixtures/host-security-business-malware.py.source"
+    },
+    {
+      "source": "tests/fixtures/host-security-cloudflare.py",
+      "target": "migration/legacy-tests/fixtures/host-security-cloudflare.py.source"
+    },
+    {
+      "source": "tests/fixtures/host-security-firewall.py",
+      "target": "migration/legacy-tests/fixtures/host-security-firewall.py.source"
+    },
+    {
+      "source": "tests/fixtures/host-security-login.py",
+      "target": "migration/legacy-tests/fixtures/host-security-login.py.source"
+    },
+    {
+      "source": "tests/fixtures/host-security-response.py",
+      "target": "migration/legacy-tests/fixtures/host-security-response.py.source"
+    },
+    {
+      "source": "tests/fixtures/host-security-sqlite.py",
+      "target": "migration/legacy-tests/fixtures/host-security-sqlite.py.source"
+    },
+    {
+      "source": "tests/helpers/host-scan-report.js",
+      "target": "migration/legacy-tests/helpers/host-scan-report.js.source"
+    },
+    {
+      "source": "tests/host-scan-contract.test.js",
+      "target": "migration/legacy-tests/host-scan-contract.test.js.source"
+    },
+    {
+      "source": "tests/host-security-baseline.test.js",
+      "target": "migration/legacy-tests/host-security-baseline.test.js.source"
+    },
+    {
+      "source": "tests/host-security-business-malware.test.js",
+      "target": "migration/legacy-tests/host-security-business-malware.test.js.source"
+    },
+    {
+      "source": "tests/host-security-cloudflare.test.js",
+      "target": "migration/legacy-tests/host-security-cloudflare.test.js.source"
+    },
+    {
+      "source": "tests/host-security-expanded.test.js",
+      "target": "migration/legacy-tests/host-security-expanded.test.js.source"
+    },
+    {
+      "source": "tests/host-security-firewall.test.js",
+      "target": "migration/legacy-tests/host-security-firewall.test.js.source"
+    },
+    {
+      "source": "tests/host-security-image.test.js",
+      "target": "migration/legacy-tests/host-security-image.test.js.source"
+    },
+    {
+      "source": "tests/host-security-login.test.js",
+      "target": "migration/legacy-tests/host-security-login.test.js.source"
+    },
+    {
+      "source": "tests/host-security-malware.test.js",
+      "target": "migration/legacy-tests/host-security-malware.test.js.source"
+    },
+    {
+      "source": "tests/host-security-network.test.js",
+      "target": "migration/legacy-tests/host-security-network.test.js.source"
+    },
+    {
+      "source": "tests/host-security-posture.test.js",
+      "target": "migration/legacy-tests/host-security-posture.test.js.source"
+    },
+    {
+      "source": "tests/host-security-response.test.js",
+      "target": "migration/legacy-tests/host-security-response.test.js.source"
+    },
+    {
+      "source": "tests/host-security-scan.test.js",
+      "target": "migration/legacy-tests/host-security-scan.test.js.source"
+    },
+    {
+      "source": "tests/host-security-sqlite.test.js",
+      "target": "migration/legacy-tests/host-security-sqlite.test.js.source"
+    },
+    {
+      "source": "tests/security-agent.test.js",
+      "target": "migration/legacy-tests/security-agent.test.js.source"
+    },
+    {
+      "source": "tests/security-connectivity.test.js",
+      "target": "migration/legacy-tests/security-connectivity.test.js.source"
+    },
+    {
+      "source": "tests/security-host-report.test.js",
+      "target": "migration/legacy-tests/security-host-report.test.js.source"
+    },
+    {
+      "source": "tests/security-pairing.test.js",
+      "target": "migration/legacy-tests/security-pairing.test.js.source"
+    },
+    {
+      "source": "tests/security-poller.test.js",
+      "target": "migration/legacy-tests/security-poller.test.js.source"
+    }
+  ]
+}

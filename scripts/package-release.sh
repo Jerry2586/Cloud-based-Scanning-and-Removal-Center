@@ -15,7 +15,7 @@ while (($#)); do
   esac
 done
 
-for required in package.json release-contract.json release-public.pem install.sh scripts/install-linux.sh scripts/appgog-security.sh scripts/backup.sh scripts/restore.sh src/server.js; do
+for required in .dockerignore docker/Dockerfile docker/compose.local.yml docker/compose.cloud.yml scripts/install-independent.sh scripts/ironcurtain.sh scripts/control.js scripts/lib/independent.sh scripts/lib/install-transaction.sh scripts/lib/management-transaction.sh package.json release-contract.json release-public.pem install.sh scripts/install-linux.sh scripts/appgog-security.sh scripts/backup.sh scripts/backup-auth.js scripts/restore.sh src/server.js src/local/server.js src/local/public/index.html src/contracts/host-scan-contract.js src/host/agent.py src/host/cloudflare.py; do
   [[ -f $SOURCE/$required ]] || { echo "Missing release input: $required" >&2; exit 1; }
 done
 [[ -n $SIGNING_KEY && -s $SIGNING_KEY ]] || { echo 'Set APPGOG_SECURITY_RELEASE_PRIVATE_KEY or use --signing-key.' >&2; exit 1; }
@@ -32,8 +32,12 @@ trap 'rm -rf "$WORK"' EXIT
 PAYLOAD=$WORK/payload
 mkdir -p "$PAYLOAD/scripts/lib" "$PAYLOAD/src" "$OUTPUT"
 cp "$SOURCE/package.json" "$SOURCE/release-contract.json" "$SOURCE/release-public.pem" "$SOURCE/install.sh" "$PAYLOAD/"
-cp "$SOURCE/src/"*.js "$PAYLOAD/src/"
+cp -a "$SOURCE/src/." "$PAYLOAD/src/"
+find "$PAYLOAD/src" -type d -name __pycache__ -prune -exec rm -rf -- {} +
 cp "$SOURCE/scripts/"*.sh "$PAYLOAD/scripts/"
+cp "$SOURCE/scripts/backup-auth.js" "$SOURCE/scripts/control.js" "$PAYLOAD/scripts/"
+cp -a "$SOURCE/docker" "$PAYLOAD/"
+cp "$SOURCE/.dockerignore" "$PAYLOAD/"
 cp "$SOURCE/scripts/lib/"*.sh "$PAYLOAD/scripts/lib/"
 
 if [[ ${APPGOG_SECURITY_ALLOW_TEST_KEY:-false} != true ]]; then

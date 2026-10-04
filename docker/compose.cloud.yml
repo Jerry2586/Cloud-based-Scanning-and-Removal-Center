@@ -1,0 +1,36 @@
+services:
+  xuanwu:
+    image: ${IRONCURTAIN_IMAGE:?}
+    container_name: ironcurtain-cloud
+    command: [node, src/server.js]
+    user: "10001:10001"
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1.0
+    tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=32m"]
+    ports: ["${IRONCURTAIN_BIND:-127.0.0.1}:9443:9443"]
+    environment:
+      IRONCURTAIN_ROLE: cloud
+      IRONCURTAIN_PUBLIC_HOST: ${IRONCURTAIN_PUBLIC_HOST:?}
+      SECURITY_TLS_KEY: /etc/xuanwu/server.key
+      SECURITY_TLS_CERT: /etc/xuanwu/server.crt
+      SECURITY_CLIENT_CA: /etc/xuanwu/ca.crt
+      SECURITY_CONFIG: /etc/xuanwu/config.json
+      SECURITY_STATE_FILE: /var/lib/xuanwu/state.json
+    volumes:
+      - ${IRONCURTAIN_CONFIG:?}/runtime:/etc/xuanwu:ro
+      - ${IRONCURTAIN_DATA:?}:/var/lib/xuanwu
+    healthcheck:
+      test: [CMD, node, src/healthcheck.js]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}

@@ -30,6 +30,16 @@ jobs:
           node --test
           sudo env "PATH=$PATH" bash tests/identity-scripts.test.sh
           sudo env "PATH=$PATH" bash tests/release-install.test.sh
+          sudo env "PATH=$PATH" bash tests/independent-transactions.test.sh
+          sudo env "PATH=$PATH" python3 tests/host-agent.test.py
+      - name: Check disposable runner Docker prerequisites
+        run: |
+          sudo systemctl start docker
+          docker info >/dev/null
+          docker compose version
+          docker buildx version
+      - name: Real independent Docker deployment gate
+        run: sudo env "PATH=$PATH" IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER=1 bash tests/independent-deployment.test.sh
       - name: Materialize signing key only in runner temporary storage
         env:
           SIGNING_KEY: ${{ secrets.APPGOG_SECURITY_RELEASE_PRIVATE_KEY }}

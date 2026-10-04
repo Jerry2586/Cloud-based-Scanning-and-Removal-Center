@@ -1,219 +1,76 @@
-# 独立云端安全监测中心
+# 铁幕安全 · 玄武引擎
 
-此仓库运行在独立 Linux 服务器。Node 24 服务通过私有 CA 签发的客户端证书和独立令牌识别授权中心、打包中心与只读后台；定时从公网 HTTPS 健康端点探测两个业务节点，并比较业务节点上报的文件摘要与可信发布包的基线。它是文件完整性和可用性监测器，不是病毒特征查杀器；云端本身不远程执行命令或删除业务文件。
+独立 Linux 安全项目，统一源码、独立角色：**铁幕安全**部署在需要保护的服务器，**玄武引擎**部署在独立的安全服务器。每个角色运行一个 Docker 容器；铁幕额外安装一个固定权限的宿主扫描服务。可保护 APPGOG，也可配置其他网站和容器。
 
-## 小白一键安装和更新
+APPGOG 的授权、打包、账号、数据库和升级仍由其自己的项目负责。安全面板、检测逻辑、节点身份和安全更新在本仓库维护。
 
-以后只需要记住下面这一条命令。**第一次执行是安装，以后再次执行同一条命令就是检查并更新**，不用区分“安装命令”和“升级命令”：
+> 当前为 **0.2.0 开发候选**。独立角色的 Linux/Docker 验收和正式签名发布尚未完成；下列源码安装用于开发验收。现有远端旧 Release 不代表已经包含这次拆分。实际完成状态见 [功能与验收矩阵](docs/capability-status.md)。
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/Jerry2586/Cloud-based-Scanning-and-Removal-Center/main/install.sh -o /tmp/appgog-security-install.sh && sudo sh /tmp/appgog-security-install.sh --host security.example.com
-```
+## 小白安装：选一个角色，运行一条命令
 
-只需要把最后的 `security.example.com` 换成你的安全中心域名。没有域名时，直接换成这台安全服务器的固定公网 IP，例如：
+先把经过校验的本项目源码放到服务器，进入项目目录。使用带 systemd 的 Debian/Ubuntu，或支持 dnf/yum 的 RHEL/Rocky/AlmaLinux/Fedora/Oracle Linux；CPU 为 x86_64 或 aarch64。脚本识别支持范围、补齐基础工具、Docker、Compose 和 Buildx，无需另外安装 Node.js 数据库环境。
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/Jerry2586/Cloud-based-Scanning-and-Removal-Center/main/install.sh -o /tmp/appgog-security-install.sh && sudo sh /tmp/appgog-security-install.sh --host 203.0.113.10
-```
-
-这条命令会自动判断：
-
-- 服务器没有安装：自动补齐环境并完成首次安装。
-- 服务器已经安装旧版本：先创建加密备份，再更新到最新正式版。
-- 服务器已经是最新版：完成健康检查后安全退出，不重复安装。
-- 更新过程中出现错误：自动恢复更新前的程序、配置和服务。
-
-不需要手动安装 Node.js，不需要执行 `git pull`，也不需要自己配置 systemd。支持 Debian、Ubuntu、CentOS、RHEL、Rocky Linux、AlmaLinux、Fedora、Oracle Linux，支持 x86_64 和 arm64。安装前只需确保使用 root 权限，并在服务器防火墙和云厂商安全组放通 TCP `9443`。
-
-### 私有仓库只需额外配置一次
-
-私有仓库首次安装时，先从已登录的 GitHub 仓库 **Code** 页面下载并核对可信的 `install.sh`，再上传到服务器；已经成功安装过的服务器可复用保存于 `/opt/appgog-security/install.sh` 的引导器。随后为服务器创建仅限本仓库 `Contents: Read` 的细粒度令牌，写入 root 专用文件，不把令牌放进命令行、`.env` 或日志：
+**需要保护的服务器：安装铁幕安全。** 首装询问服务器域名或固定 IPv4。
 
 ```sh
-sudo install -d -m 700 /etc/appgog-security
-sudo install -m 600 /dev/stdin /etc/appgog-security/github-release.token
-sudo sh ./install.sh --host security.example.com
+sudo bash scripts/install-independent.sh --role local
 ```
 
-第二行会等待管理员粘贴令牌，粘贴后按 `Ctrl-D` 保存。这个令牌只配置一次，以后重复执行下面同一条命令就是更新：
+**独立安全服务器：安装玄武引擎。** 首装询问其域名或固定 IPv4。
 
 ```sh
-sudo sh /opt/appgog-security/install.sh --host security.example.com
+sudo bash scripts/install-independent.sh --role cloud
 ```
 
-引导器只把令牌发送给 GitHub API，不会把令牌写进命令行、业务配置或日志。公共与私有模式下载后都会自动核对数字签名、版本和文件哈希，任何一项不一致都会停止安装。
+更高版本的可信源码使用相同命令升级；同版本且载荷一致、服务健康则安全退出。同版本内容变化、降级、端口冲突或不受控路径会拒绝。升级前保存 root 私有恢复快照，失败恢复旧配置、身份、版本链接和服务状态。首次失败恢复安装前状态。
 
-配置、证书和身份保存在 `/etc/appgog-security`，运行状态和加密备份保存在 `/var/lib/appgog-security`，版本程序保存在 `/opt/appgog-security/releases`。备份密钥 `/etc/appgog-security/backup.key` 不包含在备份包内，必须单独离线保管；密钥丢失时加密备份无法恢复。正式环境不要把这三个目录或任何令牌、私钥提交到 Git。
+默认面板端口：铁幕 `8790`，玄武 `9443`。安装器不会替你开放所有防火墙端口；按管理来源限制安全组与主机防火墙。自签/私有 CA 证书需核对指纹并导入信任，不能用关闭 TLS 校验替代身份核验。
 
-安装完成后不要再拼长命令，只输入：
+## 正式发布后的固定安装 / 更新入口
+
+经过正式签名发布后，把该 Release 的 `install.sh` 下载到服务器。首次执行选择角色；每次执行仍用同一条命令：
 
 ```sh
-sudo appgog-security
+sudo sh ./install.sh --role local
 ```
 
-然后选择 `1. 首次配置向导（推荐）`。向导会用中文依次询问双机/三机部署方式、授权中心和打包中心的 HTTPS 健康地址、可信基线文件，并自动创建两个独立身份、检查服务、生成正确的业务身份包。任一步失败都会撤销本次向导产生的配置和身份，不留下“只配好一半”的状态。
-
-以后需要更新时，重新执行最上面首次安装用的同一条命令即可；也可以打开这个菜单后选择 `4. 检查并更新`。
-
-主菜单只保留六类常用操作：首次配置、查看状态、查看面板地址、检查更新、备份恢复和高级管理。原来的启停、日志、诊断、手动注册、单独导出、身份轮换和卸载仍在“高级管理”中，没有删除。
-
-首次配对前，从服务器控制台独立记录安装器输出的 CA SHA-256 指纹，业务机连接时必须核对。安装成功只证明云端本机通过认证健康检查，不代表授权/打包节点已配对，也不代表双机或三机容灾演练已经完成。
-
-身份配置只保存令牌的 SHA-256 摘要，不保存授权中心、打包中心或 reader 的明文令牌。服务启动时会拒绝明文令牌字段、非法摘要、重复令牌摘要和重复证书指纹。授权中心和打包中心的身份包各自只能成功导出一次；导出完成后，云端立即删除对应业务私钥、CSR、客户端证书和原始令牌。reader 是安全服务器本机管理面板使用的长期身份，因此继续保留在本机；业务身份轮换只有在新身份完成部署并执行 `commit` 后才生效，提交完成会清除业务身份的当前秘密和 `.next.*` 暂存秘密。
-
-网页只读面板地址固定为 `https://HOST:9443/dashboard`。它显示节点注册、认证连接、报告新鲜度、文件完整性、宿主检查、证书状态和安全事件，不提供远程终端、远程删除或云端主动修复。页面使用 reader 客户端证书与独立 Basic 凭据双重认证；reader 身份只交付管理员浏览器，绝不能复制到授权或打包业务服务器。
-
-小白操作顺序只有三步：
-
-1. 执行上面的一键安装/更新命令。
-2. 输入 `sudo appgog-security`，选择 `1`，跟着中文提示填写。
-3. 按向导最后的提示，把身份包安全导入业务服务器，再打开网页面板查看五步对接进度。
-
-熟悉命令行的管理员也可直接执行非交互式向导：
+本行安装/更新铁幕。玄武使用：
 
 ```sh
-sudo appgog-security setup shared \
-  https://auth.example.com/health /root/auth-baseline.json \
-  https://build.example.com/health /root/build-baseline.json \
-  /root/appgog-business-pairing
+sudo sh ./install.sh --role cloud
 ```
 
-把 `shared` 改为 `separate` 时，输出目录会包含 `license-center` 和 `build-center` 两个互不混用的子目录。
+已有安装可以更短：`sudo ironcurtain update` 或 `sudo xuanwu update`。引导器先校验内置公钥对应的 Ed25519 发布签名，再校验安装包 SHA-256，然后执行安装。云端服务没有发布签名私钥。
 
-源码方式仅用于开发维护：在可信源码目录运行 `sudo bash scripts/install-linux.sh --host security.example.com`。它不能替代正式签名 Release。
+公开仓库通过 HTTPS 获取正式附件。私有仓库使用只授予本仓库读取权限的 GitHub 令牌，存入 root 专属文件 `/etc/ironcurtain/github-release.token`，权限 `600`；不把令牌放在命令、URL、日志或 `.env`。也可通过 `IRONCURTAIN_GITHUB_TOKEN_FILE` 指定同等权限文件。私有仓库首次获取引导器仍需要已登录 GitHub 下载或可信分发；一条匿名 raw URL 无法读取私有源码。已安装节点保留引导器后，重复命令可认证下载更新。
 
-## 注册和交付凭据
+现有 `APPGOG-Cloud-Security-Center-*` 文件名和发布产品标识保留为发布链兼容标识；它们不使程序依赖 APPGOG。正式切换名称时需兼顾旧引导器，不更换验签公钥。
 
-基线必须从独立校验过的同版本源码生成。**不要从已经怀疑受入侵的业务机器采样并批准基线。**
+## Linux 可视化菜单与加密对接
 
-```sh
-node scripts/create-baseline.js /path/to/verified/APPGOG > /root/appgog-baseline.json
-sudo bash scripts/enroll-node.sh license-center https://auth.example.com/health /root/appgog-baseline.json
-sudo bash scripts/enroll-node.sh build-center https://build.example.com/health /root/appgog-baseline.json
-sudo bash scripts/export-business-bundle.sh all /root/business-pairing
-```
+铁幕运行 `sudo ironcurtain`，玄武运行 `sudo xuanwu`。菜单提供启停、日志、签名更新、环境诊断和角色专属对接。
 
-同机业务安装用 `all` 导出的身份包，复制到该机的私有目录，再运行其版本化 `scripts/security-connect.sh`。这对应双机总架构：一台独立云端安全中心，加一台同时运行授权中心和打包中心的业务服务器。命令行等价操作是：
+1. 在玄武选择“登记节点与加密导出”，填写如 `node-server1` 的唯一名称和至少 16 字符的解锁密码。每台铁幕独立登记，玄武可管理多个节点。
+2. 将生成的 `.icpair` **加密身份包**通过可信通道复制到对应铁幕主机。玄武 CA 私钥和浏览器 reader 身份留在玄武管理域。
+3. 在铁幕选择“导入玄武身份包”，填写文件路径、从独立管理通道核对的 CA SHA-256 指纹和解锁密码。先验证证书、节点、私钥、令牌及真实 mTLS 握手；成功后提交新身份。
+4. 在铁幕选择“配置保护范围”，填写程序目录、业务目录、关键配置、凭据权限检查项、SQLite、容器和允许端口。未配置的项目显示未就绪。
+5. 用“一键扫描”和“检查加密连接”查看真实结果；在玄武选择“浏览器面板证书”获取 reader 导入指引。
 
-```sh
-sudo appgog-security enroll license-center https://auth.example.com/health /root/appgog-baseline.json
-sudo appgog-security enroll build-center https://build.example.com/health /root/appgog-baseline.json
-sudo appgog-security export all /root/business-pairing
-```
+本地面板使用独立随机管理员密码；`sudo ironcurtain credentials` 仅在可信终端查看，`sudo ironcurtain reset-password` 重置并使旧会话失效。玄武网页 `/dashboard` 需 reader 客户端证书及独立登录凭据。网页当前读取状态；保护范围、配对、撤销、更新等管理动作走 Linux 菜单。
 
-三机总架构中，云端、授权中心、打包中心各占一台服务器。必须分别导出 `license` 和 `build` 身份包并只交付给对应主机，禁止混发角色，更禁止给业务服务器发放 `reader` 身份：
+## 检测范围与边界
 
-```sh
-sudo appgog-security export license /root/license-pairing
-sudo appgog-security export build /root/build-pairing
-```
+铁幕固定 25 项检查覆盖文件摘要、配置、容器隔离和镜像身份、系统/SSH/权限、TCP/UDP 监听、路由、内核、防火墙、进程、失败服务、SQLite、可选 ClamAV 及 Cloudflare 只读检查。百分比来自已完成检查项，不等于文件数量；缺少依赖、签名基线、配置或权限显示 `unavailable`。Cloudflare 检查需本机专属只读配置和显式批准基线。
 
-业务仓库的安装器支持 `--role license` 和 `--role build`；打包分机首装需要授权后台分别签发的两个节点凭据。双机和三机方案都必须在真实 Linux 主机上完成首装、签名升级、错误凭据拒绝、断线自治和恢复验收。身份包包含对应角色的客户端证书、私钥、独立令牌、CA 证书与拓扑元数据，不包含云端 CA 私钥、reader 身份或后台令牌。
+本机按固定周期巡检，保留报告和变化记录，主动通过 mTLS 上报玄武。断开玄武时本机检查继续。玄武无业务主机 SSH、Docker socket、任意命令执行或自动删除权限。病毒特征库发布、独立通用隔离/修复、不可变灾备及灾难切换仍在迁移完善，未接通的按钮不显示成功。
 
-### 只读 API 与安全面板
+## 目录与开发验证
 
-除公网 `/health` 外，所有接口都要求受私有 CA 信任的客户端证书以及对应的独立令牌。`/health` 只表示云端进程存活，不能当作业务节点安全判据。
+- `src/local`：铁幕独立网页、登录、扫描及玄武连接客户端。
+- `src/host`：宿主检查服务与只读 Cloudflare 采集。
+- `src/server.js`、`src/monitor.js`、`src/dashboard.js`：玄武 mTLS 服务、节点状态与面板。
+- `docker`：local/cloud 独立容器定义。
+- `scripts/install-independent.sh`、`scripts/ironcurtain.sh`：安装事务与 Linux 菜单。
+- `migration/source-map.json`：从旧业务项目迁出的代码来源记录。
 
-| 路径 | 身份 | 用途 |
-|---|---|---|
-| `/v1/connectivity` | reader、授权节点或打包节点 | 返回当前已经认证的角色，不泄露凭据 |
-| `/v1/status` | reader | 汇总节点探测、文件完整性、宿主检查和报告新鲜度 |
-| `/v1/identity` | reader | 查看证书有效期、轮换状态和旧身份撤销状态 |
-| `/v1/audit` | reader | 查看最近安全事件；长期取证仍应转发到独立日志存储 |
-| `/v1/policy` | reader、授权节点或打包节点 | 拉取只读、固定为 fail-closed 的公开策略 |
-| `/v1/report` | 对应授权节点或打包节点 | 上报固定结构的文件摘要和宿主检查计数 |
-| `/dashboard` | reader | 服务端渲染的只读安全面板 |
-
-浏览器访问 `/dashboard` 时必须同时满足两层认证：浏览器持有 reader 客户端证书，并通过 HTTP Basic 登录。用户名固定为 `reader`，密码是 `/etc/appgog-security/credentials/reader.token` 的当前内容。页面不包含客户端 JavaScript，也不会把令牌、私钥或节点凭据写进 HTML。
-
-需要从管理员电脑查看面板时，在安全服务器本机生成带强导出密码的临时 PKCS#12 文件：
-
-```sh
-sudo openssl pkcs12 -export \
-  -inkey /etc/appgog-security/credentials/reader.key \
-  -in /etc/appgog-security/credentials/reader.crt \
-  -certfile /etc/appgog-security/ca.crt \
-  -name APPGOG-reader -out /root/appgog-reader.p12
-```
-
-通过独立加密通道把 `appgog-reader.p12` 和 `ca.crt` 交付到管理员电脑：把 `ca.crt` 导入受信任证书颁发机构，把 PKCS#12 导入个人证书存储，然后访问 `https://安全服务器地址:9443/dashboard`。确认可用后立即删除服务器和管理员电脑上的 PKCS#12 临时文件；不得通过聊天、邮件正文、Git 或工单附件传输私钥与令牌。
-
-### 两阶段身份轮换
-
-`scripts/rotate-identity.sh` 支持 `reader`、`license-center`、`build-center` 三种身份。轮换顺序固定为：
-
-1. 在云端执行 `sudo bash scripts/rotate-identity.sh stage <role>`，此时旧身份保持 `active`，新身份为 `staged`，两者都可完成认证。
-2. 通过独立加密通道把 `.next.crt`、`.next.key`、`.next.token` 部署到对应业务节点。reader 轮换时使用 `reader.next.crt`、`reader.next.key`、`reader.next.token`：用前两个文件生成并导入新的 PKCS#12，新面板的 Basic 密码是 `reader.next.token` 的内容。
-3. 用新证书和新令牌完成真实 `/v1/connectivity`、业务报告或 `/dashboard` 检查，并确认 `/v1/identity` 显示轮换中。
-4. 只有新身份在真实链路通过后，才执行 `sudo bash scripts/rotate-identity.sh commit <role>`；提交会删除旧身份的认证资格并把新身份设为唯一 `active`。
-
-不得在新身份尚未部署或未完成实机检查时执行 `commit`。证书已过期会进入风险状态，接近到期或存在尚未提交的 staged 身份会进入警告状态。安装器会把旧版 reader 的单证书结构迁移成身份数组；旧配置缺少 reader 时，会使用本机现有 reader 证书和令牌补齐。迁移只接受与本机证书指纹一致的 reader，不会静默信任陌生身份。
-
-reader 处于 staged 阶段时，临时 PKCS#12 必须明确引用新身份文件：
-
-```sh
-sudo openssl pkcs12 -export \
-  -inkey /etc/appgog-security/credentials/reader.next.key \
-  -in /etc/appgog-security/credentials/reader.next.crt \
-  -certfile /etc/appgog-security/ca.crt \
-  -name APPGOG-reader-next -out /root/appgog-reader-next.p12
-```
-
-## 宿主检查自报
-
-授权和打包节点各自的 systemd 代理启动后以及每五分钟运行固定范围检查，节点通过既有 mTLS 身份和令牌上报状态、检查时间及四种状态计数，不上报文件内容、详细路径或本地日志。云端严格校验形状、计数与未来时间；自报超过十五分钟或节点报告超过两分钟未刷新时显示过期，异常状态变化记为 host.finding / host.warning / host.unavailable / host.stale，恢复记为 host.resumed。旧节点未上报宿主结果时显示不可用；该数据带 node-self-report 来源标签，业务节点失守时不具备独立可信性。公网探测由云端独立执行，保持独立字段。
-
-## 运维限制
-
-服务上报代码目录的文件哈希，不读取业务数据卷、数据库、私钥和系统进程；节点失联时云端仍会继续探测公网健康端点并留下事件。超过两分钟没有收到节点报告会记录 `report.stale`，重新收到经过身份认证的报告会记录 `report.resumed`；事件只保留最近 300 条，必须额外转发到独立日志存储以支持长期取证。若攻击者取得业务进程权限，可伪造该进程可读取的数据和报告；应结合独立备份、审计、主机侧隔离与应急响应。新基线需要在完成签名版本核验后再批准，不随被监控主机的报告自动更新。
-
-云端与业务端的边界是 **Pull-only + 本地处置**：云端只接收经过 mTLS 与独立令牌认证的报告、执行公网探测、保存审计事件并发布只读安全策略。安全服务器不得保存业务服务器 SSH 私钥，不得挂载业务 Docker Socket，不提供任意命令、任意路径扫描、远程删除或主动推送修复能力。隔离可疑容器、恢复可信镜像、断网自治、回滚与文件修复必须由业务服务器上的本地代理按本地批准策略执行。即使云端被攻破，也不能因此直接取得业务服务器命令执行权。
-
-策略校验固定拒绝未签名更新、远程命令和云端主动推送；配置中出现重复令牌摘要、重复证书指纹、未知角色、非 HTTPS 健康地址、带用户名/密码的健康地址、非法摘要或不完整轮换状态时，服务拒绝启动。
-
-## 手动部署到独立安全服务器
-
-在你的电脑上先确认服务器的 SSH 能正常完成握手，然后在**安全服务器**上执行下列命令。私有仓库需要使用你自己的 GitHub 访问方式完成认证；不要把服务器登录密码或 GitHub 令牌写进命令、脚本或仓库。
-
-```sh
-# 连接前把 SERVER_IP 换成安全服务器的公网 IPv4；SSH 端口按服务商实际配置填写。
-ssh -p 1500 root@SERVER_IP
-
-# 以下在安全服务器上执行：
-apt-get update && apt-get install -y git
-# 若服务器使用 dnf：dnf install -y git
-cd /root
-git clone https://github.com/Jerry2586/Cloud-based-Scanning-and-Removal-Center.git cloud-security-center
-cd cloud-security-center
-sudo bash scripts/install-linux.sh --host SERVER_IP
-sudo systemctl status appgog-security.service --no-pager
-```
-
-若私有仓库使用 HTTPS 克隆，GitHub 身份验证须通过事先配置的凭据管理器或短期凭据进行；也可以先为这台服务器配置只有此仓库读取权限的 SSH deploy key，再用 SSH 地址克隆。不要把登录口令放到克隆 URL。
-
-安装后在**安全服务器本机**以已签发的 reader 身份检验服务证书和客户端认证，以下检查应返回 JSON 状态；它不会注册业务节点：
-
-```sh
-CONF=/etc/appgog-security
-TOKEN=$(sudo cat "$CONF/credentials/reader.token")
-CURL_CONFIG=$(sudo mktemp "$CONF/manual-status.curl.XXXXXX")
-cleanup_status_check() {
-  sudo rm -f -- "$CURL_CONFIG"
-  unset TOKEN CURL_CONFIG
-}
-trap cleanup_status_check EXIT INT TERM
-sudo chmod 600 "$CURL_CONFIG"
-sudo tee "$CURL_CONFIG" >/dev/null <<EOF
-fail-with-body
-cacert = "$CONF/ca.crt"
-cert = "$CONF/credentials/reader.crt"
-key = "$CONF/credentials/reader.key"
-header = "Authorization: Bearer $TOKEN"
-url = "https://SERVER_IP:9443/v1/status"
-EOF
-sudo curl --config "$CURL_CONFIG"
-cleanup_status_check
-trap - EXIT INT TERM
-```
-
-从业务服务器访问时，还须放通安全服务器入站 TCP 9443，并在业务服务器上完成身份包配置；仅本机状态正常不等于业务认证连通。不要把 `/etc/appgog-security` 下的私钥、令牌或 CA 私钥提交到 Git。
+`node --test`、`python3 tests/host-agent.test.py` 是本机接口和扫描验证。Linux CI 另执行事务文件系统验证及一次性 runner 上真实 Docker/systemd 首装、配对、扫描和升级。详见 [独立架构](docs/security-center-architecture.md)、[面板说明](docs/security-console.md)、[处置与恢复边界](docs/local-security-response.md)。

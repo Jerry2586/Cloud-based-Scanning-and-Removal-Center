@@ -7,6 +7,8 @@ on:
     branches:
       - main
       - 'candidate/**'
+      - 'feat/**'
+      - 'refactor/**'
 
 jobs:
   verify:
@@ -32,3 +34,25 @@ jobs:
         run: node --test
       - name: Test signed install, update, rollback, backup and restore
         run: sudo env "PATH=$PATH" bash tests/release-install.test.sh
+      - name: Test independent root transaction recovery (simulated services)
+        run: sudo env "PATH=$PATH" bash tests/independent-transactions.test.sh
+      - name: Test generic Linux host scanner
+        run: sudo env "PATH=$PATH" python3 tests/host-agent.test.py
+
+  independent-deployment:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Check disposable runner Docker prerequisites
+        run: |
+          sudo systemctl start docker
+          docker info >/dev/null
+          docker compose version
+          docker buildx version
+      - name: Real independent local and cloud Docker installation and upgrade
+        run: sudo env "PATH=$PATH" IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER=1 bash tests/independent-deployment.test.sh
