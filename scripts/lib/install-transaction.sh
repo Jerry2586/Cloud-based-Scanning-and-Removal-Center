@@ -17,6 +17,16 @@ ic_tx_begin() {
       [[ -f $AGENT_UNIT && ! -L $AGENT_UNIT && $(stat -c %u "$AGENT_UNIT") == 0 ]] || ic_fail '扫描服务定义不受 root 控制'
       cp -p "$AGENT_UNIT" "$IC_TX/agent.service"
     fi
+    if [[ -n ${RULES_TIMER:-} ]]; then
+      for unit in "$RULES_SERVICE" "$RULES_TIMER"; do
+        if [[ -e $unit || -L $unit ]]; then
+          [[ -f $unit && ! -L $unit && $(stat -c %u "$unit") == 0 && $(stat -c %h "$unit") == 1 ]] || ic_fail '规则同步服务定义不受 root 控制'
+          cp -p "$unit" "$IC_TX/$(basename "$unit")"
+        fi
+      done
+      systemctl is-enabled --quiet ironcurtain-rules-sync.timer && touch "$IC_TX/rules-timer-enabled" || true
+      systemctl is-active --quiet ironcurtain-rules-sync.timer && touch "$IC_TX/rules-timer-active" || true
+    fi
     systemctl is-enabled --quiet ironcurtain-agent.service && touch "$IC_TX/agent-enabled" || true
     systemctl is-active --quiet ironcurtain-agent.service && touch "$IC_TX/agent-active" || true
   fi
@@ -25,6 +35,7 @@ ic_tx_begin() {
   chmod 600 "$BASE/transaction.json.new"; mv -f "$BASE/transaction.json.new" "$BASE/transaction.json"
   if [[ -s $IC_TX/install.json ]]; then ic_compose stop; fi
   [[ $ROLE != local || ! -f $IC_TX/agent.service ]] || systemctl stop ironcurtain-agent.service
+  if [[ $ROLE == local && -n ${RULES_TIMER:-} && -f $RULES_TIMER ]]; then systemctl stop ironcurtain-rules-sync.timer; fi
   tar -cf "$IC_TX/config.tar" -C "$CONF" .
   tar -cf "$IC_TX/data.tar" -C "$DATA" .
   chmod 600 "$IC_TX/config.tar" "$IC_TX/data.tar"
@@ -34,6 +45,7 @@ ic_tx_begin() {
 ic_tx_mutating() { touch "$IC_TX/mutating"; }
 ic_tx_finish() {
   # If interrupted after this marker, recovery retains the healthy new installation.
+  if [[ $ROLE == local && -n ${RULES_TIMER:-} && -f $IC_TX/rules-timer-active ]]; then systemctl start ironcurtain-rules-sync.timer || return 1; fi
   touch "$IC_TX/committed"
   rm -f -- "$BASE/transaction.json" || return 1
 }
@@ -61,6 +73,10 @@ ic_tx_recover() {
       # Disable the candidate while its unit still exists; removing it first leaves enable symlinks.
       if [[ ! -f $snapshot/agent-enabled ]]; then systemctl disable ironcurtain-agent.service >/dev/null 2>&1 || return 1; fi
     fi
+    if [[ $ROLE == local && -n ${RULES_TIMER:-} && -f $RULES_TIMER ]]; then
+      systemctl stop ironcurtain-rules-sync.timer || return 1
+      if [[ ! -f $snapshot/rules-timer-enabled ]]; then systemctl disable ironcurtain-rules-sync.timer >/dev/null 2>&1 || return 1; fi
+    fi
     # Copy original archives back without moving the archives: retry remains idempotent.
     for item in config data; do
       local target=$CONF
@@ -84,6 +100,11 @@ ic_tx_recover() {
     if [[ -s $snapshot/menu ]]; then cp -p "$snapshot/menu" "$MENU" || return 1; else rm -f -- "$MENU" || return 1; fi
     if [[ $ROLE == local ]]; then
       if [[ -s $snapshot/agent.service ]]; then cp -p "$snapshot/agent.service" "$AGENT_UNIT" || return 1; else rm -f -- "$AGENT_UNIT" || return 1; fi
+      if [[ -n ${RULES_TIMER:-} ]]; then
+        for unit in "$RULES_SERVICE" "$RULES_TIMER"; do
+          if [[ -s $snapshot/$(basename "$unit") ]]; then cp -p "$snapshot/$(basename "$unit")" "$unit" || return 1; else rm -f -- "$unit" || return 1; fi
+        done
+      fi
     fi
   fi
   if [[ $ROLE == local ]]; then
@@ -91,6 +112,11 @@ ic_tx_recover() {
     if [[ -f $snapshot/agent-enabled ]]; then systemctl enable ironcurtain-agent.service || result=1;
     elif [[ -f $AGENT_UNIT ]]; then systemctl disable ironcurtain-agent.service >/dev/null 2>&1 || result=1; fi
     if [[ -f $snapshot/agent-active ]]; then systemctl start ironcurtain-agent.service || result=1; ic_agent_wait || result=1; fi
+    if [[ -n ${RULES_TIMER:-} ]]; then
+      if [[ -f $snapshot/rules-timer-enabled ]]; then systemctl enable ironcurtain-rules-sync.timer || result=1;
+      elif [[ -f $RULES_TIMER ]]; then systemctl disable ironcurtain-rules-sync.timer >/dev/null 2>&1 || result=1; fi
+      if [[ -f $snapshot/rules-timer-active ]]; then systemctl start ironcurtain-rules-sync.timer || result=1; fi
+    fi
   fi
   if [[ -s $snapshot/install.json ]]; then
     ic_load || return 1

@@ -12,6 +12,8 @@ ic_role "$ROLE"
 MENU=/usr/local/bin/ironcurtain
 [[ $ROLE != cloud ]] || MENU=/usr/local/bin/xuanwu
 AGENT_UNIT=/etc/systemd/system/ironcurtain-agent.service
+RULES_SERVICE=/etc/systemd/system/ironcurtain-rules-sync.service
+RULES_TIMER=/etc/systemd/system/ironcurtain-rules-sync.timer
 exec 9>"/run/lock/ironcurtain-$ROLE.lock"
 flock -n 9 || ic_fail '安装或管理操作正在运行'
 ic_tx_recover

@@ -21,6 +21,8 @@ ic_role "$ROLE"
 MENU=/usr/local/bin/ironcurtain
 [[ $ROLE != cloud ]] || MENU=/usr/local/bin/xuanwu
 AGENT_UNIT=/etc/systemd/system/ironcurtain-agent.service
+RULES_SERVICE=/etc/systemd/system/ironcurtain-rules-sync.service
+RULES_TIMER=/etc/systemd/system/ironcurtain-rules-sync.timer
 engine_setup() {
   [[ $ROLE == local && $ENGINE_MODE == auto ]] || return 0
   if command -v clamscan >/dev/null && [[ -f /etc/systemd/system/ironcurtain-antivirus-update.timer ]]; then return 0; fi
@@ -196,6 +198,47 @@ ReadWritePaths=$DATA /run/ironcurtain
 [Install]
 WantedBy=multi-user.target
 EOF
+  cat > "$RULES_SERVICE" <<EOF
+[Unit]
+Description=IronCurtain authenticated signed rule pull
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+User=root
+ExecStart=/bin/bash $BASE/current/scripts/rules-sync.sh
+TimeoutStartSec=30
+UMask=0077
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=$CONF /run/lock
+ReadOnlyPaths=$CONF/runtime
+MemoryMax=128M
+TasksMax=16
+EOF
+  cat > "$RULES_TIMER" <<EOF
+[Unit]
+Description=IronCurtain periodic signed rule synchronization
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=15min
+RandomizedDelaySec=60
+Unit=ironcurtain-rules-sync.service
+[Install]
+WantedBy=timers.target
+EOF
+  chmod 644 "$RULES_SERVICE" "$RULES_TIMER"
 else
   if [[ ! -f $CONF/ca.key ]]; then
     openssl req -x509 -newkey rsa:3072 -nodes -days 3650 -subj '/CN=Xuanwu Independent CA' -addext 'basicConstraints=critical,CA:TRUE' -addext 'keyUsage=critical,keyCertSign,cRLSign' -keyout "$CONF/ca.key" -out "$CONF/ca.crt" >/dev/null 2>&1
@@ -222,7 +265,18 @@ ln -sfn "$RELEASE" "$BASE/current.next"; mv -Tf "$BASE/current.next" "$BASE/curr
 ic_check_dir /usr/local/bin
 printf '#!/usr/bin/env bash\nexec bash /opt/ironcurtain/%s/current/scripts/ironcurtain.sh --role %s "$@"\n' "$ROLE" "$ROLE" > "$MENU.new"
 chmod 755 "$MENU.new"; mv -f "$MENU.new" "$MENU"
-if [[ $ROLE == local ]]; then systemctl daemon-reload; systemctl enable --now ironcurtain-agent.service; systemctl restart ironcurtain-agent.service; fi
+if [[ $ROLE == local ]]; then
+  systemctl daemon-reload
+  systemctl enable --now ironcurtain-agent.service
+  systemctl restart ironcurtain-agent.service
+  if [[ ! -f $IC_TX/$(basename "$RULES_TIMER") ]]; then
+    systemctl enable --now ironcurtain-rules-sync.timer
+  else
+    if [[ -f $IC_TX/rules-timer-enabled ]]; then systemctl enable ironcurtain-rules-sync.timer;
+    else systemctl disable ironcurtain-rules-sync.timer; fi
+    if [[ -f $IC_TX/rules-timer-active ]]; then systemctl start ironcurtain-rules-sync.timer; fi
+  fi
+fi
 ic_compose config --quiet
 ic_compose up -d --wait --wait-timeout 90
 ic_wait || ic_fail '容器 HTTPS 身份健康检查未通过'

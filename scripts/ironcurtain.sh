@@ -56,6 +56,7 @@ status() {
   if ic_healthy; then echo '容器：健康'; else echo '容器：未通过健康检查'; fi
   if [[ $ROLE == local ]]; then
     echo "扫描代理：$(systemctl is-active ironcurtain-agent.service || true)"
+    echo "规则同步：$(systemctl is-active ironcurtain-rules-sync.timer || true)（配对后每 15 分钟）"
     python3 "$SOURCE/src/host/antivirus.py"
     [[ ! -d $CONF/runtime/cloud ]] || echo '云端：已配置身份，实时握手请选择连接检查'
     [[ -d $CONF/runtime/cloud ]] || echo '云端：未配对'
@@ -276,8 +277,8 @@ rules_action() {
 dispatch() {
   case "$1" in
     status) status ;; logs) ic_compose logs --tail 100 ;;
-    start) lock; [[ $ROLE != local ]] || systemctl start ironcurtain-agent.service; ic_compose up -d --wait --wait-timeout 90 ;;
-    stop) lock; ic_compose stop; [[ $ROLE != local ]] || systemctl stop ironcurtain-agent.service ;;
+    start) lock; [[ $ROLE != local ]] || systemctl start ironcurtain-agent.service ironcurtain-rules-sync.timer; ic_compose up -d --wait --wait-timeout 90 ;;
+    stop) lock; ic_compose stop; [[ $ROLE != local ]] || systemctl stop ironcurtain-agent.service ironcurtain-rules-sync.timer ;;
     restart) lock; [[ $ROLE != local ]] || systemctl restart ironcurtain-agent.service; ic_compose restart; ic_wait ;;
     engine-install|engine-update|engine-status) [[ $ROLE == local ]] || ic_fail '病毒引擎仅用于铁幕'; lock; bash "$SOURCE/scripts/antivirus-engine.sh" "${1#engine-}" ;;
     findings|quarantine-list) response "$([[ $1 == findings ]] && echo findings || echo list)" ;;

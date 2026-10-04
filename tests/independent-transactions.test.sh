@@ -17,6 +17,18 @@ source "$ROOT/scripts/lib/management-transaction.sh"
 # No actual service, container or production path is changed by these doubles.
 docker() { [[ $1 == inspect ]] || return 1; echo "$CONTAINER_RUNNING"; }
 systemctl() {
+  if [[ ${!#} == ironcurtain-rules-sync.timer ]]; then
+    case "$1" in
+      is-active) [[ $TIMER_RUNNING == true ]] ;;
+      is-enabled) [[ $TIMER_ENABLED == true ]] ;;
+      stop) TIMER_RUNNING=false ;;
+      start) TIMER_RUNNING=true ;;
+      enable) TIMER_ENABLED=true ;;
+      disable) [[ -f $RULES_TIMER ]] || return 1; TIMER_ENABLED=false ;;
+      *) return 1 ;;
+    esac
+    return
+  fi
   case "$1" in
     is-active) [[ $AGENT_RUNNING == true ]] ;;
     is-enabled) [[ $AGENT_ENABLED == true ]] ;;
@@ -45,6 +57,9 @@ fixture() {
   number=$((number+1)); ROLE=local
   BASE=$WORK/case-$number/base; CONF=$WORK/case-$number/config; DATA=$WORK/case-$number/data
   MENU=$WORK/case-$number/menu; AGENT_UNIT=$WORK/case-$number/agent.service
+  RULES_SERVICE=$WORK/case-$number/ironcurtain-rules-sync.service
+  RULES_TIMER=$WORK/case-$number/ironcurtain-rules-sync.timer
+  TIMER_RUNNING=true; TIMER_ENABLED=true
   CONTAINER=fixture; CONTAINER_RUNNING=true; AGENT_RUNNING=true; AGENT_ENABLED=true
   FAIL_DOWN=false; FAIL_HEALTH=false; FAIL_SCAN=false; IC_ADMIN_TX=''; IC_TX=''
   install -d -m 750 "$BASE/releases/1.0.0" "$CONF" "$DATA"
@@ -52,6 +67,7 @@ fixture() {
   ln -s "$BASE/releases/1.0.0" "$BASE/current"
   printf old-config > "$CONF/value"; printf old-data > "$DATA/value"
   printf old-menu > "$MENU"; printf old-agent > "$AGENT_UNIT"
+  printf old-rules-service > "$RULES_SERVICE"; printf old-rules-timer > "$RULES_TIMER"
 }
 assert_old() { [[ $(cat "$CONF/value") == old-config ]]; }
 pass() { echo "PASS $1"; }
@@ -102,11 +118,14 @@ done
 ic_tx_mutating
 printf changed > "$CONF/value"; printf changed > "$DATA/value"
 printf changed > "$MENU"; printf changed > "$AGENT_UNIT"
+printf changed > "$RULES_SERVICE"; printf changed > "$RULES_TIMER"
 ic_tx_recover
 assert_old
 [[ $(cat "$DATA/value") == old-data && $(cat "$MENU") == old-menu && $(cat "$AGENT_UNIT") == old-agent ]]
 [[ $CONTAINER_RUNNING == true && $AGENT_RUNNING == true && $AGENT_ENABLED == true ]]
-pass 'installation restores configuration, data, menu and agent'
+[[ $(cat "$RULES_SERVICE") == old-rules-service && $(cat "$RULES_TIMER") == old-rules-timer ]]
+[[ $TIMER_RUNNING == true && $TIMER_ENABLED == true ]]
+pass 'installation restores configuration, data, menu, agent and rule timer'
 fixture
 ic_tx_begin; ic_tx_mutating; printf changed > "$CONF/value"
 FAIL_SCAN=true
@@ -117,9 +136,11 @@ FAIL_SCAN=false; ic_tx_recover; assert_old
 pass 'installation recovery waits for restored scanner channel and supports retry'
 fixture
 CONTAINER_RUNNING=false; AGENT_RUNNING=false; AGENT_ENABLED=false
+TIMER_RUNNING=false; TIMER_ENABLED=false
 ic_tx_begin; ic_tx_mutating; printf changed > "$CONF/value"; ic_tx_recover
 assert_old; [[ $CONTAINER_RUNNING == false && $AGENT_RUNNING == false && $AGENT_ENABLED == false ]]
-pass 'installation preserves stopped and disabled state'
+[[ $TIMER_RUNNING == false && $TIMER_ENABLED == false ]]
+pass 'installation preserves stopped and disabled state including rule timer'
 fixture
 ic_tx_begin; ic_tx_mutating; printf changed > "$CONF/value"; FAIL_DOWN=true
 if ic_tx_recover; then echo 'Expected install disconnect failure' >&2; exit 1; fi
@@ -133,22 +154,27 @@ if ic_tx_recover; then echo 'Expected install health failure' >&2; exit 1; fi
 pass 'installation recovery remains pending on failed health'
 fixture
 # First install has no previous installation, menu or agent.
-rm -f -- "$BASE/current" "$BASE/install.json" "$MENU" "$AGENT_UNIT"
+rm -f -- "$BASE/current" "$BASE/install.json" "$MENU" "$AGENT_UNIT" "$RULES_SERVICE" "$RULES_TIMER"
 CONTAINER_RUNNING=false; AGENT_RUNNING=false; AGENT_ENABLED=false
+TIMER_RUNNING=false; TIMER_ENABLED=false
 ic_tx_begin; ic_tx_mutating
 printf changed > "$CONF/value"; printf changed > "$DATA/value"
 printf candidate > "$BASE/install.json"; ln -s "$BASE/releases/1.0.0" "$BASE/current"
 printf candidate > "$MENU"; printf candidate > "$AGENT_UNIT"
+printf candidate > "$RULES_SERVICE"; printf candidate > "$RULES_TIMER"
+TIMER_ENABLED=true; TIMER_RUNNING=true
 AGENT_ENABLED=true; AGENT_RUNNING=true; CONTAINER_RUNNING=true
 ic_tx_recover; assert_old
 [[ ! -e $BASE/install.json && ! -L $BASE/current && ! -e $MENU && ! -e $AGENT_UNIT && $AGENT_ENABLED == false && $AGENT_RUNNING == false ]]
-pass 'failed first installation restores pre-install state'
+[[ ! -e $RULES_SERVICE && ! -e $RULES_TIMER && $TIMER_ENABLED == false && $TIMER_RUNNING == false ]]
+pass 'failed first installation restores pre-install state without orphan rule timer'
 fixture
 ic_tx_begin
 # Simulate crash after stopping old services, before mutation begins.
 ic_tx_recover
 assert_old; [[ $CONTAINER_RUNNING == true && $AGENT_RUNNING == true ]]
-pass 'pre-mutation interruption restarts original services'
+[[ $TIMER_RUNNING == true && $TIMER_ENABLED == true ]]
+pass 'pre-mutation interruption restarts original services and rule timer'
 fixture
 ic_tx_begin; ic_tx_mutating; printf changed > "$CONF/value"; touch "$IC_TX/committed"
 ic_tx_recover
@@ -160,4 +186,15 @@ chmod 600 "$BASE/admin-transaction.json"
 if (ic_admin_recover) 2>/dev/null; then echo 'Expected escaped checkpoint rejection' >&2; exit 1; fi
 assert_old
 pass 'recovery rejects snapshot outside its role backup directory'
-echo '14 Linux filesystem transaction checks passed; no real Docker/systemd acceptance claimed.'
+fixture
+ic_tx_begin
+[[ $TIMER_RUNNING == false ]]
+ic_tx_finish
+[[ $TIMER_RUNNING == true && $TIMER_ENABLED == true && ! -e $BASE/transaction.json ]]
+pass 'successful snapshot operation resumes previously active timer'
+fixture
+TIMER_RUNNING=false; TIMER_ENABLED=false
+ic_tx_begin; ic_tx_finish
+[[ $TIMER_RUNNING == false && $TIMER_ENABLED == false ]]
+pass 'successful snapshot operation retains stopped disabled timer'
+echo '16 Linux filesystem transaction checks passed; no real Docker/systemd acceptance claimed.'

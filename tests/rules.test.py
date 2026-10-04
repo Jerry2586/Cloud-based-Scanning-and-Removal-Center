@@ -149,10 +149,15 @@ class NativePullTests(unittest.TestCase):
                     except (BrokenPipeError,ConnectionResetError):pass
                     return
                 self.send_header('Content-Length',str(len(body)));self.end_headers()
-                if outer.mode=='peer-change' and self.path=='/v1/connectivity':outer.server.socket.context=outer.alternate
+                if outer.mode=='peer-change' and self.path=='/v1/connectivity':outer.server.tls_context=outer.alternate
                 self.wfile.write(body)
-        self.server=ThreadingHTTPServer(('127.0.0.1',0),Handler);self.server.daemon_threads=True
-        context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);context.load_cert_chain(self.root/'server.crt',self.root/'server.key');context.verify_mode=ssl.CERT_REQUIRED;context.load_verify_locations(self.root/'ca.crt');self.server.socket=context.wrap_socket(self.server.socket,server_side=True)
+        class TLSServer(ThreadingHTTPServer):
+            def get_request(self):
+                sock,address=super().get_request()
+                try:return self.tls_context.wrap_socket(sock,server_side=True),address
+                except BaseException:sock.close();raise
+        self.server=TLSServer(('127.0.0.1',0),Handler);self.server.daemon_threads=True
+        context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);context.load_cert_chain(self.root/'server.crt',self.root/'server.key');context.verify_mode=ssl.CERT_REQUIRED;context.load_verify_locations(self.root/'ca.crt');self.server.tls_context=context
         self.alternate=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);self.alternate.load_cert_chain(self.root/'server-alt.crt',self.root/'server-alt.key');self.alternate.verify_mode=ssl.CERT_REQUIRED;self.alternate.load_verify_locations(self.root/'ca.crt')
         self.thread=threading.Thread(target=self.server.serve_forever,daemon=True);self.thread.start()
         self.identity=self.root/'identity';self.identity.mkdir(mode=0o700)

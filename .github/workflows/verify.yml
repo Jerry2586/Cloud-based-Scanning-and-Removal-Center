@@ -71,6 +71,8 @@ jobs:
         run: |
           sudo systemctl status ironcurtain-agent.service --no-pager || true
           sudo journalctl -u ironcurtain-agent.service --no-pager -n 30 || true
+          sudo systemctl status ironcurtain-rules-sync.service ironcurtain-rules-sync.timer --no-pager || true
+          sudo journalctl -u ironcurtain-rules-sync.service --no-pager -n 30 || true
           sudo stat -c '%a %u %g %F %n' /run/ironcurtain /run/ironcurtain/scan.sock || true
           sudo docker exec ironcurtain-local node --input-type=module -e 'import {localSecurityScan} from "./src/local/scan-client.js"; console.log(JSON.stringify(await localSecurityScan("status")));' || true
 
