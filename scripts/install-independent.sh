@@ -151,6 +151,12 @@ if [[ $ROLE == local ]]; then
     chown root:10001 "$CONF/runtime/panel.key" "$CONF/runtime/panel.crt"; chmod 640 "$CONF/runtime/panel.key" "$CONF/runtime/panel.crt"
   fi
   if [[ ! -f $CONF/profile.json ]]; then printf '{"schema":"ironcurtain-profile/v1"}\n' > "$CONF/profile.json"; fi
+  # systemd resolves Group through NSS even when a numeric ID is configured.
+  # Container GID 10001 therefore needs a real host group; do not add members.
+  if ! getent group 10001 >/dev/null; then
+    ! getent group ironcurtain-web >/dev/null || ic_fail 'ironcurtain-web 用户组编号冲突'
+    groupadd --system --gid 10001 ironcurtain-web
+  fi
   install -d -m 750 -o root -g 10001 /run/ironcurtain
   cat > /etc/systemd/system/ironcurtain-agent.service <<EOF
 [Unit]
