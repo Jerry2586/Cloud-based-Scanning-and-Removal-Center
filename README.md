@@ -54,6 +54,8 @@ sudo xuanwu update
 
 引导器自动安装缺少的 Bash、下载/归档工具和 CA 包。角色安装器补齐宿主扫描工具，安装 Docker，补装 Buildx，并安装或升级 Compose 至 >=2.24.0。已有发行版 docker.io 优先使用对应插件包，禁止自动移除现有运行时；远程 Docker context、被屏蔽的服务、包冲突、端口占用和不可用软件源会明确停止。运行时 Node.js 在容器中，无需额外安装宿主 Node.js 或 MySQL。
 
+源码安装器已增加基础镜像网络回退：优先 Docker Hub，连接超时、DNS 故障或限流时尝试 DaoCloud 的固定镜像路径。两者使用同一份 SHA-256 摘要，摘要不一致、鉴权失败或镜像不存在时立即停止。安装器复用摘要一致的本地镜像，不修改宿主 DNS、Docker 全局配置或关闭 TLS。每次拉取最多 180 秒、每次构建最多 300 秒，记录保存在 `/var/lib/ironcurtain/<local或cloud>/logs/image-build.*.log`。**此内部安装器修复尚未进入已发布的 v0.4.0；正式一行入口仍下载原签名包，须待新签名版本发布后才能使用该回退。**
+
 本地角色默认尝试安装 ClamAV/freshclam。RPM 系采用当前可用的 dnf 或 yum；软件源不提供病毒引擎或病毒库更新失败时显示“尚未就绪”，记录在角色 logs/antivirus-install.log，可运行 `sudo ironcurtain engine-install`重试。容器健康不等于病毒库已经可用。
 
 默认面板端口：铁幕 8790，玄武 9443。按管理来源限制安全组与主机防火墙；自签/私有 CA 证书须核对指纹并导入信任，安装器不关闭 TLS 校验。

@@ -29,6 +29,7 @@ jobs:
           node --check scripts/verify-release.js
           bash tests/install-environment.test.sh
           bash tests/install-public-host.test.sh
+          bash tests/install-image.test.sh
           node --test
           sudo env "PATH=$PATH" node --test tests/release-delivery.test.js
           sudo env "PATH=$PATH" node --test tests/virus-db.test.js

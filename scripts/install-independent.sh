@@ -7,6 +7,7 @@ source "$SOURCE/scripts/lib/install-transaction.sh"
 source "$SOURCE/scripts/lib/management-transaction.sh"
 source "$SOURCE/scripts/lib/install-environment.sh"
 source "$SOURCE/scripts/lib/install-host.sh"
+source "$SOURCE/scripts/lib/install-image.sh"
 ROLE='' HOST='' BIND='' ENGINE_MODE=auto ENGINE_REQUESTED=false
 while (($#)); do
   case "$1" in
@@ -110,7 +111,7 @@ else
 fi
 IMAGE=ironcurtain-security:$VERSION-$ROLE-$DIGEST
 # Build before active configuration/service changes.
-docker build --pull -f "$RELEASE/docker/Dockerfile" -t "$IMAGE" "$RELEASE"
+ic_image_build "$RELEASE" "$IMAGE" "$DATA/logs"
 ic_env
 SUCCESS=false
 rollback() {
