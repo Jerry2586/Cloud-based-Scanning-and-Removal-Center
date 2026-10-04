@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const entry = await readFile(join(root, 'scripts/git-install-entry.sh'), 'utf8');
+const shortEntry = await readFile(join(root, 'scripts/git-install-short.sh'), 'utf8');
 const pin = 'ebceaf3a7a7aabd749f185f43c9b0c02deeadc62';
 const hash = '5852387ff3f35d7499be3e7e52fdaec4f90f703d80a32949965de150fc4cabc4';
 const linux = process.platform === 'linux';
@@ -51,7 +52,7 @@ async function run(options = {}) {
   }
   const ca = join(dir, 'ca.crt'); await writeFile(ca, 'fixture CA');
   const osRelease = join(dir, 'os-release'); await writeFile(osRelease, 'ID=ubuntu\n');
-  const body = entry.replaceAll(hash, options.hashMismatch ? '0'.repeat(64) : payloadHash)
+  const body = (options.short ? shortEntry : entry).replaceAll(hash, options.hashMismatch ? '0'.repeat(64) : payloadHash)
     .replace('token_file=/etc/ironcurtain/github-release.token', 'token_file=' + tokenFile)
     .replace('for parent in /etc/ironcurtain /etc; do', 'for parent in "' + tokenDir + '" "' + dir + '"; do')
     .replace('mktemp -d /tmp/ironcurtain-online.XXXXXXXX', 'mktemp -d "' + dir + '/work.XXXXXXXX"')
@@ -112,3 +113,42 @@ for (const download of ['failure', 'rate_limit', 'upstream']) {
     assert.notEqual(r.status, 0); assert.doesNotMatch(r.requests, /--user/); assert.match(r.stderr, /不需要输入 Token/);
   });
 }
+
+
+test('short entry retains pinned download and is materially smaller', () => {
+  assert.ok(shortEntry.includes('ref=' + pin)); assert.ok(shortEntry.includes(hash));
+  assert.ok(shortEntry.length < entry.length * 0.6);
+  assert.match(shortEntry, /curl -q --proto '=https' --tlsv1\.2/);
+  assert.doesNotMatch(shortEntry, /--location|--insecure|ref=main/);
+});
+for (const role of ['local', 'cloud']) test('short README command launches verified ' + role, { skip: !linux }, async () => {
+  const r = await run({ short: true, role, readmeCommand: true });
+  assert.equal(r.status, 0, r.stderr); assert.equal(r.receipt, '--role\n' + role + '\n');
+  assert.deepEqual(r.tmpLeft, []); assert.doesNotMatch(r.requests, /--user/);
+});
+test('short private entry requests Token without secret arguments', { skip: !linux }, async () => {
+  const r = await run({ short: true, download: 'private', readmeCommand: true });
+  assert.equal(r.status, 0, r.stderr); assert.match(r.requests, /--user\nJerry2586\n/);
+  assert.match(r.stderr, /GitHub 只读 Token/); assert.deepEqual(r.tmpLeft, []);
+});
+for (const [label, options] of [
+  ['tampering', { download: 'tampered' }], ['wrong checksum', { hashMismatch: true }],
+  ['package failure', { missingCa: true, packagesFail: true }], ['bad role', { role: 'other' }],
+  ['non-root', { env: { TEST_UID: '1000' } }], ['non-Linux', { env: { TEST_OS: 'Darwin' } }]
+]) test('short ' + label + ' never launches installer', { skip: !linux }, async () => {
+  const r = await run({ ...options, short: true });
+  assert.notEqual(r.status, 0); assert.equal(r.receipt, ''); assert.deepEqual(r.tmpLeft, []);
+});
+for (const download of ['failure', 'rate_limit', 'upstream']) test('short ' + download + ' does not request credentials', { skip: !linux }, async () => {
+  const r = await run({ short: true, download });
+  assert.notEqual(r.status, 0); assert.equal(r.receipt, ''); assert.doesNotMatch(r.requests, /--user/);
+  assert.deepEqual(r.tmpLeft, []);
+});
+test('short missing CA prepares tools before downloading', { skip: !linux }, async () => {
+  const r = await run({ short: true, missingCa: true });
+  assert.equal(r.status, 0, r.stderr); assert.match(r.packages, /--no-remove/);
+});
+test('short installer failure propagates and cleans up', { skip: !linux }, async () => {
+  const r = await run({ short: true, env: { TEST_INSTALL_EXIT: '42' } });
+  assert.equal(r.status, 42); assert.deepEqual(r.tmpLeft, []);
+});

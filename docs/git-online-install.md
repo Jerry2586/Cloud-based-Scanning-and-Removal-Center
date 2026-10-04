@@ -1,13 +1,13 @@
 # Git 在线安装：空服务器也能直接运行
 
-README 中 local/cloud 的代码框是一个完整命令。复制从 `sudo sh -s` 到 `IRONCURTAIN_INSTALL` 的所有行，一次粘贴到 Linux SSH 终端。任何目录都能运行，不要求服务器已有 `install.sh`、源码或 Git。
+README 中 local/cloud 的代码框是一个完整命令。复制从 `sudo sh -s` 到最后单独一行的 `IC` 的所有行，一次粘贴到 Linux SSH 终端。任何目录都能运行，不要求服务器已有 `install.sh`、源码或 Git。
 
 ## 首次准备
 
 1. 登录 GitHub，为 `Jerry2586/Cloud-based-Scanning-and-Removal-Center` 创建只读细粒度 Token，只选择此仓库，授予 `Contents: Read`。如仓库受组织审批或 SSO 约束，还需完成相应授权。
 2. 在需要保护的服务器复制 README 的 local 完整命令；在独立安全服务器复制 cloud 完整命令。
 3. 若匿名请求报 404/401，接下来 curl 会提示 `Enter host password for user 'Jerry2586'`，输入 Token，输入不显示。安装器随后再次隐藏询问同一个 Token，用于保存更新凭据；第一次 curl 的交互输入不会被保存。
-4. 按提示填写域名或固定 IPv4，等待安装检查。以后使用角色菜单；更新分别运行 `sudo ironcurtain update` 或 `sudo xuanwu update`。重复 README 完整命令也会检查最新签名正式版本，并复用已经保存的有效 Token。
+4. 按提示填写域名或固定 IPv4，等待安装检查。以后使用角色菜单；更新分别运行 `sudo ironcurtain update` 或 `sudo xuanwu update`。重复 README 短命令也会检查最新签名正式版本，但下载私有引导器会重新询问 Token；安装器读取已保存令牌。日常更新优先使用一行菜单命令。需要下载时自动复用令牌，请使用本页下方完整入口。
 
 ## 获取和更新的边界
 
@@ -29,4 +29,144 @@ README 中 local/cloud 的代码框是一个完整命令。复制从 `sudo sh -s
 
 ## 维护这些命令
 
-入口源文件是 `scripts/git-install-entry.sh`；`node scripts/render-git-install.js` 生成 README 中两种角色的完整命令，`--check` 检查是否一致。CI 对渲染结果、固定摘要、下载失败和权限边界进行检查。修改固定引导器引用时先验收该提交，再同步 SHA-256；不要改成从 main 下载后直接执行。
+README 短入口源文件是 `scripts/git-install-short.sh`；完整入口是 `scripts/git-install-entry.sh`。`node scripts/render-git-install.js` 同时生成 README 短命令和本页完整命令，`--check` 检查两者是否一致。CI 对渲染结果、固定摘要、下载失败和权限边界进行检查。修改固定引导器引用时先验收该提交，再同步 SHA-256；不要改成从 main 下载后直接执行。
+
+## 高级入口：自动复用已保存的下载令牌
+
+以下较长命令保留全部令牌文件与目录检查，适合重复运行时不再交互输入下载令牌。首次安装优先使用 README 的短命令。
+
+<!-- ONLINE-INSTALL:START -->
+
+**需要保护的服务器：铁幕安全。**
+
+```sh
+sudo sh -s -- local <<'IRONCURTAIN_INSTALL'
+# Online entry: the same body is rendered into README so no local file is required.
+set -eu
+set +x
+umask 077
+fail() { printf '错误：%s\n' "$*" >&2; exit 1; }
+[ "$(id -u)" = 0 ] || fail '请使用 sudo 或 root。'
+[ "$(uname -s)" = Linux ] || fail '仅支持 Linux。'
+[ "$#" = 1 ] || fail '请选择 local（铁幕）或 cloud（玄武）。'
+case "$1" in local|cloud) role=$1 ;; *) fail '角色只能是 local 或 cloud。' ;; esac
+ca_ready() {
+  for ca in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/cert.pem; do
+    [ ! -s "$ca" ] || return 0
+  done
+  return 1
+}
+if ! command -v curl >/dev/null 2>&1 || ! command -v sha256sum >/dev/null 2>&1 || ! ca_ready; then
+  [ -r /etc/os-release ] || fail '找不到发行版信息。'
+  . /etc/os-release
+  case "$ID" in
+    debian|ubuntu) apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove curl ca-certificates coreutils ;;
+    centos|rhel|rocky|almalinux|fedora|ol)
+      if command -v dnf >/dev/null 2>&1; then dnf install -y curl ca-certificates coreutils
+      elif command -v yum >/dev/null 2>&1; then yum install -y curl ca-certificates coreutils
+      else fail '缺少 dnf/yum。'; fi ;;
+    *) fail "不支持自动补环境：$ID" ;;
+  esac
+  ca_ready || fail '系统 CA 未就绪，请修复软件源。'
+fi
+work=$(mktemp -d /tmp/ironcurtain-online.XXXXXXXX)
+trap 'rm -rf -- "$work"' 0
+trap 'exit 130' 2
+trap 'exit 143' 15
+url=https://api.github.com/repos/Jerry2586/Cloud-based-Scanning-and-Removal-Center/contents/install.sh?ref=ebceaf3a7a7aabd749f185f43c9b0c02deeadc62
+token_file=/etc/ironcurtain/github-release.token
+fetch() { curl -q --proto '=https' --tlsv1.2 -fsS --connect-timeout 15 --max-time 120 -H 'Accept: application/vnd.github.raw+json' "$@" "$url" -o "$work/install.sh" -w '%{http_code}' > "$work/http-status"; }
+if [ -e "$token_file" ] || [ -L "$token_file" ]; then
+  for parent in /etc/ironcurtain /etc; do
+    [ -d "$parent" ] && [ ! -L "$parent" ] && [ "$(stat -c %u "$parent")" = 0 ] || fail '令牌目录必须由 root 控制，不能是符号链接。'
+    mode=$(stat -c %a "$parent")
+    [ "$((0$mode & 0022))" = 0 ] || fail '令牌目录不能对其他用户开放写入。'
+  done
+  [ -f "$token_file" ] && [ ! -L "$token_file" ] && [ "$(stat -c %u "$token_file")" = 0 ] || fail '令牌必须是 root 的普通文件。'
+  case "$(stat -c %a "$token_file")" in 600|400) ;; *) fail '令牌权限须为 600/400。' ;; esac
+  token=$(tr -d '
+' < "$token_file")
+  case "$token" in ''|*[!A-Za-z0-9_]*) fail '令牌格式无效。' ;; esac
+  printf 'Authorization: Bearer %s\n' "$token" > "$work/headers"
+  unset token
+  fetch -H @"$work/headers" || fail 'Git 下载失败：检查网络和已保存的只读 Token。'
+elif ! fetch; then
+  case "$(cat "$work/http-status")" in
+    401|404) ;;
+    *) fail "Git 匿名下载失败（HTTP $(cat "$work/http-status")）：请先检查网络、CA、限流或服务状态，不需要输入 Token。" ;;
+  esac
+  printf '\n私有仓库需要只读 GitHub Token。下一行 password 提示输入 Token，不是服务器或 GitHub 登录密码。\n安装器稍后再次询问同一个 Token，用于保存后续更新凭据。\n' >&2
+  fetch --user Jerry2586 || fail 'Git 下载失败，请核对 Token 权限与网络。'
+fi
+printf '%s  %s\n' 5852387ff3f35d7499be3e7e52fdaec4f90f703d80a32949965de150fc4cabc4 "$work/install.sh" | sha256sum -c - || fail '引导器校验失败，停止执行。'
+sh "$work/install.sh" --role "$role" --token-file "$token_file"
+IRONCURTAIN_INSTALL
+```
+
+**独立安全服务器：玄武引擎。**
+
+```sh
+sudo sh -s -- cloud <<'IRONCURTAIN_INSTALL'
+# Online entry: the same body is rendered into README so no local file is required.
+set -eu
+set +x
+umask 077
+fail() { printf '错误：%s\n' "$*" >&2; exit 1; }
+[ "$(id -u)" = 0 ] || fail '请使用 sudo 或 root。'
+[ "$(uname -s)" = Linux ] || fail '仅支持 Linux。'
+[ "$#" = 1 ] || fail '请选择 local（铁幕）或 cloud（玄武）。'
+case "$1" in local|cloud) role=$1 ;; *) fail '角色只能是 local 或 cloud。' ;; esac
+ca_ready() {
+  for ca in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/cert.pem; do
+    [ ! -s "$ca" ] || return 0
+  done
+  return 1
+}
+if ! command -v curl >/dev/null 2>&1 || ! command -v sha256sum >/dev/null 2>&1 || ! ca_ready; then
+  [ -r /etc/os-release ] || fail '找不到发行版信息。'
+  . /etc/os-release
+  case "$ID" in
+    debian|ubuntu) apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove curl ca-certificates coreutils ;;
+    centos|rhel|rocky|almalinux|fedora|ol)
+      if command -v dnf >/dev/null 2>&1; then dnf install -y curl ca-certificates coreutils
+      elif command -v yum >/dev/null 2>&1; then yum install -y curl ca-certificates coreutils
+      else fail '缺少 dnf/yum。'; fi ;;
+    *) fail "不支持自动补环境：$ID" ;;
+  esac
+  ca_ready || fail '系统 CA 未就绪，请修复软件源。'
+fi
+work=$(mktemp -d /tmp/ironcurtain-online.XXXXXXXX)
+trap 'rm -rf -- "$work"' 0
+trap 'exit 130' 2
+trap 'exit 143' 15
+url=https://api.github.com/repos/Jerry2586/Cloud-based-Scanning-and-Removal-Center/contents/install.sh?ref=ebceaf3a7a7aabd749f185f43c9b0c02deeadc62
+token_file=/etc/ironcurtain/github-release.token
+fetch() { curl -q --proto '=https' --tlsv1.2 -fsS --connect-timeout 15 --max-time 120 -H 'Accept: application/vnd.github.raw+json' "$@" "$url" -o "$work/install.sh" -w '%{http_code}' > "$work/http-status"; }
+if [ -e "$token_file" ] || [ -L "$token_file" ]; then
+  for parent in /etc/ironcurtain /etc; do
+    [ -d "$parent" ] && [ ! -L "$parent" ] && [ "$(stat -c %u "$parent")" = 0 ] || fail '令牌目录必须由 root 控制，不能是符号链接。'
+    mode=$(stat -c %a "$parent")
+    [ "$((0$mode & 0022))" = 0 ] || fail '令牌目录不能对其他用户开放写入。'
+  done
+  [ -f "$token_file" ] && [ ! -L "$token_file" ] && [ "$(stat -c %u "$token_file")" = 0 ] || fail '令牌必须是 root 的普通文件。'
+  case "$(stat -c %a "$token_file")" in 600|400) ;; *) fail '令牌权限须为 600/400。' ;; esac
+  token=$(tr -d '
+' < "$token_file")
+  case "$token" in ''|*[!A-Za-z0-9_]*) fail '令牌格式无效。' ;; esac
+  printf 'Authorization: Bearer %s\n' "$token" > "$work/headers"
+  unset token
+  fetch -H @"$work/headers" || fail 'Git 下载失败：检查网络和已保存的只读 Token。'
+elif ! fetch; then
+  case "$(cat "$work/http-status")" in
+    401|404) ;;
+    *) fail "Git 匿名下载失败（HTTP $(cat "$work/http-status")）：请先检查网络、CA、限流或服务状态，不需要输入 Token。" ;;
+  esac
+  printf '\n私有仓库需要只读 GitHub Token。下一行 password 提示输入 Token，不是服务器或 GitHub 登录密码。\n安装器稍后再次询问同一个 Token，用于保存后续更新凭据。\n' >&2
+  fetch --user Jerry2586 || fail 'Git 下载失败，请核对 Token 权限与网络。'
+fi
+printf '%s  %s\n' 5852387ff3f35d7499be3e7e52fdaec4f90f703d80a32949965de150fc4cabc4 "$work/install.sh" | sha256sum -c - || fail '引导器校验失败，停止执行。'
+sh "$work/install.sh" --role "$role" --token-file "$token_file"
+IRONCURTAIN_INSTALL
+```
+
+<!-- ONLINE-INSTALL:END -->
