@@ -28,10 +28,24 @@ source_copy() {
     "$destination/package.json" "$version"
 }
 package_version() {
-  local source_dir=$1 output_dir=$2
+  local source_dir=$1 output_dir=$2 version file expected_mode
+  version=$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1])).version" "$source_dir/package.json")
+  mkdir -p "$output_dir"
+  # Reused output files keep their old mode despite umask: exercise that regression on every package.
+  for file in "APPGOG-Cloud-Security-Center-$version.tar.gz" "APPGOG-Cloud-Security-Center-$version.tar.gz.sha256" \
+    "APPGOG-Cloud-Security-Center-$version.run" "APPGOG-Cloud-Security-Center-$version.run.sha256" \
+    release-manifest.json release-manifest.json.sig; do
+    : > "$output_dir/$file"
+    chmod 666 "$output_dir/$file"
+  done
   APPGOG_SECURITY_ALLOW_TEST_KEY=true bash "$ROOT/scripts/package-release.sh" --source-dir "$source_dir" \
     --output-dir "$output_dir" --signing-key "$WORK/release-private.pem"
   node "$ROOT/scripts/verify-release.js" --dir "$output_dir" --public-key "$WORK/release-public.pem"
+  for file in "$output_dir/"*; do
+    expected_mode=600
+    [[ $file != *.run ]] || expected_mode=700
+    [[ $(stat -c '%a' "$file") == "$expected_mode" ]] || { echo "Unsafe release output mode: $file" >&2; exit 1; }
+  done
 }
 wait_for_port() {
   local file=$1

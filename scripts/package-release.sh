@@ -81,4 +81,7 @@ openssl pkeyutl -sign -inkey "$SIGNING_KEY" -rawin -in "$OUTPUT/release-manifest
   -out "$OUTPUT/release-manifest.json.sig"
 (cd "$OUTPUT" && sha256sum "$TAR_NAME" > "$TAR_NAME.sha256")
 (cd "$OUTPUT" && sha256sum "$RUN_NAME" > "$RUN_NAME.sha256")
+# Explicit modes also cover pre-existing files and inherited default ACLs; umask alone is insufficient.
+chmod 600 "$OUTPUT/$TAR_NAME" "$OUTPUT/$TAR_NAME.sha256" "$OUTPUT/$RUN_NAME.sha256" \
+  "$OUTPUT/release-manifest.json" "$OUTPUT/release-manifest.json.sig"
 printf 'Release candidate v%s created in %s\n' "$VERSION" "$OUTPUT"
