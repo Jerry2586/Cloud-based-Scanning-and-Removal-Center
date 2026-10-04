@@ -11,7 +11,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const entry = await readFile(join(root, 'scripts/git-install-entry.sh'), 'utf8');
 const shortEntry = await readFile(join(root, 'scripts/git-install-short.sh'), 'utf8');
 const pin = '9843edbfdf87f2c4003f595b8a99f1711a401c84';
-const hash = '02f1136f4ba50e864a6f16c3d1321c1fcb1c4e9ff5d9d14a408c2e5782afa341';
+const hash = 'b06aa388a69add6ed2573eccd7e88004be467e551802ef8ec46e0d87f859d826';
 const linux = process.platform === 'linux';
 test('online entry pins an accepted immutable installer and matching digest', async () => {
   const pinned = await readFile(join(root, 'install.sh'));

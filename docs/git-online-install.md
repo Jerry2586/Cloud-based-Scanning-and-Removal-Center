@@ -7,7 +7,7 @@ README 中 local/cloud 的代码框各只有一行，复制对应的一行命令
 1. 登录 GitHub，为 `Jerry2586/Cloud-based-Scanning-and-Removal-Center` 创建只读细粒度 Token，只选择此仓库，授予 `Contents: Read`。如仓库受组织审批或 SSO 约束，还需完成相应授权。
 2. 在需要保护的服务器复制 README 的 local 完整命令；在独立安全服务器复制 cloud 完整命令。
 3. 若匿名请求报 404/401，接下来 curl 会提示 `Enter host password for user 'Jerry2586'`，输入 Token，输入不显示。安装器随后再次隐藏询问同一个 Token，用于保存更新凭据；第一次 curl 的交互输入不会被保存。
-4. 按提示填写域名或固定 IPv4，等待安装检查。以后使用角色菜单；更新分别运行 `sudo ironcurtain update` 或 `sudo xuanwu update`。重复 README 短命令也会检查最新签名正式版本，但下载私有引导器会重新询问 Token；安装器读取已保存令牌。日常更新优先使用一行菜单命令。需要下载时自动复用令牌，请使用本页下方完整入口。
+4. 首次安装自动识别公网 IPv4，无需填写；升级保留已有地址，等待安装检查。以后使用角色菜单；更新分别运行 `sudo ironcurtain update` 或 `sudo xuanwu update`。重复 README 短命令也会检查最新签名正式版本，但下载私有引导器会重新询问 Token；安装器读取已保存令牌。日常更新优先使用一行菜单命令。需要下载时自动复用令牌，请使用本页下方完整入口。
 
 ## 获取和更新的边界
 
@@ -98,7 +98,7 @@ elif ! fetch; then
   printf '\n私有仓库需要只读 GitHub Token。下一行 password 提示输入 Token，不是服务器或 GitHub 登录密码。\n安装器稍后再次询问同一个 Token，用于保存后续更新凭据。\n' >&2
   fetch --user Jerry2586 || fail 'Git 下载失败，请核对 Token 权限与网络。'
 fi
-printf '%s  %s\n' 02f1136f4ba50e864a6f16c3d1321c1fcb1c4e9ff5d9d14a408c2e5782afa341 "$work/install.sh" | sha256sum -c - || fail '引导器校验失败，停止执行。'
+printf '%s  %s\n' b06aa388a69add6ed2573eccd7e88004be467e551802ef8ec46e0d87f859d826 "$work/install.sh" | sha256sum -c - || fail '引导器校验失败，停止执行。'
 sh "$work/install.sh" --role "$role" --token-file "$token_file"
 IRONCURTAIN_INSTALL
 ```
@@ -164,7 +164,7 @@ elif ! fetch; then
   printf '\n私有仓库需要只读 GitHub Token。下一行 password 提示输入 Token，不是服务器或 GitHub 登录密码。\n安装器稍后再次询问同一个 Token，用于保存后续更新凭据。\n' >&2
   fetch --user Jerry2586 || fail 'Git 下载失败，请核对 Token 权限与网络。'
 fi
-printf '%s  %s\n' 02f1136f4ba50e864a6f16c3d1321c1fcb1c4e9ff5d9d14a408c2e5782afa341 "$work/install.sh" | sha256sum -c - || fail '引导器校验失败，停止执行。'
+printf '%s  %s\n' b06aa388a69add6ed2573eccd7e88004be467e551802ef8ec46e0d87f859d826 "$work/install.sh" | sha256sum -c - || fail '引导器校验失败，停止执行。'
 sh "$work/install.sh" --role "$role" --token-file "$token_file"
 IRONCURTAIN_INSTALL
 ```

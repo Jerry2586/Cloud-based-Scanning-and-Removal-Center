@@ -6,6 +6,7 @@ source "$SOURCE/scripts/lib/independent.sh"
 source "$SOURCE/scripts/lib/install-transaction.sh"
 source "$SOURCE/scripts/lib/management-transaction.sh"
 source "$SOURCE/scripts/lib/install-environment.sh"
+source "$SOURCE/scripts/lib/install-host.sh"
 ROLE='' HOST='' BIND='' ENGINE_MODE=auto ENGINE_REQUESTED=false
 while (($#)); do
   case "$1" in
@@ -56,7 +57,10 @@ if [[ -e $BASE/install.json || -L $BASE/install.json ]]; then
   HOST=${REQUESTED_HOST:-$old_host}; BIND=${REQUESTED_BIND:-$old_bind}
   [[ $HOST == "$old_host" && $BIND == "$old_bind" ]] || ic_fail '更新保留原访问地址；变更地址需另行重签证书'
 fi
-if [[ -z $HOST ]]; then read -r -p '请输入本服务器域名或固定公网 IPv4：' HOST </dev/tty; fi
+if [[ -z $HOST ]]; then
+  HOST=$(ic_host_select "" "") || exit 1
+  printf '自动识别公网 IPv4：%s\n' "$HOST"
+fi
 [[ ${#HOST} -le 253 && $HOST =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]$ ]] || ic_fail '域名或 IPv4 格式错误'
 if [[ $HOST =~ ^[0-9.]+$ ]]; then
   python3 -c 'import ipaddress,sys;ipaddress.IPv4Address(sys.argv[1])' "$HOST" || ic_fail 'IPv4 无效'

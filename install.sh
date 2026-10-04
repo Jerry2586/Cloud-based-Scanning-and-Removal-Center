@@ -62,6 +62,40 @@ case "$SOURCE_MODE" in auto|github|custom) ;; *) fail '--source 只能是 auto�
 [ "$SOURCE_MODE" != custom ] || [ -n "$RELEASE_BASE" ] || fail '--source custom 必须同时提供 --release-base。'
 printf '%s\n' "$REQUESTED_VERSION" | grep -Eq '^$|^[0-9]+\.[0-9]+\.[0-9]+$' || fail '版本号格式无效。'
 
+# BEGIN INSTALL-HOST
+# Shared POSIX host discovery. No network requests or mutations when sourced.
+ic_host_public_ipv4() {
+  python3 -c 'import ipaddress,re,sys
+value=sys.argv[1].strip(" \t\r\n")
+if len(value)>15 or not re.fullmatch(r"[0-9]+(?:\.[0-9]+){3}",value): sys.exit(1)
+try: address=ipaddress.IPv4Address(value)
+except ValueError: sys.exit(1)
+if not address.is_global or address.is_multicast or address.is_reserved: sys.exit(1)
+print(address)' "$1" 2>/dev/null
+}
+ic_host_detect() (
+  host_work=$(mktemp -d) || return 1
+  trap 'rm -rf -- "$host_work"' 0
+  trap 'exit 130' 2
+  trap 'exit 143' 15
+  for host_url in https://api.ipify.org https://checkip.amazonaws.com; do
+    if curl -q -4 --noproxy '*' --proto '=https' --tlsv1.2 -fsS \
+      --connect-timeout 5 --max-time 10 --max-filesize 64 \
+      "$host_url" -o "$host_work/address" 2>/dev/null; then
+      host_value=$(cat "$host_work/address") || continue
+      if ic_host_public_ipv4 "$host_value"; then return 0; fi
+    fi
+  done
+  printf '错误：无法自动识别公网 IPv4，请检查 HTTPS 网络；可用 --host 指定已确认的域名或固定 IP。\n' >&2
+  return 1
+)
+ic_host_select() {
+  if [ -n "$1" ]; then printf '%s\n' "$1";
+  elif [ -n "$2" ]; then printf '%s\n' "$2";
+  else ic_host_detect; fi
+}
+# END INSTALL-HOST
+
 ca_ready() {
   for bundle in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/cert.pem; do
     [ ! -s "$bundle" ] || return 0
@@ -75,7 +109,7 @@ bootstrap_crypto_ready() (
   openssl genpkey -algorithm ED25519 -out "$crypto_dir/key" >/dev/null 2>&1     && openssl pkeyutl -sign -rawin -inkey "$crypto_dir/key" -in "$crypto_dir/message" -out "$crypto_dir/signature" >/dev/null 2>&1
 )
 tools_ready() {
-  for tool in bash curl openssl sha256sum jq sort mktemp stat tar gzip awk sed grep tail     tr dirname cp mv rm mkdir chmod install stty; do
+  for tool in bash curl openssl sha256sum python3 jq sort mktemp stat tar gzip awk sed grep tail     tr dirname cp mv rm mkdir chmod install stty; do
     command -v "$tool" >/dev/null 2>&1 || return 1
   done
   ca_ready || return 1
@@ -88,12 +122,12 @@ install_tools() {
   case "$DISTRO" in
     ubuntu|debian)
       apt-get update || fail '系统软件源不可用；检查 DNS、HTTPS 和 apt 源后重试。'
-      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove bash ca-certificates curl openssl coreutils jq tar gzip util-linux         || fail '发布验证工具安装失败；请修复软件源或包管理锁后重试。'
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove bash ca-certificates curl openssl coreutils python3 jq tar gzip util-linux         || fail '发布验证工具安装失败；请修复软件源或包管理锁后重试。'
       ;;
     centos|rhel|rocky|almalinux|fedora|ol)
       manager=dnf; command -v dnf >/dev/null 2>&1 || manager=yum
       command -v "$manager" >/dev/null 2>&1 || fail "缺少包管理器 $manager。"
-      "$manager" install -y bash ca-certificates curl openssl coreutils jq tar gzip util-linux         || fail '发布验证工具安装失败；请修复系统软件源后重试。'
+      "$manager" install -y bash ca-certificates curl openssl coreutils python3 jq tar gzip util-linux         || fail '发布验证工具安装失败；请修复系统软件源后重试。'
       ;;
     *) fail "不支持自动补齐环境的发行版：$DISTRO" ;;
   esac
@@ -285,6 +319,17 @@ if [ -n "$installed" ] && [ "$installed" != "$TARGET_VERSION" ]; then
 fi
 
 log "发布清单签名与安装包 SHA-256 已验证：v$TARGET_VERSION"
+# Resolve before invoking older signed payloads, which otherwise prompt for an address.
+if [ -n "$INSTALL_ROLE" ]; then
+  saved_host=''
+  if [ -z "$PUBLIC_HOST" ] && { [ -e "$INSTALL_ROOT/install.json" ] || [ -L "$INSTALL_ROOT/install.json" ]; }; then
+    saved_host=$(jq -er '.host | select(type == "string" and length > 0)' "$INSTALL_ROOT/install.json") ||
+      fail '已有安装地址记录无效，请先诊断安装状态。'
+  fi
+  selected_host=$(ic_host_select "$PUBLIC_HOST" "$saved_host") || exit 1
+  if [ -z "$PUBLIC_HOST$saved_host" ]; then log "自动识别公网 IPv4：$selected_host"; fi
+  PUBLIC_HOST=$selected_host
+fi
 set --
 [ -z "$PUBLIC_HOST" ] || set -- "$@" --host "$PUBLIC_HOST"
 [ -z "$INSTALL_ROLE" ] || set -- "$@" --role "$INSTALL_ROLE"
