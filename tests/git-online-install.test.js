@@ -10,7 +10,7 @@ import { oneLineInstall } from '../scripts/lib/git-install-command.js';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const entry = await readFile(join(root, 'scripts/git-install-entry.sh'), 'utf8');
 const shortEntry = await readFile(join(root, 'scripts/git-install-short.sh'), 'utf8');
-const pin = '9843edbfdf87f2c4003f595b8a99f1711a401c84';
+const pin = 'd1e381b437d19d501675a1f20980d77a8a7900b2';
 const hash = 'b06aa388a69add6ed2573eccd7e88004be467e551802ef8ec46e0d87f859d826';
 const linux = process.platform === 'linux';
 test('online entry pins an accepted immutable installer and matching digest', async () => {

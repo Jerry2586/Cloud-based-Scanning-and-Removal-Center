@@ -8,7 +8,7 @@ if ! command -v curl >/dev/null || ! command -v sha256sum >/dev/null || ! ca_rea
   ca_ready || exit 1
 fi
 work=$(mktemp -d /tmp/ironcurtain-online.XXXXXXXX); trap 'rm -rf -- "$work"' 0; trap 'exit 130' 2; trap 'exit 143' 15
-url=https://api.github.com/repos/Jerry2586/Cloud-based-Scanning-and-Removal-Center/contents/install.sh?ref=9843edbfdf87f2c4003f595b8a99f1711a401c84
+url=https://api.github.com/repos/Jerry2586/Cloud-based-Scanning-and-Removal-Center/contents/install.sh?ref=d1e381b437d19d501675a1f20980d77a8a7900b2
 fetch() { curl -q --proto '=https' --tlsv1.2 -fsS --connect-timeout 15 --max-time 120 -H 'Accept: application/vnd.github.raw+json' "$@" "$url" -o "$work/install.sh" -w '%{http_code}' > "$work/http-status"; }
 if ! fetch; then case "$(cat "$work/http-status")" in 401|404) echo 'password 提示请输入 GitHub 只读 Token；安装器首次保存时会再询问一次。' >&2; fetch --user Jerry2586 ;; *) echo '下载失败，请检查网络、CA 或限流；不需要输入 Token。' >&2; exit 1 ;; esac; fi
 printf '%s  %s\n' b06aa388a69add6ed2573eccd7e88004be467e551802ef8ec46e0d87f859d826 "$work/install.sh" | sha256sum -c -

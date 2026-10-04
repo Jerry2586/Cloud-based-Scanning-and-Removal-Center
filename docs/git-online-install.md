@@ -73,7 +73,7 @@ work=$(mktemp -d /tmp/ironcurtain-online.XXXXXXXX)
 trap 'rm -rf -- "$work"' 0
 trap 'exit 130' 2
 trap 'exit 143' 15
-url=https://api.github.com/repos/Jerry2586/Cloud-based-Scanning-and-Removal-Center/contents/install.sh?ref=9843edbfdf87f2c4003f595b8a99f1711a401c84
+url=https://api.github.com/repos/Jerry2586/Cloud-based-Scanning-and-Removal-Center/contents/install.sh?ref=d1e381b437d19d501675a1f20980d77a8a7900b2
 token_file=/etc/ironcurtain/github-release.token
 fetch() { curl -q --proto '=https' --tlsv1.2 -fsS --connect-timeout 15 --max-time 120 -H 'Accept: application/vnd.github.raw+json' "$@" "$url" -o "$work/install.sh" -w '%{http_code}' > "$work/http-status"; }
 if [ -e "$token_file" ] || [ -L "$token_file" ]; then
@@ -139,7 +139,7 @@ work=$(mktemp -d /tmp/ironcurtain-online.XXXXXXXX)
 trap 'rm -rf -- "$work"' 0
 trap 'exit 130' 2
 trap 'exit 143' 15
-url=https://api.github.com/repos/Jerry2586/Cloud-based-Scanning-and-Removal-Center/contents/install.sh?ref=9843edbfdf87f2c4003f595b8a99f1711a401c84
+url=https://api.github.com/repos/Jerry2586/Cloud-based-Scanning-and-Removal-Center/contents/install.sh?ref=d1e381b437d19d501675a1f20980d77a8a7900b2
 token_file=/etc/ironcurtain/github-release.token
 fetch() { curl -q --proto '=https' --tlsv1.2 -fsS --connect-timeout 15 --max-time 120 -H 'Accept: application/vnd.github.raw+json' "$@" "$url" -o "$work/install.sh" -w '%{http_code}' > "$work/http-status"; }
 if [ -e "$token_file" ] || [ -L "$token_file" ]; then
