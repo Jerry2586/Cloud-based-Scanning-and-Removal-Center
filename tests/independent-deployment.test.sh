@@ -104,6 +104,8 @@ node -e 'const fs=require("fs"),p=process.argv[1],v=JSON.parse(fs.readFileSync(p
 install -d -m 700 "$WORK/program-assets"
 bash "$SOURCE/scripts/package-release.sh" --source-dir "$SOURCE" --output-dir "$WORK/program-assets" --signing-key "$WORK/rules-publisher.key"
 version=$(jq -er .version "$SOURCE/package.json")
+# Report bounded public attachment metadata when the real importer rejects it.
+stat -c 'Release attachment %n: uid=%u gid=%g mode=%a links=%h bytes=%s' "$WORK/program-assets/"*
 python3 "$SOURCE/tests/helpers/release-menu-input.py" "$WORK/program-assets"
 /usr/local/bin/xuanwu release-status | jq -e --arg version "$version" '.state == "ready" and .version == $version' >/dev/null
 # Cache is read-only in the live non-root cloud container.

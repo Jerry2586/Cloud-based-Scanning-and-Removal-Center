@@ -16,8 +16,9 @@ def read(file,maximum):
     fd=os.open(file,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
     try:
         before=os.fstat(fd)
-        if not stat.S_ISREG(before.st_mode) or before.st_uid!=0 or before.st_nlink!=1 or before.st_mode&0o022 or not 0<before.st_size<=maximum:
-            raise ValueError('Untrusted release file')
+        checks=[(stat.S_ISREG(before.st_mode),'type'),(before.st_uid==0,'owner'),(before.st_nlink==1,'links'),(not before.st_mode&0o022,'permissions'),(0<before.st_size<=maximum,'size')]
+        for valid,reason in checks:
+            if not valid: raise ValueError('Untrusted release file: '+reason)
         chunks=[];size=0
         while size<=maximum:
             data=os.read(fd,min(65536,maximum+1-size))
