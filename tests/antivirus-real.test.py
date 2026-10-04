@@ -21,6 +21,9 @@ class EngineTests(unittest.TestCase):
                 state,_,data=scanner.malware([str(scope)]);self.assertEqual(state,'ok');self.assertGreater(data['files_scanned'],0)
                 (scope/'infected.txt').write_bytes(pattern)
                 state,_,data=scanner.malware([str(scope)]);self.assertEqual(state,'finding');self.assertEqual(data['infected'],1)
+                self.assertEqual(len(scanner.findings),1);self.assertTrue(scanner.findings_complete)
+                self.assertEqual(scanner.findings[0]['path'],str(scope/'infected.txt'))
+                self.assertEqual(scanner.findings[0]['signature'],'IronCurtain.TestOnly.UNOFFICIAL')
             with patch.object(a.antivirus,'DATABASE_DIR',str(root/'missing')):
                 self.assertEqual(scanner.malware([str(scope)])[0],'unavailable')
 if __name__=='__main__':unittest.main()

@@ -204,8 +204,11 @@
           <div><span class="sc-eyebrow">LOCAL DEFENSE / QUARANTINE</span><h3>隔离区</h3><p>查看可疑文件与证据的隔离记录。</p>
           </div>
           </header>
-          <article class="sc-panel "><h4>隔离管理</h4>
-          <div class="sc-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 11h14v10H5zm3 0V7a4 4 0 0 1 8 0v4m-4 4v2"/></svg><h4>隔离记录尚未接入</h4><p>当前页面没有可靠的隔离记录接口，不能据此判断服务器没有威胁。</p>
+          <article class="sc-panel "><h4>命中文件与证据</h4><p id="security-malware-findings-state" class="sc-muted">等候本次扫描的可核验文件证据</p>
+          <ul id="security-malware-findings" class="sc-check-list"></ul>
+          <h4>本机处置记录</h4><p id="security-quarantine-state" class="sc-muted">等待代理状态</p><ul id="security-quarantine-records" class="sc-check-list"></ul>
+          <h4>隔离管理</h4>
+          <div class="sc-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 11h14v10H5zm3 0V7a4 4 0 0 1 8 0v4m-4 4v2"/></svg><h4>Linux 本机隔离</h4><p>Linux 菜单选“隔离命中文件”核对证据编号。配置、凭据、数据库及共享可写文件需人工处置；恢复不覆盖目标，保留隔离副本。</p>
           </div>
           <div class="sc-actions">
           <button type="button" class="sc-secondary" disabled>恢复文件 · 待接入</button>

@@ -67,7 +67,40 @@ export function createSecurityUi({ state, can, request, notify }) {
   let scanGeneration = 0;
   let bound = false;
   const localStateLabels = { ok: '正常', warning: '需复核', finding: '发现问题', unavailable: '不可用' };
+  function renderFileFindings(report) {
+    const list = $('security-malware-findings'), status = $('security-malware-findings-state');
+    list?.replaceChildren();
+    const visible = report.state === 'finished' && ['complete','partial'].includes(report.findings_state);
+    if (status) status.textContent = !visible ? '等候本次扫描的可核验文件证据' : report.findings_total > (report.findings?.length || 0)
+      ? '特征命中 '+report.findings_total+'；页面仅展示已复核的 '+(report.findings?.length || 0)+' 条，完整记录请在 Linux 菜单查看'
+      : report.findings_state === 'partial' ? '部分文件证据未完成复核；扫描告警继续保留' : '本次命中 '+report.findings_total+' 个文件；隔离请在可信 Linux 菜单执行';
+    if (!visible) return;
+    for (const item of report.findings || []) {
+      const row = document.createElement('li'); row.dataset.state = 'finding';
+      const title = document.createElement('strong'); title.textContent = item.signature;
+      const path = document.createElement('p'); path.textContent = item.path;
+      const evidence = document.createElement('p'); evidence.className = 'sc-muted';
+      evidence.textContent = '证据编号 '+item.id+' · SHA-256 '+item.sha256+' · '+item.size+' 字节';
+      row.append(title, path, evidence); list?.append(row);
+    }
+  }
+  function renderQuarantine(report) {
+    const list=$('security-quarantine-records'), status=$('security-quarantine-state');
+    list?.replaceChildren();
+    const value=report.quarantine;
+    if(status) status.textContent = !value || value.state==='unavailable' ? '本机隔离记录不可用，等待代理状态' : value.state==='empty' ? '暂无本机隔离记录' : '处置记录 '+value.count+' 项 · 待人工核查 '+value.pending+' 项；页面最多显示 8 项';
+    const labels={preparing:'副本准备中，尚未隔离',captured:'已保存副本，移除尚未确认',quarantined:'已完成路径隔离',restoring:'恢复未完成，需人工核查',restored:'已取回，副本仍保留'};
+    for(const item of value?.items || []) {
+      const row=document.createElement('li');row.dataset.state=['preparing','captured','restoring'].includes(item.state)?'warning':'ok';
+      const title=document.createElement('strong');title.textContent=labels[item.state] || '记录状态未知';
+      const path=document.createElement('p');path.textContent=item.path;
+      const evidence=document.createElement('p');evidence.className='sc-muted';evidence.textContent='证据编号 '+item.id+' · '+item.signature+' · '+item.size+' 字节';
+      row.append(title,path,evidence);list?.append(row);
+    }
+  }
   function renderLocalReport(report) {
+    renderFileFindings(report);
+    renderQuarantine(report);
     const engine = $('security-antivirus-state');
     if (engine) {
       const value=report.antivirus;
@@ -121,6 +154,8 @@ export function createSecurityUi({ state, can, request, notify }) {
       const status = $('security-local-state');
       if (status) { status.textContent = '本机代理不可用'; status.dataset.state = 'warning'; }
       if ($('security-local-time')) $('security-local-time').textContent = error.message;
+      renderFileFindings({state:'unavailable'});
+      renderQuarantine({state:'unavailable'});
       $('security-local-checks')?.replaceChildren(); $('security-local-history')?.replaceChildren();
       if ($('security-local-history-state')) $('security-local-history-state').textContent = '告警历史读取失败';
     },
@@ -139,6 +174,8 @@ export function createSecurityUi({ state, can, request, notify }) {
     }
     const status = $('security-local-state');
     if (status) { status.textContent = '请登录后查看'; status.dataset.state = 'warning'; }
+    renderFileFindings({state:'unavailable'});
+    renderQuarantine({state:'unavailable'});
     for (const id of ['security-local-time', 'security-local-checks', 'security-local-history', 'security-local-history-state']) $(id)?.replaceChildren();
   });
   document.addEventListener('visibilitychange', () => {

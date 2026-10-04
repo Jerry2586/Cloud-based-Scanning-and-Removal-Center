@@ -31,6 +31,39 @@ export function sanitizeAntivirus(value) {
     ...(value.state !== 'unavailable' ? {database_at:value.database_at, database_version:value.database_version, signatures:value.signatures} : {})};
 }
 
+
+export function sanitizeFindings(value) {
+  const unavailable = {findings: [], findings_state: 'unavailable', findings_total: 0};
+  if (!value || !Array.isArray(value.findings) || value.findings.length > 8 ||
+      !['complete','partial','unavailable'].includes(value.findings_state) ||
+      !Number.isSafeInteger(value.findings_total) || value.findings_total < value.findings.length || value.findings_total > 10000) return unavailable;
+  const items = [];
+  for (const item of value.findings) {
+    if (!item || !/^[a-f0-9]{64}$/.test(item.id) || !/^[a-f0-9]{64}$/.test(item.sha256) ||
+        typeof item.path !== 'string' || item.path.length > 1024 || !item.path.startsWith('/') || /[\x00-\x1f\x7f]/.test(item.path) ||
+        item.path.split('/').includes('..') || typeof item.signature !== 'string' || typeof item.signature!=='string' || !/^[A-Za-z0-9_.:/()!+\-]{1,160}$/.test(item.signature) ||
+        !safeTimestamp(item.observed_at) || !Number.isSafeInteger(item.size) || item.size < 0 || item.size > 67108864) return unavailable;
+    items.push({id:item.id, path:item.path, signature:item.signature, sha256:item.sha256, size:item.size, observed_at:item.observed_at});
+  }
+  if (new Set(items.map(item=>item.id)).size !== items.length) return unavailable;
+  return {findings:items, findings_state:value.findings_state, findings_total:value.findings_total};
+}
+
+
+export function sanitizeQuarantine(value) {
+  const unavailable={state:'unavailable',items:[],count:0,pending:0};
+  if(!value || value.state==='unavailable' || !['empty','recorded'].includes(value.state) || !Array.isArray(value.items) || value.items.length>8 || !Number.isInteger(value.count) || value.count<value.items.length || value.count>128 || !Number.isInteger(value.pending) || value.pending<0 || value.pending>value.count) return unavailable;
+  const items=[];
+  for(const item of value.items) {
+    if(!item || !/^[a-f0-9]{64}$/.test(item.id) || typeof item.path!=='string' || !item.path.startsWith('/') || item.path.length>1024 || /[\x00-\x1f\x7f]/.test(item.path) || item.path.split('/').includes('..') || typeof item.signature!=='string' || !/^[A-Za-z0-9_.:/()!+\-]{1,160}$/.test(item.signature) || !['preparing','captured','quarantined','restoring','restored'].includes(item.state) || !Number.isInteger(item.size) || item.size<0 || item.size>67108864) return unavailable;
+    items.push({id:item.id,path:item.path,signature:item.signature,state:item.state,size:item.size});
+  }
+  if(new Set(items.map(x=>x.id)).size!==items.length) return unavailable;
+  if(value.state==='recorded' && value.count===0) return unavailable;
+  if(value.state==='empty' && (value.count || value.pending || items.length)) return unavailable;
+  return {state:value.state,items,count:value.count,pending:value.pending};
+}
+
 // One fixed local action. The browser never chooses a command or path.
 export function localSecurityScan(action, env = process.env) {
   if (!['status', 'scan'].includes(action)) throw new TypeError('Unknown security action');
@@ -45,7 +78,7 @@ export function localSecurityScan(action, env = process.env) {
       res.on('data', chunk => {
         byteCount += Buffer.byteLength(chunk, 'utf8');
         body += chunk;
-        if (byteCount > 32768) {
+        if (byteCount > 65536) {
           resolve({ state: 'unavailable', reason: '本机检查代理响应超出限制' });
           res.destroy();
           req.destroy();
@@ -74,7 +107,7 @@ export function localSecurityScan(action, env = process.env) {
           const invalidHistory = !Array.isArray(result.history) || history.length !== Math.min(8, result.history.length);
           const historyState = invalidHistory || result.history_state === 'unavailable' ? 'unavailable' : result.history.length > 8 ? 'truncated'
             : ['ok', 'unavailable', 'truncated'].includes(result.history_state) ? result.history_state : 'unavailable';
-          resolve({ state: result.state, antivirus: sanitizeAntivirus(result.antivirus), history, progress: hostScanProgress(result),
+          resolve({ state: result.state, ...sanitizeFindings(result), antivirus: sanitizeAntivirus(result.antivirus), quarantine: sanitizeQuarantine(result.quarantine), history, progress: hostScanProgress(result),
             coverage: result.state === 'finished' ? hostScanCoverage(result) : undefined,
             history_state: historyState, checked_at: safeTimestamp(result.checked_at),
             reason: result.state === 'unavailable' ? '本机检查频率限制或代理异常' : undefined, checks });

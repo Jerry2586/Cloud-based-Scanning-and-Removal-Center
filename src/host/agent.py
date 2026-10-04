@@ -9,6 +9,8 @@ DIGEST = re.compile(r'^[a-f0-9]{64}$')
 MAX_FILE = 64 * 1024 * 1024
 _av_spec = importlib.util.spec_from_file_location('ironcurtain_antivirus', pathlib.Path(__file__).with_name('antivirus.py'))
 antivirus = importlib.util.module_from_spec(_av_spec); _av_spec.loader.exec_module(antivirus)
+_findings_spec = importlib.util.spec_from_file_location('ironcurtain_findings', pathlib.Path(__file__).with_name('findings.py'))
+findings = importlib.util.module_from_spec(_findings_spec); _findings_spec.loader.exec_module(findings)
 
 def utc(): return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00','Z')
 def canonical(value): return json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()
@@ -91,11 +93,11 @@ def profile_validate(value):
     return result
 
 class Runner:
-    def __call__(self,args,seconds=12,maximum=262144):
+    def __call__(self,args,seconds=12,maximum=262144,input_fd=None):
         if not shutil.which(args[0]): return None,'dependency unavailable'
         # A bounded temporary output file avoids unbounded PIPE/communicate allocation.
         with tempfile.TemporaryFile() as output:
-            child=subprocess.Popen(args,stdin=subprocess.DEVNULL,stdout=output,stderr=output,shell=False,start_new_session=os.name=='posix')
+            child=subprocess.Popen(args,stdin=input_fd if input_fd is not None else subprocess.DEVNULL,stdout=output,stderr=output,shell=False,start_new_session=os.name=='posix')
             deadline=time.monotonic()+seconds
             while child.poll() is None:
                 if time.monotonic()>deadline or os.fstat(output.fileno()).st_size>maximum:
@@ -128,7 +130,7 @@ def digest_file(file,budget=None):
     return digest.hexdigest()
 
 class Scanner:
-    def __init__(self,profile,run=None,cloudflare_collect=None): self.cloudflare_collect=cloudflare_collect; self.cloudflare_cache=None; self.profile=profile_validate(profile); self.run=run or Runner(); self.baseline=None; self.baseline_error=None; self.container_cache=None; self.observed_files={}; self.files_complete=False; self.file_ranges={}; self.hash_budget={'bytes':0,'maximum':1024*1024*1024,'deadline':time.monotonic()+30}
+    def __init__(self,profile,run=None,cloudflare_collect=None,response_state=None): self.response_state=response_state; self.cloudflare_collect=cloudflare_collect; self.cloudflare_cache=None; self.profile=profile_validate(profile); self.run=run or Runner(); self.baseline=None; self.baseline_error=None; self.container_cache=None; self.observed_files={}; self.files_complete=False; self.findings=[]; self.findings_complete=True; self.malware_count=0; self.file_ranges={}; self.hash_budget={'bytes':0,'maximum':1024*1024*1024,'deadline':time.monotonic()+30}
     def load_baseline(self):
         config=self.profile.get('baseline')
         if not config: self.baseline_error='未配置独立签名基线'; return
@@ -220,7 +222,8 @@ class Scanner:
         if any(not os.path.isdir(p) or os.path.islink(p) for p in paths): return 'unavailable','目录不存在或链接状态不安全',{}
         database=antivirus.database_status()
         if database['state']!='configured': return 'unavailable',database['detail'],{}
-        code,text=self.run(['clamscan','--database='+antivirus.DATABASE_DIR,'--official-db-only=yes','--recursive','--infected','--follow-dir-symlinks=0','--follow-file-symlinks=0','--max-files=10000','--max-filesize=64M','--max-scansize=256M','--alert-exceeds-max=yes','--fail-if-cvd-older-than=7','--',*paths],seconds=60)
+        args=['clamscan','--database='+antivirus.DATABASE_DIR,'--official-db-only=yes','--infected','--follow-dir-symlinks=0','--follow-file-symlinks=0','--max-files=10000','--max-filesize=64M','--max-scansize=256M','--alert-exceeds-max=yes','--fail-if-cvd-older-than=7']
+        code,text=self.run([*args,'--recursive','--',*paths],seconds=60)
         if code not in [0,1]: return 'unavailable','ClamAV/病毒库不可用，扫描失败或超出预算',{}
         if 'Heuristics.Limits.Exceeded' in text: return 'unavailable','ClamAV 文件/解包预算超限，不作为病毒命中或通过',{}
         match=re.search(r'Scanned files:\s*(\d+)',text); infected=re.search(r'Infected files:\s*(\d+)',text)
@@ -229,6 +232,12 @@ class Scanner:
         count=int(infected.group(1)); checked=int(match.group(1))
         if checked==0: return 'unavailable','扫描范围没有可检查的文件',{}
         if (code==1)!=(count>0): return 'unavailable','病毒引擎退出状态与统计不一致',{}
+        self.malware_count+=count
+        if count:
+            captured,complete=findings.collect(text,paths,self.run,args,maximum=max(0,findings.MAX_FINDINGS-len(self.findings)))
+            new=[item for item in captured if item['id'] not in {old['id'] for old in self.findings}]
+            self.findings.extend(new)
+            self.findings_complete=self.findings_complete and complete and len(new)==count
         return ('finding' if count else 'ok'),f'实际扫描 {checked} 个文件；特征命中 {count}',{'files_scanned':checked,'infected':count,'output_digest':hashlib.sha256(text.encode()).hexdigest()}
     def check(self,id):
         p=self.profile
@@ -246,7 +255,11 @@ class Scanner:
                     if not config or not config.get('image_id'): unknown+=1
                     elif item.get('Image')!=config['image_id']: issues+=1
             return ('finding' if issues else 'unavailable' if unknown else 'ok'),f'容器 {len(values)}；异常 {issues}，未固定镜像 {unknown}',{'containers':len(values),'issues':issues,'unknown':unknown}
-        if id=='response.containment': return 'unavailable','自动隔离与恢复尚未启用，扫描不删除业务文件',{}
+        if id=='response.containment':
+            if not self.response_state: return 'unavailable','未接入本机隔离记录；扫描不删除业务文件',{}
+            status=findings.quarantine_status(self.response_state)
+            if status['state']=='unavailable': return 'unavailable','隔离记录不可读取或损坏，保留现场',{}
+            return ('warning' if status['pending'] else 'ok'),f"本机隔离记录 {status['count']} 项；待人工核查 {status['pending']} 项；不代表进程已阻断",{'records':status['count'],'pending':status['pending']}
         if id=='host.os-release':
             value=pathlib.Path('/etc/os-release').read_text()[:8192]; return 'ok','已读取 Linux 发行版；补丁状态需单独核查',{'release_digest':hashlib.sha256(value.encode()).hexdigest()}
         if id=='host.systemd-state': return self.command(['systemctl','is-active','ironcurtain-agent.service'],'独立检测服务处于运行状态')
@@ -347,7 +360,7 @@ def valid_saved_check(item):
 class Agent:
     def __init__(self,profile,state_dir,interval=300):
         self.profile=profile_validate(profile); self.state_dir=pathlib.Path(state_dir); self.interval=interval; self.lock=threading.Lock(); self.last=0; self.stop=threading.Event()
-        self.previous={}; self.history=[]; self.history_available=True; self.outbound=None
+        self.previous={}; self.history=[]; self.history_available=True; self.outbound=None; self.findings_bundle={'schema':'ironcurtain-findings/v1','state':'unavailable','items':[], 'total':0}
         self.result={'state':'idle','checks':[],'history':[],'history_state':'ok'}
         try:
             saved=private_json(self.state_dir/'last-report.json',256*1024)
@@ -364,6 +377,11 @@ class Agent:
         with self.lock:
             result=copy.deepcopy(self.result)
             result['antivirus']=antivirus.engine_status()
+            result['quarantine']=findings.quarantine_status(self.state_dir)
+            bundle=self.findings_bundle
+            result['findings']=[{k:item[k] for k in ['id','path','signature','sha256','observed_at','size']} for item in bundle['items'][:8]] if result['state']=='finished' else []
+            result['findings_state']=bundle['state'] if result['state']=='finished' else 'unavailable'
+            result['findings_total']=bundle['total'] if result['state']=='finished' else 0
             if len(result.get('history',[]))>8:
                 result['history']=result['history'][-8:]
                 if result['history_state']=='ok': result['history_state']='truncated'
@@ -380,7 +398,7 @@ class Agent:
             with self.lock:
                 self.result['checks']=checks; self.result['progress']={'completed':len(checks),'total':len(IDS),'current':current}
         try:
-            scanner=Scanner(self.profile); checks=scanner.run_checks(update)
+            scanner=Scanner(self.profile,response_state=self.state_dir); checks=scanner.run_checks(update)
             events=copy.deepcopy(self.history)
             if self.history_available:
                 for item in checks:
@@ -389,6 +407,10 @@ class Agent:
                         events.append({**item,'previous_state':old['state'] if old else None})
             report={'state':'finished','checked_at':utc(),'checks':checks,'history':events[-128:],'history_state':'truncated' if len(events)>8 else 'ok','progress':{'completed':len(IDS),'total':len(IDS),'current':None}}
             if not self.history_available: report['history_state']='unavailable'
+            bundle={'schema':'ironcurtain-findings/v1','checked_at':report['checked_at'],'profile_digest':hashlib.sha256(canonical(self.profile)).hexdigest(),
+                    'items':scanner.findings,'total':scanner.malware_count,'state':'complete' if scanner.findings_complete and all(item['state'] in ['ok','finding'] for item in checks if item['category']=='malware') else 'partial'}
+            atomic_json(self.state_dir/'last-findings.json',bundle)
+            with self.lock: self.findings_bundle=bundle
             # Do not overwrite corrupt prior evidence or silently reset its history.
             if self.history_available:
                 atomic_json(self.state_dir/'last-report.json',report)
@@ -430,7 +452,7 @@ def serve(profile_file,state_dir,socket_path,allowed_uid,group):
         def log_message(self,*args): pass
         def reply(self,code,value):
             data=canonical(value)
-            if len(data)>(262144 if self.path=='/report' else 32768): code=503; data=b'{"state":"unavailable"}'
+            if len(data)>(262144 if self.path=='/report' else 65536): code=503; data=b'{"state":"unavailable"}'
             self.send_response(code); self.send_header('Content-Type','application/json'); self.send_header('Content-Length',str(len(data))); self.end_headers(); self.wfile.write(data)
         def authorized(self):
             try: _,uid,_=struct.unpack('3i',self.connection.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12)); return uid in [0,allowed_uid]

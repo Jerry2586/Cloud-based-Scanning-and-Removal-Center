@@ -38,6 +38,10 @@ jobs:
         run: sudo env "PATH=$PATH" bash tests/independent-transactions.test.sh
       - name: Test generic Linux host scanner
         run: sudo env "PATH=$PATH" python3 tests/host-agent.test.py
+      - name: Test pinned findings and bounded local quarantine
+        run: |
+          sudo env "PATH=$PATH" python3 tests/findings.test.py
+          sudo env "PATH=$PATH" python3 tests/response.test.py
       - name: Test managed antivirus metadata
         run: sudo env "PATH=$PATH" python3 tests/antivirus-metadata.test.py
 
