@@ -6,43 +6,50 @@ APPGOG 的授权、打包、账号、数据库和升级仍由其自己的项目�
 
 > 当前程序版本 **0.4.0**，增加玄武官方病毒库签名缓存、认证流式下发和铁幕 root 菜单原子启用。源码验收 37189710268 三组 Linux 检查全部通过；官方库验收 37189710784 完成真实 CVD 下载、独立发布/官方双重验签、mTLS 传输、本地启用及正常/EICAR 扫描。v0.3.0 的六附件正式验收记录保留；新版本正式状态以 GitHub Release 与回取验签报告为准。异地灾备和跨主机扩展仍需补齐。实际范围见 [功能与验收矩阵](docs/capability-status.md)。
 
-## 小白安装：选一个角色，运行一条命令
+## 安装 / 更新：只需一个独立安装文件
 
-先把经过校验的本项目源码放到服务器，进入项目目录。使用带 systemd 的 Debian/Ubuntu，或支持 dnf/yum 的 RHEL/Rocky/AlmaLinux/Fedora/Oracle Linux；CPU 为 x86_64 或 aarch64。脚本识别支持范围、补齐基础工具、Docker、Compose 和 Buildx，无需另外安装 Node.js 数据库环境。
+**不要在空的服务器目录运行 `sudo bash scripts/install-independent.sh`。** 这是源码内部脚本，没有下载源码时会报“找不到文件”。正式服务器使用根目录的独立引导器 `install.sh`；它负责获取签名正式安装包，不需要先克隆仓库、进入源码目录或安装 Git、Node.js、数据库。
 
-**需要保护的服务器：安装铁幕安全。** 首装询问服务器域名或固定 IPv4。
+首次把从本仓库可信渠道取得的 **install.sh 单文件**上传到服务器的 `/root/install.sh`。当前仓库私有，请在已登录 GitHub 的页面下载；匿名链接不能读取私有文件。该文件必须来自已完成验收的正式版本，不能把开发版引导器当成已发布功能。
+
+**需要保护的服务器：铁幕安全。** 在任何目录执行：
+
+```sh
+sudo sh /root/install.sh --role local
+```
+
+**独立安全服务器：玄武引擎。** 在任何目录执行：
+
+```sh
+sudo sh /root/install.sh --role cloud
+```
+
+首次输入域名或固定 IPv4。公开发布源可直接下载；私有发布源首次下载失败时会提示隐藏输入 GitHub Token，并保存至 `/etc/ironcurtain/github-release.token`（root 所有、600 权限）。令牌只需本仓库 Contents: Read，不写进 URL、命令、日志或 .env。无人值守安装使用 `--token-file /绝对路径/令牌文件`；文件须为 root 所有、600/400 权限的普通文件。
+
+重复执行相同命令：未安装则安装，已有安装则检查最新签名正式版本并升级；同版本、载荷一致且服务健康则安全退出。程序更新前验证 Ed25519 清单签名与安装包 SHA-256，拒绝降级、同版本变更及不受控目录；安装失败由原事务流程恢复旧配置、身份和服务。
+
+已安装后更短：铁幕输入 `sudo ironcurtain update`，玄武输入 `sudo xuanwu update`。私有仓库必须保留有效的只读令牌，失效时更新该文件再重试。
+
+## 自动补环境的支持范围
+
+需要 root、运行中的 systemd、x86_64/aarch64 CPU，以及可用的系统软件源和 HTTPS 网络。支持 Debian/Ubuntu 与使用 dnf/yum 的 CentOS/RHEL/Rocky/AlmaLinux/Fedora/Oracle Linux，但版本必须能从受信任软件源提供 Python >=3.9（含 sqlite3/ssl）及支持 Ed25519 raw 签名的 OpenSSL。已停止维护的旧系统可能无法满足这些条件；脚本会给出具体原因，不会假报成功。
+
+引导器自动安装缺少的 Bash、下载/归档工具和 CA 包。角色安装器补齐宿主扫描工具，安装 Docker，补装 Buildx，并安装或升级 Compose 至 >=2.24.0。已有发行版 docker.io 优先使用对应插件包，禁止自动移除现有运行时；远程 Docker context、被屏蔽的服务、包冲突、端口占用和不可用软件源会明确停止。运行时 Node.js 在容器中，无需额外安装宿主 Node.js 或 MySQL。
+
+本地角色默认尝试安装 ClamAV/freshclam。RPM 系采用当前可用的 dnf 或 yum；软件源不提供病毒引擎或病毒库更新失败时显示“尚未就绪”，记录在角色 logs/antivirus-install.log，可运行 `sudo ironcurtain engine-install`重试。容器健康不等于病毒库已经可用。
+
+默认面板端口：铁幕 8790，玄武 9443。按管理来源限制安全组与主机防火墙；自签/私有 CA 证书须核对指纹并导入信任，安装器不关闭 TLS 校验。
+
+## 开发 / 离线源码安装
+
+只有已经获取并校验完整源码时，才在源码目录使用以下内部入口：
 
 ```sh
 sudo bash scripts/install-independent.sh --role local
-```
-
-**独立安全服务器：安装玄武引擎。** 首装询问其域名或固定 IPv4。
-
-```sh
 sudo bash scripts/install-independent.sh --role cloud
 ```
 
-更高版本的可信源码使用相同命令升级；同版本且载荷一致、服务健康则安全退出。同版本内容变化、降级、端口冲突或不受控路径会拒绝。升级前保存 root 私有恢复快照，失败恢复旧配置、身份、版本链接和服务状态。首次失败恢复安装前状态。
-
-默认面板端口：铁幕 `8790`，玄武 `9443`。安装器不会替你开放所有防火墙端口；按管理来源限制安全组与主机防火墙。自签/私有 CA 证书需核对指纹并导入信任，不能用关闭 TLS 校验替代身份核验。
-
-## 正式发布后的固定安装 / 更新入口
-
-经过正式签名发布后，把该 Release 的 `install.sh` 下载到服务器。首次执行选择角色；每次执行仍用同一条命令：
-
-```sh
-sudo sh ./install.sh --role local
-```
-
-本行安装/更新铁幕。玄武使用：
-
-```sh
-sudo sh ./install.sh --role cloud
-```
-
-已有安装可以更短：`sudo ironcurtain update` 或 `sudo xuanwu update`。引导器先校验内置公钥对应的 Ed25519 发布签名，再校验安装包 SHA-256，然后执行安装。云端服务没有发布签名私钥。
-
-公开仓库通过 HTTPS 获取正式附件。私有仓库使用只授予本仓库读取权限的 GitHub 令牌，存入 root 专属文件 `/etc/ironcurtain/github-release.token`，权限 `600`；不把令牌放在命令、URL、日志或 `.env`。也可通过 `IRONCURTAIN_GITHUB_TOKEN_FILE` 指定同等权限文件。私有仓库首次获取引导器仍需要已登录 GitHub 下载或可信分发；一条匿名 raw URL 无法读取私有源码。已安装节点保留引导器后，重复命令可认证下载更新。
+这两个命令不会自行下载源码。离线首装还需提前准备系统依赖、Docker/插件和所需镜像；上传源码不能代替这些依赖。
 
 现有 `APPGOG-Cloud-Security-Center-*` 文件名和发布产品标识保留为发布链兼容标识；它们不使程序依赖 APPGOG。正式切换名称时需兼顾旧引导器，不更换验签公钥。
 

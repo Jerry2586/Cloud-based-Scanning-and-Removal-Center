@@ -5,6 +5,7 @@ SOURCE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$SOURCE/scripts/lib/independent.sh"
 source "$SOURCE/scripts/lib/install-transaction.sh"
 source "$SOURCE/scripts/lib/management-transaction.sh"
+source "$SOURCE/scripts/lib/install-environment.sh"
 ROLE='' HOST='' BIND='' ENGINE_MODE=auto ENGINE_REQUESTED=false
 while (($#)); do
   case "$1" in
@@ -34,46 +35,14 @@ engine_setup() {
 }
 
 REQUESTED_HOST=$HOST REQUESTED_BIND=$BIND
-. /etc/os-release
-case "$(uname -m)" in x86_64|aarch64) ;; *) ic_fail '支持 amd64 / arm64' ;; esac
-case "${ID:-}" in ubuntu|debian) MANAGER=apt-get ;; centos|rhel|rocky|almalinux|fedora|ol) MANAGER=dnf; command -v dnf >/dev/null || MANAGER=yum ;; *) ic_fail '此发行版尚未验证，已停止安装' ;; esac
-missing=false
-for tool in curl openssl jq flock python3 tar realpath ss; do command -v "$tool" >/dev/null || missing=true; done
-if $missing; then
-  if [[ $MANAGER == apt-get ]]; then apt-get update; DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates openssl jq util-linux python3 tar coreutils iproute2 gnupg;
-  else "$MANAGER" install -y curl ca-certificates openssl jq util-linux python3 tar coreutils iproute gnupg2; fi
-fi
+ic_env_prepare
+# /run/lock is normally present, but minimal supported images may omit it.
+[[ -d /run/lock ]] || install -d -m 755 /run/lock
+[[ ! -L /run/lock/ironcurtain-$ROLE.lock ]] || ic_fail '安装锁文件是符号链接'
 exec 9>"/run/lock/ironcurtain-$ROLE.lock"
 flock -n 9 || ic_fail '另一安装或管理操作正在运行'
 for directory in /opt/ironcurtain /etc/ironcurtain /var/lib/ironcurtain "$BASE" "$CONF" "$DATA"; do ic_trusted_dir "$directory"; done
-install_docker_packages() {
-  local packages="$1"
-  if [[ $MANAGER == apt-get ]]; then
-    apt-get update; DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl gnupg
-    install -d -m 755 /etc/apt/keyrings
-    curl -fsS --proto '=https' --tlsv1.2 "https://download.docker.com/linux/$ID/gpg" -o /etc/apt/keyrings/ironcurtain-docker.asc
-    chmod 644 /etc/apt/keyrings/ironcurtain-docker.asc
-    [[ -n ${VERSION_CODENAME:-} ]] || ic_fail '系统代号不可识别'
-    printf 'deb [arch=%s signed-by=/etc/apt/keyrings/ironcurtain-docker.asc] https://download.docker.com/linux/%s %s stable\n' "$(dpkg --print-architecture)" "$ID" "$VERSION_CODENAME" > /etc/apt/sources.list.d/ironcurtain-docker.list
-    apt-get update; DEBIAN_FRONTEND=noninteractive apt-get install -y $packages
-  else
-    "$MANAGER" install -y dnf-plugins-core 2>/dev/null || "$MANAGER" install -y yum-utils
-    distro=centos; [[ $ID != fedora ]] || distro=fedora; [[ $ID != rhel ]] || distro=rhel
-    if "$MANAGER" --version 2>/dev/null | head -n1 | grep -Eq '(^|[^0-9])5\.'; then
-      "$MANAGER" config-manager addrepo --from-repofile "https://download.docker.com/linux/$distro/docker-ce.repo"
-    else
-      "$MANAGER" config-manager --add-repo "https://download.docker.com/linux/$distro/docker-ce.repo"
-    fi
-    "$MANAGER" install -y $packages
-  fi
-}
-if ! command -v docker >/dev/null; then install_docker_packages 'docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin';
-elif ! docker compose version >/dev/null 2>&1; then install_docker_packages 'docker-compose-plugin'; fi
-docker buildx version >/dev/null 2>&1 || install_docker_packages 'docker-buildx-plugin'
-systemctl start docker
-docker info >/dev/null || ic_fail 'Docker 不可用'
-compose_version=$(docker compose version --short | sed 's/^v//')
-[[ $(printf '%s\n' 2.24.0 "$compose_version" | sort -V | head -n1) == 2.24.0 ]] || ic_fail 'Compose 至少需要 v2.24'
+ic_env_docker_prepare
 if [[ -e $BASE/transaction.json || -L $BASE/transaction.json ]]; then
   ic_tx_recover || ic_fail '上次安装恢复未完成，请保留恢复目录并检查服务'
 fi

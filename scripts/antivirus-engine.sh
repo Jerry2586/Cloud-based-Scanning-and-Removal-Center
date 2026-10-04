@@ -6,9 +6,12 @@ ACTION=${1:-status}
 SOURCE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$SOURCE/scripts/lib/independent.sh"
 source "$SOURCE/scripts/lib/antivirus-apparmor.sh"
+source "$SOURCE/scripts/lib/install-environment.sh"
 [[ $EUID == 0 && $(uname -s) == Linux ]] || ic_fail '病毒引擎管理需要 Linux root'
 case "$ACTION" in status|install|update|policy) ;; *) ic_fail '仅支持 status、install、update、policy' ;; esac
 if [[ $ACTION == status ]]; then python3 "$SOURCE/src/host/antivirus.py"; exit; fi
+[[ -d /run/lock ]] || install -d -m 755 /run/lock
+[[ ! -L /run/lock/ironcurtain-antivirus.lock ]] || ic_fail '病毒引擎锁文件是符号链接'
 exec 8>/run/lock/ironcurtain-antivirus.lock
 flock -n 8 || ic_fail '病毒引擎安装或更新正在运行'
 CONF=/etc/ironcurtain-antivirus
@@ -35,14 +38,13 @@ PY
 fi
 if [[ $ACTION == install ]]; then
   . /etc/os-release
-  case "$ID" in
-    debian|ubuntu)
-      apt-get update
-      DEBIAN_FRONTEND=noninteractive apt-get install -y clamav clamav-freshclam ;;
-    *)
-      command -v dnf >/dev/null || ic_fail '此环境没有 dnf；请用系统受信任软件源安装 clamav 与 freshclam'
-      dnf install -y clamav clamav-update ;;
-  esac
+  ic_env_select
+  if [[ $MANAGER == apt-get ]]; then
+    apt-get update || ic_fail '病毒引擎软件源更新失败；检查网络与 apt 源'
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove clamav clamav-freshclam       || ic_fail '无法从受信任软件源安装 ClamAV，病毒扫描尚未就绪'
+  else
+    "$MANAGER" install -y clamav clamav-update       || ic_fail '当前受信任 RPM 软件源未提供 ClamAV/freshclam；请启用发行版支持的病毒引擎软件源后运行 ironcurtain engine-install'
+  fi
   command -v clamscan >/dev/null && command -v freshclam >/dev/null || ic_fail '系统软件源未提供病毒引擎，尚未就绪'
   if ! getent passwd ironcurtain-av >/dev/null; then
     useradd --system --user-group --home-dir /nonexistent --shell /usr/sbin/nologin ironcurtain-av

@@ -26,6 +26,8 @@ jobs:
             echo "Checking $file"
             bash -n "$file"
           done < <(find . -type f \( -name '*.sh' -o -name '*.run' \) -not -path './.git/*' -print | sort)
+      - name: Test environment preparation and bootstrap failure decisions (mocked, non-destructive)
+        run: bash tests/install-environment.test.sh
       - name: Validate release verifier syntax
         run: node --check scripts/verify-release.js
       - name: Test Linux identity migration, enrollment and rotation

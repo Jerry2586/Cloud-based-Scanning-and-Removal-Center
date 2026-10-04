@@ -1,5 +1,7 @@
 #!/usr/bin/env sh
 set -eu
+set +x
+umask 077
 
 PROJECT='Jerry2586/Cloud-based-Scanning-and-Removal-Center'
 PRODUCT='appgog-cloud-security-center'
@@ -33,6 +35,7 @@ for argument do
       host) PUBLIC_HOST=$argument ;;
       role) INSTALL_ROLE=$argument ;;
       bind) LISTEN_BIND=$argument ;;
+      token) TOKEN_FILE=$argument ;;
     esac
     expect=''
     continue
@@ -44,6 +47,7 @@ for argument do
     --host) expect=host ;;
     --role) expect=role ;;
     --bind) expect=bind ;;
+    --token-file) expect=token ;;
     *) fail "未知参数：$argument" ;;
   esac
 done
@@ -58,30 +62,91 @@ case "$SOURCE_MODE" in auto|github|custom) ;; *) fail '--source 只能是 auto�
 [ "$SOURCE_MODE" != custom ] || [ -n "$RELEASE_BASE" ] || fail '--source custom 必须同时提供 --release-base。'
 printf '%s\n' "$REQUESTED_VERSION" | grep -Eq '^$|^[0-9]+\.[0-9]+\.[0-9]+$' || fail '版本号格式无效。'
 
+ca_ready() {
+  for bundle in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/cert.pem; do
+    [ ! -s "$bundle" ] || return 0
+  done
+  return 1
+}
+bootstrap_crypto_ready() (
+  crypto_dir=$(mktemp -d) || return 1
+  trap 'rm -rf -- "$crypto_dir"' 0
+  printf 'ironcurtain-bootstrap-check\n' > "$crypto_dir/message"
+  openssl genpkey -algorithm ED25519 -out "$crypto_dir/key" >/dev/null 2>&1     && openssl pkeyutl -sign -rawin -inkey "$crypto_dir/key" -in "$crypto_dir/message" -out "$crypto_dir/signature" >/dev/null 2>&1
+)
+tools_ready() {
+  for tool in bash curl openssl sha256sum jq sort mktemp stat tar gzip awk sed grep tail     tr dirname cp mv rm mkdir chmod install stty; do
+    command -v "$tool" >/dev/null 2>&1 || return 1
+  done
+  ca_ready || return 1
+  bootstrap_crypto_ready || return 1
+  [ "$(printf '2.24.0\n2.9.0\n' | sort -V | head -n1)" = 2.9.0 ]
+}
 install_tools() {
-  missing=false
-  for tool in curl openssl sha256sum jq sort mktemp stat tar; do command -v "$tool" >/dev/null 2>&1 || missing=true; done
-  [ "$missing" = true ] || return 0
-  log '识别 Linux 并补齐发布验证工具'
+  tools_ready && return 0
+  log '识别 Linux 并补齐下载、发布验证和解包工具'
   case "$DISTRO" in
     ubuntu|debian)
-      apt-get update
-      DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl openssl coreutils jq tar
+      apt-get update || fail '系统软件源不可用；检查 DNS、HTTPS 和 apt 源后重试。'
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove bash ca-certificates curl openssl coreutils jq tar gzip util-linux         || fail '发布验证工具安装失败；请修复软件源或包管理锁后重试。'
       ;;
     centos|rhel|rocky|almalinux|fedora|ol)
       manager=dnf; command -v dnf >/dev/null 2>&1 || manager=yum
-      "$manager" install -y ca-certificates curl openssl coreutils jq tar
+      command -v "$manager" >/dev/null 2>&1 || fail "缺少包管理器 $manager。"
+      "$manager" install -y bash ca-certificates curl openssl coreutils jq tar gzip util-linux         || fail '发布验证工具安装失败；请修复系统软件源后重试。'
       ;;
     *) fail "不支持自动补齐环境的发行版：$DISTRO" ;;
   esac
+  tools_ready || fail '基础工具、CA 包或 Ed25519 签名能力仍不可用；请使用提供当前 OpenSSL 的受支持 Linux 版本。'
 }
+check_token_file() {
+  [ ! -e "$TOKEN_FILE" ] && [ ! -L "$TOKEN_FILE" ] && return 0
+  [ -f "$TOKEN_FILE" ] && [ ! -L "$TOKEN_FILE" ] && [ -r "$TOKEN_FILE" ] || fail 'GitHub 令牌必须是可读的普通文件，不能是符号链接。'
+  [ "$(stat -c %u "$TOKEN_FILE")" = 0 ] || fail 'GitHub 令牌文件必须归 root 所有。'
+  case "$(stat -c %a "$TOKEN_FILE")" in 600|400) ;; *) fail 'GitHub 令牌文件权限必须是 600 或 400。' ;; esac
+  [ -s "$TOKEN_FILE" ] || fail 'GitHub 令牌文件为空，请更新令牌文件后重试。'
+}
+request_release_token() (
+  # Read only from the controlling terminal, never from piped installation input.
+  saved_terminal=$(stty -g </dev/tty 2>/dev/null) || return 1
+  case "$TOKEN_FILE" in /*) ;; *) fail '首次保存令牌需要绝对路径。' ;; esac
+  case "$TOKEN_FILE" in */../*|*/./*|*/..|*/.) fail '令牌路径包含不安全组件。' ;; esac
+  parent=$(dirname "$TOKEN_FILE")
+  check=$parent
+  while [ "$check" != / ]; do
+    if [ -e "$check" ] || [ -L "$check" ]; then
+      [ -d "$check" ] && [ ! -L "$check" ] && [ "$(stat -c %u "$check")" = 0 ] || fail '令牌目录必须由 root 控制，不能含符号链接。'
+      mode=$(stat -c %a "$check")
+      [ "$((0$mode & 0022))" -eq 0 ] || fail '令牌目录不能对其他用户开放写入。'
+    fi
+    check=$(dirname "$check")
+  done
+  scratch=''
+  trap 'stty "$saved_terminal" </dev/tty 2>/dev/null || true; [ -z "$scratch" ] || rm -f -- "$scratch"' 0
+  trap 'exit 130' 2
+  trap 'exit 143' 15
+  printf '\n公开下载不可用。如为私有仓库，请输入本仓库只读 GitHub Token。\n令牌隐藏输入，并保存为 root 专属文件：%s\nToken：' "$TOKEN_FILE" >/dev/tty
+  stty -echo </dev/tty
+  IFS= read -r token </dev/tty || return 1
+  stty "$saved_terminal" </dev/tty
+  printf '\n' >/dev/tty
+  case "$token" in ''|*[!A-Za-z0-9_]*) fail '令牌格式无效。' ;; esac
+  mkdir -p -- "$parent"
+  scratch=$(mktemp "$parent/.github-release.token.XXXXXXXX")
+  chmod 600 "$scratch"
+  printf '%s\n' "$token" > "$scratch"
+  unset token
+  [ ! -e "$TOKEN_FILE" ] && [ ! -L "$TOKEN_FILE" ] || fail '令牌目标已存在，停止覆盖。'
+  mv -- "$scratch" "$TOKEN_FILE"
+  scratch=''
+)
 
 private_release_enabled() { [ -s "$TOKEN_FILE" ]; }
 
 private_release_file() (
   release=$1 name=$2 destination=$3
   case "$name" in release-manifest.json|release-manifest.json.sig|APPGOG-Cloud-Security-Center-*.run|APPGOG-Cloud-Security-Center-*.tar.gz) ;; *) return 1 ;; esac
-  [ -r "$TOKEN_FILE" ] || return 1
+  [ -f "$TOKEN_FILE" ] && [ ! -L "$TOKEN_FILE" ] && [ -r "$TOKEN_FILE" ] || return 1
   [ "$(stat -c %u "$TOKEN_FILE")" = "$(id -u)" ] || return 1
   case "$(stat -c %a "$TOKEN_FILE")" in 600|400) ;; *) return 1 ;; esac
   scratch=$(mktemp -d) || return 1
@@ -174,6 +239,7 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' 0
 trap 'exit 130' 2
 trap 'exit 143' 15
+check_token_file
 write_public_key "$WORK/release-public.pem"
 
 release_path='releases/latest/download'
@@ -187,8 +253,15 @@ fi
 
 case "$SOURCE_MODE" in
   custom) try_release "$RELEASE_BASE" || fail '自定义发布源不可用或签名校验失败。' ;;
-  github) try_release "$SELECTED_BASE" || fail 'GitHub Release 不可用或签名校验失败。' ;;
-  auto) try_release "$SELECTED_BASE" || fail '发布源不可用、私有令牌权限不正确，或签名/哈希校验失败。' ;;
+  auto|github)
+    if try_release "$SELECTED_BASE"; then :
+    elif ! private_release_enabled && request_release_token; then
+      check_token_file
+      if [ -n "$REQUESTED_VERSION" ]; then SELECTED_BASE="private:$REQUESTED_VERSION"; else SELECTED_BASE=private:latest; fi
+      try_release "$SELECTED_BASE" || fail '认证下载或签名/哈希验证失败；检查令牌仓库权限、正式 Release 和网络。'
+    else
+      fail '下载或签名/哈希验证失败。私有仓库需本仓库只读 Token：交互执行可隐藏输入；自动化请用 --token-file /绝对路径/令牌文件。'
+    fi ;;
 esac
 
 case "$INSTALL_ROLE" in local) INSTALL_ROOT=/opt/ironcurtain/local ;; cloud) INSTALL_ROOT=/opt/ironcurtain/cloud ;; esac
@@ -204,4 +277,5 @@ set --
 [ -z "$PUBLIC_HOST" ] || set -- "$@" --host "$PUBLIC_HOST"
 [ -z "$INSTALL_ROLE" ] || set -- "$@" --role "$INSTALL_ROLE"
 [ -z "$LISTEN_BIND" ] || set -- "$@" --bind "$LISTEN_BIND"
+export IRONCURTAIN_GITHUB_TOKEN_FILE="$TOKEN_FILE"
 bash "$WORK/installer.run" "$@"
