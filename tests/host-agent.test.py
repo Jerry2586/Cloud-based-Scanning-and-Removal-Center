@@ -34,7 +34,8 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(scanner.integrity()[0],'ok'); self.assertEqual(scanner.integrity(True)[0],'ok')
             program.write_bytes(b'changed'); (root/'webshell.php').write_text('test file')
             state,_,evidence=scanner.integrity(); self.assertEqual(state,'finding'); self.assertEqual(evidence['changed'],1); self.assertEqual(evidence['added'],1)
-    def test_clamav_failure_limits_and_real_counts(self):
+    @__import__('unittest.mock',fromlist=['patch']).patch.object(a.antivirus,'database_status',return_value={'state':'configured'})
+    def test_clamav_failure_limits_and_real_counts(self, database):
         with tempfile.TemporaryDirectory() as root:
             for code,text,expected in [(0,'Scanned files: 4\nInfected files: 0','ok'),(1,'Scanned files: 4\nInfected files: 1','finding'),(1,'Heuristics.Limits.Exceeded FOUND\nScanned files: 4\nInfected files: 1','unavailable'),(0,'Scanned files: 0\nInfected files: 0','unavailable'),(2,'error','unavailable'),(0,'Scanned files: 4\nInfected files: 0\nErrors: 1','unavailable'),(1,'Scanned files: 4\nInfected files: 0','unavailable')]:
                 with self.subTest(text=text):

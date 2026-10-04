@@ -19,6 +19,18 @@ function sanitizeCheck(item) {
   return result;
 }
 
+export function sanitizeAntivirus(value) {
+  const unavailable = { engine: 'ClamAV', installed: false, state: 'unavailable', updater: 'unknown', detail: '病毒引擎状态不可用' };
+  if (!value || value.engine !== 'ClamAV' || typeof value.installed !== 'boolean' ||
+      !['unavailable','configured','stale'].includes(value.state) || !['scheduled','disabled','failed','unknown'].includes(value.updater) ||
+      typeof value.detail !== 'string' || value.detail.length > 180) return unavailable;
+  if (value.state !== 'unavailable' && (!value.installed || !safeTimestamp(value.database_at) ||
+      !Number.isSafeInteger(value.database_version) || value.database_version <= 0 ||
+      !Number.isSafeInteger(value.signatures) || value.signatures <= 0)) return unavailable;
+  return {engine:'ClamAV', installed:value.installed, state:value.state, updater:value.updater, detail:value.detail,
+    ...(value.state !== 'unavailable' ? {database_at:value.database_at, database_version:value.database_version, signatures:value.signatures} : {})};
+}
+
 // One fixed local action. The browser never chooses a command or path.
 export function localSecurityScan(action, env = process.env) {
   if (!['status', 'scan'].includes(action)) throw new TypeError('Unknown security action');
@@ -62,7 +74,7 @@ export function localSecurityScan(action, env = process.env) {
           const invalidHistory = !Array.isArray(result.history) || history.length !== Math.min(8, result.history.length);
           const historyState = invalidHistory || result.history_state === 'unavailable' ? 'unavailable' : result.history.length > 8 ? 'truncated'
             : ['ok', 'unavailable', 'truncated'].includes(result.history_state) ? result.history_state : 'unavailable';
-          resolve({ state: result.state, history, progress: hostScanProgress(result),
+          resolve({ state: result.state, antivirus: sanitizeAntivirus(result.antivirus), history, progress: hostScanProgress(result),
             coverage: result.state === 'finished' ? hostScanCoverage(result) : undefined,
             history_state: historyState, checked_at: safeTimestamp(result.checked_at),
             reason: result.state === 'unavailable' ? '本机检查频率限制或代理异常' : undefined, checks });

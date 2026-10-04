@@ -5,20 +5,31 @@ SOURCE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$SOURCE/scripts/lib/independent.sh"
 source "$SOURCE/scripts/lib/install-transaction.sh"
 source "$SOURCE/scripts/lib/management-transaction.sh"
-ROLE='' HOST='' BIND=''
+ROLE='' HOST='' BIND='' ENGINE_MODE=auto
 while (($#)); do
   case "$1" in
     --role) ROLE=${2:?missing role}; shift 2 ;;
     --host) HOST=${2:?missing host}; shift 2 ;;
     --bind) BIND=${2:?missing bind}; shift 2 ;;
+    --antivirus) ENGINE_MODE=${2:?missing antivirus mode}; shift 2 ;;
     *) ic_fail '用法：--role local|cloud [--host 域名或IPv4] [--bind IPv4]' ;;
   esac
 done
+[[ $ENGINE_MODE == auto || $ENGINE_MODE == skip ]] || ic_fail '病毒引擎模式仅支持 auto 或 skip'
 [[ $EUID == 0 && $(uname -s) == Linux && -d /run/systemd/system ]] || ic_fail '需要带 systemd 的 Linux root 环境'
 ic_role "$ROLE"
 MENU=/usr/local/bin/ironcurtain
 [[ $ROLE != cloud ]] || MENU=/usr/local/bin/xuanwu
 AGENT_UNIT=/etc/systemd/system/ironcurtain-agent.service
+engine_setup() {
+  [[ $ROLE == local && $ENGINE_MODE == auto ]] || return 0
+  if command -v clamscan >/dev/null && [[ -f /etc/systemd/system/ironcurtain-antivirus-update.timer ]]; then return 0; fi
+  install -d -m 700 "$DATA/logs"
+  if ! bash "$BASE/current/scripts/antivirus-engine.sh" install > "$DATA/logs/antivirus-install.log" 2>&1; then
+    echo "病毒引擎尚未就绪；安装记录：$DATA/logs/antivirus-install.log。请运行 ironcurtain engine-install 重试。" >&2
+  fi
+}
+
 REQUESTED_HOST=$HOST REQUESTED_BIND=$BIND
 . /etc/os-release
 case "$(uname -m)" in x86_64|aarch64) ;; *) ic_fail '支持 amd64 / arm64' ;; esac
@@ -97,6 +108,7 @@ if [[ -f $BASE/current/package.json ]]; then
     ic_load
     ic_healthy || ic_fail '当前版本服务不健康，请从菜单诊断，避免自动覆盖'
     [[ $ROLE != local ]] || ic_scan_wait || ic_fail '本地扫描代理不可用，请运行 ironcurtain doctor'
+    engine_setup
     echo "当前版本 $VERSION 已安装且健康。"; exit 0
   fi
 fi
@@ -219,6 +231,7 @@ if [[ $ROLE == local ]]; then
 fi
 ic_tx_finish
 SUCCESS=true
+engine_setup
 echo "独立 $ROLE v$VERSION 安装完成：https://$HOST:$PORT"
 echo '请在防火墙限制管理来源，确认服务器证书指纹后导入信任；脚本不会关闭 TLS 校验。'
 [[ $ROLE != local ]] || echo '输入 ironcurtain 打开管理菜单并配置受保护项目。'

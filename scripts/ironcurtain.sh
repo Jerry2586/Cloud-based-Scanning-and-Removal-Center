@@ -56,6 +56,7 @@ status() {
   if ic_healthy; then echo '容器：健康'; else echo '容器：未通过健康检查'; fi
   if [[ $ROLE == local ]]; then
     echo "扫描代理：$(systemctl is-active ironcurtain-agent.service || true)"
+    python3 "$SOURCE/src/host/antivirus.py"
     [[ ! -d $CONF/runtime/cloud ]] || echo '云端：已配置身份，实时握手请选择连接检查'
     [[ -d $CONF/runtime/cloud ]] || echo '云端：未配对'
   else jq -r '"登记节点："+(.nodes|keys|join(", "))' "$CONF/runtime/config.json"; fi
@@ -232,6 +233,7 @@ dispatch() {
     start) lock; [[ $ROLE != local ]] || systemctl start ironcurtain-agent.service; ic_compose up -d --wait --wait-timeout 90 ;;
     stop) lock; ic_compose stop; [[ $ROLE != local ]] || systemctl stop ironcurtain-agent.service ;;
     restart) lock; [[ $ROLE != local ]] || systemctl restart ironcurtain-agent.service; ic_compose restart; ic_wait ;;
+    engine-install|engine-update|engine-status) [[ $ROLE == local ]] || ic_fail '病毒引擎仅用于铁幕'; lock; bash "$SOURCE/scripts/antivirus-engine.sh" "${1#engine-}" ;;
     update) update ;; doctor) doctor ;; scan) scan ;; profile) profile ;;
     pair) pair ;; cloud-status) cloud_status ;; unpair) unpair ;;
     register) register ;; revoke) revoke ;; nodes) [[ $ROLE == cloud ]] || ic_fail '仅用于玄武'; jq -r '.nodes | keys[]' "$CONF/runtime/config.json" ;;
@@ -248,6 +250,7 @@ while true; do
   if [[ $ROLE == local ]]; then
     echo ' 8. 一键扫描   9. 配置保护范围   10. 导入玄武身份包'
     echo '11. 检查加密连接   12. 解绑玄武   13. 查看面板凭据   14. 重置面板密码'
+    echo '15. 安装病毒引擎   16. 更新官方病毒库   17. 病毒引擎状态'
   else
     echo ' 8. 登记节点与加密导出   9. 撤销节点   10. 查看节点'
     echo '11. 浏览器面板证书'
@@ -263,6 +266,9 @@ while true; do
     12) [[ $ROLE == local ]] || continue; action=unpair ;;
     13) [[ $ROLE == local ]] || continue; action=credentials ;;
     14) [[ $ROLE == local ]] || continue; action=reset-password ;;
+    15) [[ $ROLE == local ]] || continue; action=engine-install ;;
+    16) [[ $ROLE == local ]] || continue; action=engine-update ;;
+    17) [[ $ROLE == local ]] || continue; action=engine-status ;;
     *) echo '请选择有效菜单项'; continue ;;
   esac
   bash "$SOURCE/scripts/ironcurtain.sh" --role "$ROLE" "$action" || echo '操作未完成；现有状态请运行诊断核对。'

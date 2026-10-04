@@ -38,6 +38,8 @@ jobs:
         run: sudo env "PATH=$PATH" bash tests/independent-transactions.test.sh
       - name: Test generic Linux host scanner
         run: sudo env "PATH=$PATH" python3 tests/host-agent.test.py
+      - name: Test managed antivirus metadata
+        run: sudo env "PATH=$PATH" python3 tests/antivirus-metadata.test.py
 
   independent-deployment:
     runs-on: ubuntu-latest
@@ -63,3 +65,12 @@ jobs:
           sudo journalctl -u ironcurtain-agent.service --no-pager -n 30 || true
           sudo stat -c '%a %u %g %F %n' /run/ironcurtain /run/ironcurtain/scan.sock || true
           sudo docker exec ironcurtain-local node --input-type=module -e 'import {localSecurityScan} from "./src/local/scan-client.js"; console.log(JSON.stringify(await localSecurityScan("status")));' || true
+
+  antivirus-engine:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Real ClamAV package provisioning and deterministic engine acceptance
+        run: sudo env "PATH=$PATH" GITHUB_ACTIONS=true bash tests/antivirus-engine.test.sh

@@ -68,6 +68,13 @@ export function createSecurityUi({ state, can, request, notify }) {
   let bound = false;
   const localStateLabels = { ok: '正常', warning: '需复核', finding: '发现问题', unavailable: '不可用' };
   function renderLocalReport(report) {
+    const engine = $('security-antivirus-state');
+    if (engine) {
+      const value=report.antivirus;
+      const updater={scheduled:'定时更新已启用',disabled:'定时更新未启用',failed:'最近更新失败',unknown:'更新状态未知'};
+      engine.textContent = value?.engine === 'ClamAV' ? value.detail + (value.database_version ? ' · 库版本 '+value.database_version : '') + ' · '+(updater[value.updater] || updater.unknown) : '病毒引擎状态待检查';
+      engine.dataset.state = value?.state || 'unavailable';
+    }
     const status = $('security-local-state');
     const timestamp = $('security-local-time');
     const list = $('security-local-checks');

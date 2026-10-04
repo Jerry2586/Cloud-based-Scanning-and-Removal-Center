@@ -31,7 +31,7 @@ SOURCE=$WORK/source
 CLOUD_HOST=$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')
 [[ $CLOUD_HOST =~ ^[0-9.]+$ ]] || { echo 'Docker bridge gateway unavailable' >&2; exit 1; }
 bash "$SOURCE/scripts/install-independent.sh" --role cloud --host "$CLOUD_HOST" --bind "$CLOUD_HOST"
-bash "$SOURCE/scripts/install-independent.sh" --role local --host 127.0.0.1 --bind 127.0.0.1
+bash "$SOURCE/scripts/install-independent.sh" --role local --antivirus skip --host 127.0.0.1 --bind 127.0.0.1
 source "$SOURCE/scripts/lib/independent.sh"
 ic_role cloud; ic_load
 install -d -m 700 "$WORK/pair"
@@ -64,11 +64,11 @@ systemctl start ironcurtain-agent.service
 ic_scan_wait
 [[ $(stat -c '%d:%i' /run/ironcurtain) == "$runtime_inode" ]]
 node "$SOURCE/tests/helpers/independent-deployment-probe.js"
-bash "$SOURCE/scripts/install-independent.sh" --role local
+bash "$SOURCE/scripts/install-independent.sh" --role local --antivirus skip
 bash "$SOURCE/scripts/install-independent.sh" --role cloud
 before=$(sha256sum /etc/ironcurtain/local/runtime/panel-auth.json /etc/ironcurtain/cloud/ca.key)
 node -e 'const fs=require("fs"),p=process.argv[1],v=JSON.parse(fs.readFileSync(p));v.version=v.version.split(".").map((n,i)=>i===2?String(Number(n)+1):n).join(".");fs.writeFileSync(p,JSON.stringify(v,null,2)+"\n");' "$SOURCE/package.json"
-bash "$SOURCE/scripts/install-independent.sh" --role local
+bash "$SOURCE/scripts/install-independent.sh" --role local --antivirus skip
 bash "$SOURCE/scripts/install-independent.sh" --role cloud
 after=$(sha256sum /etc/ironcurtain/local/runtime/panel-auth.json /etc/ironcurtain/cloud/ca.key)
 [[ $before == "$after" ]] || { echo 'Upgrade replaced existing identity.' >&2; exit 1; }

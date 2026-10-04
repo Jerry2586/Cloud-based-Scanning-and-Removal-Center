@@ -7,6 +7,8 @@ LABELS = ['程序完整性','关键配置完整性','容器隔离配置','容器
 CATEGORIES = ['container','host','container','container','host','host','host','ssh','permissions','permissions','permissions','network','network','network','host','network','malware','malware','host','host','host','network','network','network','network']
 DIGEST = re.compile(r'^[a-f0-9]{64}$')
 MAX_FILE = 64 * 1024 * 1024
+_av_spec = importlib.util.spec_from_file_location('ironcurtain_antivirus', pathlib.Path(__file__).with_name('antivirus.py'))
+antivirus = importlib.util.module_from_spec(_av_spec); _av_spec.loader.exec_module(antivirus)
 
 def utc(): return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00','Z')
 def canonical(value): return json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()
@@ -216,7 +218,9 @@ class Scanner:
     def malware(self,paths):
         if not paths: return 'unavailable','未配置扫描目录',{}
         if any(not os.path.isdir(p) or os.path.islink(p) for p in paths): return 'unavailable','目录不存在或链接状态不安全',{}
-        code,text=self.run(['clamscan','--recursive','--infected','--follow-dir-symlinks=0','--follow-file-symlinks=0','--max-files=10000','--max-filesize=64M','--max-scansize=256M','--alert-exceeds-max=yes','--fail-if-cvd-older-than=7','--',*paths],seconds=60)
+        database=antivirus.database_status()
+        if database['state']!='configured': return 'unavailable',database['detail'],{}
+        code,text=self.run(['clamscan','--database='+antivirus.DATABASE_DIR,'--official-db-only=yes','--recursive','--infected','--follow-dir-symlinks=0','--follow-file-symlinks=0','--max-files=10000','--max-filesize=64M','--max-scansize=256M','--alert-exceeds-max=yes','--fail-if-cvd-older-than=7','--',*paths],seconds=60)
         if code not in [0,1]: return 'unavailable','ClamAV/病毒库不可用，扫描失败或超出预算',{}
         if 'Heuristics.Limits.Exceeded' in text: return 'unavailable','ClamAV 文件/解包预算超限，不作为病毒命中或通过',{}
         match=re.search(r'Scanned files:\s*(\d+)',text); infected=re.search(r'Infected files:\s*(\d+)',text)
@@ -359,6 +363,7 @@ class Agent:
     def status(self):
         with self.lock:
             result=copy.deepcopy(self.result)
+            result['antivirus']=antivirus.engine_status()
             if len(result.get('history',[]))>8:
                 result['history']=result['history'][-8:]
                 if result['history_state']=='ok': result['history_state']='truncated'
