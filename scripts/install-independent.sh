@@ -96,7 +96,7 @@ python3 -c 'import ipaddress,sys;ipaddress.IPv4Address(sys.argv[1])' "$BIND" || 
 if [[ -s $BASE/install.json ]]; then ic_load; fi
 VERSION=$(jq -er '.version' "$SOURCE/package.json")
 [[ $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || ic_fail '版本格式错误'
-payload_digest() { (cd "$1"; find src docker scripts -type f ! -path '*/__pycache__/*' -print0; printf 'package.json\0release-contract.json\0.dockerignore\0install.sh\0') | sort -z | while IFS= read -r -d '' file; do (cd "$1"; sha256sum "$file"); done | sha256sum | cut -d' ' -f1; }
+payload_digest() { (cd "$1"; find src docker scripts -type f ! -path '*/__pycache__/*' -print0; printf 'package.json\0release-contract.json\0release-public.pem\0.dockerignore\0install.sh\0') | sort -z | while IFS= read -r -d '' file; do (cd "$1"; sha256sum "$file"); done | sha256sum | cut -d' ' -f1; }
 [[ -z $(find "$SOURCE/src" "$SOURCE/docker" "$SOURCE/scripts" -type l -print -quit) ]] || ic_fail '安装载荷含符号链接，拒绝接受'
 DIGEST=$(payload_digest "$SOURCE")
 OLD_VERSION=''
@@ -125,7 +125,7 @@ if [[ -e $RELEASE ]]; then
 else
   install -d -m 750 "$RELEASE"
   cp -a "$SOURCE/src" "$SOURCE/scripts" "$SOURCE/docker" "$RELEASE/"
-  cp "$SOURCE/package.json" "$SOURCE/release-contract.json" "$SOURCE/.dockerignore" "$SOURCE/install.sh" "$RELEASE/"
+  cp "$SOURCE/package.json" "$SOURCE/release-contract.json" "$SOURCE/release-public.pem" "$SOURCE/.dockerignore" "$SOURCE/install.sh" "$RELEASE/"
   printf '%s\n' "$DIGEST" > "$RELEASE/.payload-sha256"
   find "$RELEASE" -type d -exec chmod 755 {} +
   find "$RELEASE" -type f -exec chmod 644 {} +

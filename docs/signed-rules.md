@@ -19,7 +19,8 @@ node scripts/sign-rules.js rules.json offline-private.pem signed-rules.json
 将签名文件通过可信通道复制到玄武服务器 root 私有目录。在 sudo xuanwu 菜单 25 填写文件绝对路径；也可执行：
 
 ~~~sh
-sudo xuanwu rules-sync /root/signed-rules.json
+sudo xuanwu rules-sync
+# 按提示填写 /root/signed-rules.json
 sudo xuanwu rules-status
 ~~~
 
