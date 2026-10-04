@@ -25,8 +25,10 @@ ic_tx_begin() {
   chmod 600 "$BASE/transaction.json.new"; mv -f "$BASE/transaction.json.new" "$BASE/transaction.json"
   if [[ -s $IC_TX/install.json ]]; then ic_compose stop; fi
   [[ $ROLE != local || ! -f $IC_TX/agent.service ]] || systemctl stop ironcurtain-agent.service
-  tar -cpf "$IC_TX/config.tar" -C "$CONF" .
-  tar -cpf "$IC_TX/data.tar" -C "$DATA" .
+  tar -cf "$IC_TX/config.tar" -C "$CONF" .
+  tar -cf "$IC_TX/data.tar" -C "$DATA" .
+  chmod 600 "$IC_TX/config.tar" "$IC_TX/data.tar"
+  ic_private_file "$IC_TX/config.tar"; ic_private_file "$IC_TX/data.tar"
   touch "$IC_TX/snapshot-ready"
 }
 ic_tx_mutating() { touch "$IC_TX/mutating"; }
@@ -50,6 +52,7 @@ ic_tx_recover() {
     [[ -f $snapshot/snapshot-ready ]] || ic_fail '恢复快照不完整，停止自动恢复'
     for item in config data; do
       [[ -f $snapshot/$item.tar && ! -L $snapshot/$item.tar ]] || ic_fail '恢复文件缺失'
+      ic_private_file "$snapshot/$item.tar"
       tar -tf "$snapshot/$item.tar" >/dev/null || return 1
     done
     if [[ -L $BASE/current ]]; then ic_compose down || return 1; fi

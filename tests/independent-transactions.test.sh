@@ -59,6 +59,7 @@ fixture
 install -d -m 700 "$CONF/exports" "$CONF/.admin.fixture"
 printf encrypted-evidence > "$CONF/exports/node.icpair.pending"
 ic_admin_begin profile
+[[ $(stat -c "%a:%u:%h" "$IC_ADMIN_TX/config.tar") == 600:0:1 ]]
 printf changed > "$CONF/value"
 ic_admin_recover
 assert_old

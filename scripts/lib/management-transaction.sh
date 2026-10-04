@@ -6,7 +6,9 @@ ic_admin_begin() {
   IC_ADMIN_TX=$(mktemp -d "$BASE/backups/admin.XXXXXXXX")
   chmod 700 "$IC_ADMIN_TX"
   # Staging and exports are not live configuration and must not become trusted identities on rollback.
-  tar --exclude='./.admin.*' --exclude='./exports' -cpf "$IC_ADMIN_TX/config.tar" -C "$CONF" .
+  tar --exclude='./.admin.*' --exclude='./exports' -cf "$IC_ADMIN_TX/config.tar" -C "$CONF" .
+  chmod 600 "$IC_ADMIN_TX/config.tar"
+  ic_private_file "$IC_ADMIN_TX/config.tar"
   docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null | grep -qx true && touch "$IC_ADMIN_TX/container-running" || true
   if [[ $ROLE == local ]]; then
     systemctl is-active --quiet ironcurtain-agent.service && touch "$IC_ADMIN_TX/agent-active" || true
@@ -33,6 +35,7 @@ ic_admin_recover() {
   if [[ -f $snapshot/committed ]]; then rm -f -- "$BASE/admin-transaction.json" || return 1; return 0; fi
   if [[ -f $snapshot/mutating ]]; then
     [[ -f $snapshot/config.tar && ! -L $snapshot/config.tar ]] || ic_fail '管理恢复快照缺失'
+    ic_private_file "$snapshot/config.tar"
     tar -tf "$snapshot/config.tar" >/dev/null || return 1
     ic_check_dir "$CONF"
     echo '发现未完成的管理操作，正在恢复原配置和身份。' >&2
