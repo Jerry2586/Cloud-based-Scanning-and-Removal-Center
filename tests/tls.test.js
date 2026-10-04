@@ -6,8 +6,14 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { createServer, request as httpsRequest } from 'node:https';
-import { createHash, randomUUID, X509Certificate } from 'node:crypto';
+import { createHash, randomUUID, X509Certificate, generateKeyPairSync, sign } from 'node:crypto';
 import { createMonitor } from '../src/monitor.js';
+import { verifyRuleEnvelope } from '../src/rules.js';
+const fixtureKeys=generateKeyPairSync('ed25519');
+const ruleNow=Math.floor(Date.now()/1000);
+const ruleBytes=Buffer.from(JSON.stringify({schema:'ironcurtain-threat-rules/v1',version:'0.2.0',sequence:1,issued_at:ruleNow-1,expires_at:ruleNow+3600,minimum_agent_version:'0.2.0',indicators:[]}));
+const ruleEnvelope={schema:'ironcurtain-signed-rules/v1',payload:ruleBytes.toString('base64'),signature:sign(null,ruleBytes,fixtureKeys.privateKey).toString('base64')};
+const verifiedRules=verifyRuleEnvelope(ruleEnvelope,fixtureKeys.publicKey.export({format:'pem',type:'spki'}));
 
 const binary = process.platform === 'win32' ? 'C:/Program Files/Git/usr/bin/openssl.exe' : 'openssl';
 const available = spawnSync(binary, ['version']).status === 0;
@@ -49,12 +55,20 @@ test('actual mutual TLS: valid identity, wrong token, missing certificate, wrong
     const key = readFileSync(join(dir, 'client.key'));
     let readerToken = 'r'.repeat(40);
     const reader = { token_sha256: tokenDigest(readerToken), fingerprint256: new X509Certificate(cert).fingerprint256 };
-    const monitor = createMonitor({ nodes: {}, readers: [reader] });
+    let offeredRules=verifiedRules;
+    const monitor = createMonitor({ nodes: {}, readers: [reader], rules:()=>offeredRules });
     server = createServer({ key: readFileSync(join(dir, 'server.key')), cert: readFileSync(join(dir, 'server.crt')),
       ca, requestCert: true, rejectUnauthorized: true }, monitor.handler);
     await new Promise(resolve => server.listen(0, resolve));
     const port = server.address().port;
     assert.equal((await request(port, { ca, cert, key, token: readerToken })).status, 200);
+    assert.deepEqual((await request(port,{ca,cert,key,token:readerToken,path:'/v1/rules'})).data,ruleEnvelope);
+    assert.equal((await request(port,{ca,cert,key,token:'wrong',path:'/v1/rules'})).status,403);
+    offeredRules={error:'RULE_MISSING'};
+    assert.equal((await request(port,{ca,cert,key,token:readerToken,path:'/v1/rules'})).status,503);
+    offeredRules={error:'RULE_UNAVAILABLE'};
+    assert.equal((await request(port,{ca,cert,key,token:readerToken,path:'/v1/rules'})).status,503);
+    offeredRules=verifiedRules;
     const ipStatus = await new Promise((resolve, reject) => {
       const req = httpsRequest(`https://127.0.0.1:${port}/v1/status`, { ca, cert, key,
         headers: { authorization: `Bearer ${readerToken}` } }, res => {
@@ -117,7 +131,7 @@ test('reader and two reporting nodes cannot impersonate each other across TLS id
         baseline: { 'apps/app.js': 'a'.repeat(64) } };
     }
     const monitor = createMonitor({ nodes, readers: [{ fingerprint256: identities.reader.fingerprint256,
-      token_sha256: tokenDigest(identities.reader.token) }] });
+      token_sha256: tokenDigest(identities.reader.token) }], rules:()=>verifiedRules });
     server = createServer({ key: readFileSync(join(dir, 'server.key')), cert: readFileSync(join(dir, 'server.crt')),
       ca, requestCert: true, rejectUnauthorized: true }, monitor.handler);
     await new Promise(resolve => server.listen(0, resolve));
@@ -126,6 +140,7 @@ test('reader and two reporting nodes cannot impersonate each other across TLS id
       const result = await request(port, { ...identities[name], path: '/v1/connectivity' });
       assert.equal(result.status, 200);
       assert.equal(result.data.identity, name);
+      assert.deepEqual((await request(port,{...identities[name],path:'/v1/rules'})).data,ruleEnvelope);
     }
     assert.equal((await request(port, { ...identities.reader, token: identities['license-center'].token,
       path: '/v1/connectivity' })).status, 403);

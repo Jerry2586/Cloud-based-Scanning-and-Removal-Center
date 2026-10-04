@@ -98,7 +98,20 @@ export function createSecurityUi({ state, can, request, notify }) {
       row.append(title,path,evidence);list?.append(row);
     }
   }
+  function ruleLabel(value) {
+    return value?.state==='ready' ? 'v'+value.version+' · 序号 '+value.sequence+' · '+value.indicators+' 条 · 有效至 '+new Date(value.expires_at*1000).toLocaleString() : value?.state==='missing' ? '尚未安装签名规则' : '规则不可用 / 未核验';
+  }
+  function renderRules(report) {
+    const meta=$('security-local-rules');if(meta)meta.textContent=ruleLabel(report.rules);
+    const hits=report.rule_hits,list=$('security-rule-hits'),status=$('security-rule-hits-state');list?.replaceChildren();
+    if(status)status.textContent=hits?.state==='unavailable' || !hits ? '哈希检测未启用 / 无有效报告' : '哈希命中 '+hits.total+' 项 · '+(hits.state==='complete'?'本次范围检查完整':'本次检查不完整')+'；仅告警，未自动删除文件';
+    for(const item of hits?.items || []) {
+      const row=document.createElement('li');row.dataset.state='finding';const name=document.createElement('strong');name.textContent=item.label+' · '+item.rule_id;
+      const detail=document.createElement('p');detail.textContent=item.path;const digest=document.createElement('p');digest.textContent='SHA-256 '+item.sha256;row.append(name,detail,digest);list?.append(row);
+    }
+  }
   function renderLocalReport(report) {
+    renderRules(report);
     renderFileFindings(report);
     renderQuarantine(report);
     const engine = $('security-antivirus-state');
@@ -156,6 +169,7 @@ export function createSecurityUi({ state, can, request, notify }) {
       if ($('security-local-time')) $('security-local-time').textContent = error.message;
       renderFileFindings({state:'unavailable'});
       renderQuarantine({state:'unavailable'});
+    renderRules({state:'unavailable'});
       $('security-local-checks')?.replaceChildren(); $('security-local-history')?.replaceChildren();
       if ($('security-local-history-state')) $('security-local-history-state').textContent = '告警历史读取失败';
     },
@@ -169,7 +183,7 @@ export function createSecurityUi({ state, can, request, notify }) {
     scanGeneration++;
     consoleView.clear('请登录后查看');
     securityRenderGeneration++;
-    for (const id of ['security-cloud-state', 'security-cloud-reason', 'security-identity', 'security-build-probe', 'security-license-probe', 'security-integrity', 'security-host-scan', 'security-build-host-scan', 'security-event-title', 'security-event-message']) {
+    for (const id of ['security-cloud-state', 'security-cloud-reason', 'security-identity', 'security-build-probe', 'security-license-probe', 'security-integrity', 'security-host-scan', 'security-build-host-scan', 'security-event-title', 'security-event-message', 'security-cloud-rules', 'security-local-rules']) {
       const node = $(id); if (node) node.textContent = '请登录后查看';
     }
     const status = $('security-local-state');
@@ -198,6 +212,7 @@ export function createSecurityUi({ state, can, request, notify }) {
       if (!current()) return;
       if (!data.connected) throw new Error(data.reason ?? '云端不可达');
       set('security-cloud-state', '云端已连接');
+      set('security-cloud-rules',ruleLabel(data.rules));
       set('security-cloud-reason', `验证于 ${data.generated_at ?? '未知时间'}`);
       set('security-identity', '双重身份验证通过');
       const own = data.node ?? Object.values(data.nodes ?? {})[0];
@@ -217,6 +232,7 @@ export function createSecurityUi({ state, can, request, notify }) {
       set('security-event-message', latest ? `发生于 ${latest.at}` : '本机仅能查询自身核验状态；完整审计在玄武面板查看。');
     } catch (error) {
       if (!current()) return;
+      set('security-cloud-rules','云端规则状态无法核验');
       set('security-cloud-state', '无法验证'); set('security-cloud-reason', error.message);
       set('security-identity', '验证失败 / 未配置'); set('security-build-probe', '未知');
       set('security-license-probe', '未知'); set('security-integrity', '未知'); set('security-host-scan', '未知'); set('security-build-host-scan', '未知');

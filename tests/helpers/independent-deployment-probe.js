@@ -43,6 +43,15 @@ assert.equal(finished.checks.find(check=>check.id==='response.containment').stat
 assert.deepEqual(finished.quarantine,{state:'empty',items:[],count:0,pending:0});
 assert.equal(finished.findings.length,0);
 assert.equal(finished.findings_total,0);
+if(process.env.IRONCURTAIN_EXPECT_RULE_SEQUENCE){
+ const sequence=Number(process.env.IRONCURTAIN_EXPECT_RULE_SEQUENCE);
+ assert.equal(finished.rules.state,'ready');assert.equal(finished.rules.sequence,sequence);
+ assert.ok(['complete','partial'].includes(finished.rule_hits.state));assert.equal(finished.rule_hits.total,1);
+ assert.equal(finished.rule_hits.items[0].path,'/srv/ironcurtain-rule-ci/sample.bin');
+ assert.equal(finished.rule_hits.items[0].rule_sequence,sequence);
+ assert.equal(finished.checks.find(check=>check.id==='malware.business').state,'finding');
+ console.log('Live signed rules and real file-byte hash hit passed.');
+}
 const cloud=await call('/api/cloud/status');
 assert.equal(cloud.status,200);assert.equal(cloud.data.connected,true);assert.equal(cloud.data.node_id,'node-ci');
 assert.equal(cloud.data.policy.remote_execution,false);

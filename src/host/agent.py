@@ -11,6 +11,8 @@ _av_spec = importlib.util.spec_from_file_location('ironcurtain_antivirus', pathl
 antivirus = importlib.util.module_from_spec(_av_spec); _av_spec.loader.exec_module(antivirus)
 _findings_spec = importlib.util.spec_from_file_location('ironcurtain_findings', pathlib.Path(__file__).with_name('findings.py'))
 findings = importlib.util.module_from_spec(_findings_spec); _findings_spec.loader.exec_module(findings)
+_rules_spec = importlib.util.spec_from_file_location('ironcurtain_rules', pathlib.Path(__file__).with_name('rules.py'))
+rules = importlib.util.module_from_spec(_rules_spec); _rules_spec.loader.exec_module(rules)
 
 def utc(): return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00','Z')
 def canonical(value): return json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()
@@ -130,7 +132,7 @@ def digest_file(file,budget=None):
     return digest.hexdigest()
 
 class Scanner:
-    def __init__(self,profile,run=None,cloudflare_collect=None,response_state=None): self.response_state=response_state; self.cloudflare_collect=cloudflare_collect; self.cloudflare_cache=None; self.profile=profile_validate(profile); self.run=run or Runner(); self.baseline=None; self.baseline_error=None; self.container_cache=None; self.observed_files={}; self.files_complete=False; self.findings=[]; self.findings_complete=True; self.malware_count=0; self.file_ranges={}; self.hash_budget={'bytes':0,'maximum':1024*1024*1024,'deadline':time.monotonic()+30}
+    def __init__(self,profile,run=None,cloudflare_collect=None,response_state=None,rule_path=None): self.rule_path=rule_path; self.rule_hits=[]; self.rule_hit_count=0; self.rule_scan_complete=True; self.rules_loaded=False; self.rule_pack=None; self.response_state=response_state; self.cloudflare_collect=cloudflare_collect; self.cloudflare_cache=None; self.profile=profile_validate(profile); self.run=run or Runner(); self.baseline=None; self.baseline_error=None; self.container_cache=None; self.observed_files={}; self.files_complete=False; self.findings=[]; self.findings_complete=True; self.malware_count=0; self.file_ranges={}; self.hash_budget={'bytes':0,'maximum':1024*1024*1024,'deadline':time.monotonic()+30}
     def load_baseline(self):
         config=self.profile.get('baseline')
         if not config: self.baseline_error='未配置独立签名基线'; return
@@ -217,7 +219,7 @@ class Scanner:
     def command(self,args,description):
         code,text=self.run(args)
         return ('ok',description,{'output_digest':hashlib.sha256(text.encode()).hexdigest()}) if code==0 else ('unavailable','依赖缺失、读取失败或超出扫描预算',{})
-    def malware(self,paths):
+    def clamav(self,paths):
         if not paths: return 'unavailable','未配置扫描目录',{}
         if any(not os.path.isdir(p) or os.path.islink(p) for p in paths): return 'unavailable','目录不存在或链接状态不安全',{}
         database=antivirus.database_status()
@@ -239,6 +241,49 @@ class Scanner:
             self.findings.extend(new)
             self.findings_complete=self.findings_complete and complete and len(new)==count
         return ('finding' if count else 'ok'),f'实际扫描 {checked} 个文件；特征命中 {count}',{'files_scanned':checked,'infected':count,'output_digest':hashlib.sha256(text.encode()).hexdigest()}
+    def hash_threats(self,paths):
+        if not self.rules_loaded:
+            self.rules_loaded=True
+            try: self.rule_pack=rules.load(self.rule_path)[0] if self.rule_path else None
+            except Exception: self.rule_pack=None
+        if not self.rule_pack: return 'disabled','签名哈希规则未启用',{}
+        if not paths:
+            self.rule_scan_complete=False
+            return 'unavailable','未配置哈希规则扫描范围',{}
+        indicators={item['sha256']:item for item in self.rule_pack['indicators']}
+        if not indicators:
+            self.rule_scan_complete=False
+            return 'unavailable','已签名规则包没有哈希特征',{}
+        budget={'bytes':0,'maximum':1024*1024*1024,'deadline':time.monotonic()+30};visited=0;missed=0;hits=0
+        def failure(error): raise error
+        try:
+            for root in paths:
+                info=os.lstat(root)
+                if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode): raise ValueError('unsafe root')
+                for directory,dirs,names in os.walk(root,followlinks=False,onerror=failure):
+                    if time.monotonic()>budget['deadline']: raise ValueError('budget')
+                    for entry in dirs[:]:
+                        if os.path.islink(os.path.join(directory,entry)): missed+=1;dirs.remove(entry)
+                    for name in names:
+                        if visited>=10000 or time.monotonic()>budget['deadline']: raise ValueError('budget')
+                        visited+=1;filename=os.path.join(directory,name)
+                        try:
+                            if len(filename)>1024 or any(ord(c)<32 or ord(c)==127 for c in filename): raise ValueError('unsafe filename')
+                            digest=digest_file(filename,budget)
+                        except (OSError,ValueError): missed+=1;continue
+                        if digest in indicators:
+                            hits+=1;item=indicators[digest]
+                            identity=hashlib.sha256(canonical({'path':filename,'sha256':digest,'rule_id':item['id']})).hexdigest()
+                            if len(self.rule_hits)<8 and identity not in {old['id'] for old in self.rule_hits}:
+                                self.rule_hits.append({'id':identity,'path':filename,'sha256':digest,'rule_id':item['id'],'label':item['label'],'observed_at':utc(),'rule_sequence':self.rule_pack['sequence']})
+        except (OSError,ValueError): missed+=1
+        self.rule_hit_count+=hits;self.rule_scan_complete=self.rule_scan_complete and missed==0 and visited>0
+        return ('finding' if hits else 'unavailable' if missed or not visited else 'ok'),f'哈希规则检查 {visited} 个文件；命中 {hits}，未完整检查 {missed}',{'files_scanned':visited,'matched':hits,'unreadable':missed,'rule_sequence':self.rule_pack['sequence']}
+    def malware(self,paths):
+        hash_state,hash_detail,hash_evidence=self.hash_threats(paths)
+        av_state,av_detail,av_evidence=self.clamav(paths)
+        state='finding' if 'finding' in [hash_state,av_state] else 'unavailable' if av_state=='unavailable' or hash_state=='unavailable' else av_state
+        return state,av_detail+'；'+hash_detail,{**av_evidence,'clamav_state':av_state,'clamav':av_evidence,'hash_rules_state':hash_state,'hash_rules':hash_evidence}
     def check(self,id):
         p=self.profile
         if id=='integrity.program': return self.integrity()
@@ -358,7 +403,8 @@ def valid_saved_check(item):
     return isinstance(item,dict) and item.get('id') in IDS and item.get('state') in ['ok','warning','finding','unavailable'] and isinstance(item.get('evidence_digest'),str) and bool(DIGEST.fullmatch(item['evidence_digest'])) and valid_timestamp(item.get('checked_at')) and item.get('category') in CATEGORIES and item.get('severity') in ['info','low','medium','high','critical','unknown'] and all(isinstance(item.get(k),str) and 0<len(item[k])<=limit for k,limit in [('name',160),('detail',1000),('scope',120)]) and item.get('previous_state') in [None,'ok','warning','finding','unavailable']
 
 class Agent:
-    def __init__(self,profile,state_dir,interval=300):
+    def __init__(self,profile,state_dir,interval=300,rule_path=None):
+        self.rule_path=rule_path; self.rule_hits={'items':[],'total':0,'state':'unavailable'}
         self.profile=profile_validate(profile); self.state_dir=pathlib.Path(state_dir); self.interval=interval; self.lock=threading.Lock(); self.last=0; self.stop=threading.Event()
         self.previous={}; self.history=[]; self.history_available=True; self.outbound=None; self.findings_bundle={'schema':'ironcurtain-findings/v1','state':'unavailable','items':[], 'total':0}
         self.result={'state':'idle','checks':[],'history':[],'history_state':'ok'}
@@ -377,6 +423,8 @@ class Agent:
         with self.lock:
             result=copy.deepcopy(self.result)
             result['antivirus']=antivirus.engine_status()
+            result['rules']=rules.summary(self.rule_path)
+            result['rule_hits']=copy.deepcopy(self.rule_hits)
             result['quarantine']=findings.quarantine_status(self.state_dir)
             bundle=self.findings_bundle
             result['findings']=[{k:item[k] for k in ['id','path','signature','sha256','observed_at','size']} for item in bundle['items'][:8]] if result['state']=='finished' else []
@@ -398,7 +446,7 @@ class Agent:
             with self.lock:
                 self.result['checks']=checks; self.result['progress']={'completed':len(checks),'total':len(IDS),'current':current}
         try:
-            scanner=Scanner(self.profile,response_state=self.state_dir); checks=scanner.run_checks(update)
+            scanner=Scanner(self.profile,response_state=self.state_dir,rule_path=self.rule_path); checks=scanner.run_checks(update)
             events=copy.deepcopy(self.history)
             if self.history_available:
                 for item in checks:
@@ -409,8 +457,10 @@ class Agent:
             if not self.history_available: report['history_state']='unavailable'
             bundle={'schema':'ironcurtain-findings/v1','checked_at':report['checked_at'],'profile_digest':hashlib.sha256(canonical(self.profile)).hexdigest(),
                     'items':scanner.findings,'total':scanner.malware_count,'state':'complete' if scanner.findings_complete and all(item['state'] in ['ok','finding'] for item in checks if item['category']=='malware') else 'partial'}
+            rule_hits={'items':scanner.rule_hits,'total':scanner.rule_hit_count,'state':'complete' if scanner.rule_pack and scanner.rule_scan_complete else 'partial' if scanner.rule_pack else 'unavailable'}
+            atomic_json(self.state_dir/'last-rule-hits.json',rule_hits)
             atomic_json(self.state_dir/'last-findings.json',bundle)
-            with self.lock: self.findings_bundle=bundle
+            with self.lock: self.findings_bundle=bundle; self.rule_hits=rule_hits
             # Do not overwrite corrupt prior evidence or silently reset its history.
             if self.history_available:
                 atomic_json(self.state_dir/'last-report.json',report)
@@ -444,7 +494,7 @@ class UnixServer(socketserver.ThreadingMixIn,getattr(socketserver,'UnixStreamSer
 def serve(profile_file,state_dir,socket_path,allowed_uid,group):
     if os.name!='posix' or not hasattr(socketserver,'UnixStreamServer'): raise SystemExit('Linux Unix socket required')
     if os.geteuid()!=0: raise SystemExit('host agent must be started by root')
-    agent=Agent(private_json(profile_file),state_dir)
+    agent=Agent(private_json(profile_file),state_dir,rule_path=pathlib.Path(profile_file).parent/'rules.json')
     class Handler(http.server.BaseHTTPRequestHandler):
         def setup(self):
             self.request.settimeout(5)
@@ -487,6 +537,6 @@ def main():
     if args.validate_profile:
         profile_validate(private_json(args.profile)); print('保护配置格式有效'); return
     if args.once:
-        report={'state':'finished','checked_at':utc(),'checks':Scanner(private_json(args.profile)).run_checks(),'history':[],'history_state':'unavailable'}; report['checked_at']=utc(); print(json.dumps(report,ensure_ascii=False))
+        report={'state':'finished','checked_at':utc(),'checks':Scanner(private_json(args.profile),rule_path=pathlib.Path(args.profile).parent/'rules.json').run_checks(),'history':[],'history_state':'unavailable'}; report['checked_at']=utc(); print(json.dumps(report,ensure_ascii=False))
     else: serve(args.profile,args.state,args.socket,args.allowed_uid,args.group)
 if __name__=='__main__': main()

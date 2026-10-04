@@ -261,6 +261,18 @@ recovery() {
   fi
   exec bash "$SOURCE/scripts/independent-backup.sh" "$ROLE" "$operation" "$path" "$confirmation"
 }
+rules_action() {
+  local operation=$1 input=''
+  lock
+  if [[ $operation == rules-sync && $ROLE == cloud ]]; then
+    ask '独立发布环境签名的规则包绝对路径：' input
+    python3 "$SOURCE/scripts/rules-client.py" cloud import "$input"
+  else
+    [[ $operation != rules-sync ]] || operation=update
+    [[ $operation != rules-status ]] || operation=status
+    python3 "$SOURCE/scripts/rules-client.py" "$ROLE" "$operation"
+  fi
+}
 dispatch() {
   case "$1" in
     status) status ;; logs) ic_compose logs --tail 100 ;;
@@ -271,6 +283,7 @@ dispatch() {
     findings|quarantine-list) response "$([[ $1 == findings ]] && echo findings || echo list)" ;;
     quarantine|restore-file) response "$([[ $1 == quarantine ]] && echo quarantine || echo restore)" ;;
     backup|verify-backup|restore-backup) recovery "$1" ;;
+    rules-sync|rules-status) rules_action "$1" ;;
     update) update ;; doctor) doctor ;; scan) scan ;; profile) profile ;;
     pair) pair ;; cloud-status) cloud_status ;; unpair) unpair ;;
     register) register ;; revoke) revoke ;; nodes) [[ $ROLE == cloud ]] || ic_fail '仅用于玄武'; jq -r '.nodes | keys[]' "$CONF/runtime/config.json" ;;
@@ -294,6 +307,7 @@ while true; do
     echo '11. 浏览器面板证书'
   fi
   echo '22. 创建加密恢复包   23. 验证恢复包   24. 同机恢复（保留当前身份）'
+  [[ $ROLE == local ]] && echo '25. 从玄武验签更新哈希规则   26. 本机规则状态' || echo '25. 导入已签名哈希规则   26. 云端规则状态'
   echo ' 0. 退出'
   ask '选择：' choice
   case "$choice" in
@@ -313,6 +327,7 @@ while true; do
     20) [[ $ROLE == local ]] || continue; action=quarantine-list ;;
     21) [[ $ROLE == local ]] || continue; action=restore-file ;;
     22) action=backup ;; 23) action=verify-backup ;; 24) action=restore-backup ;;
+    25) action=rules-sync ;; 26) action=rules-status ;;
     *) echo '请选择有效菜单项'; continue ;;
   esac
   bash "$SOURCE/scripts/ironcurtain.sh" --role "$ROLE" "$action" || echo '操作未完成；现有状态请运行诊断核对。'

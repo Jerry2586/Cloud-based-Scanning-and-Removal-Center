@@ -1,6 +1,6 @@
 FROM node:24.19.0-bookworm-slim
 WORKDIR /app
-COPY package.json ./
+COPY package.json release-public.pem ./
 COPY src ./src
 COPY scripts/control.js ./scripts/control.js
 USER 10001:10001

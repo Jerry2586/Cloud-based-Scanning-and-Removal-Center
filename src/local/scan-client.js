@@ -1,4 +1,5 @@
 import { request as unixRequest } from 'node:http';
+import { sanitizeRules, sanitizeRuleHits } from '../contracts/rule-status.js';
 
 import { HOST_SCAN_IDS, CHECK_CATEGORIES, CHECK_SEVERITIES, CHECK_STATES, safeTimestamp, completeHostScan, hostScanCoverage, hostScanProgress } from '../contracts/host-scan-contract.js';
 
@@ -107,7 +108,7 @@ export function localSecurityScan(action, env = process.env) {
           const invalidHistory = !Array.isArray(result.history) || history.length !== Math.min(8, result.history.length);
           const historyState = invalidHistory || result.history_state === 'unavailable' ? 'unavailable' : result.history.length > 8 ? 'truncated'
             : ['ok', 'unavailable', 'truncated'].includes(result.history_state) ? result.history_state : 'unavailable';
-          resolve({ state: result.state, ...sanitizeFindings(result), antivirus: sanitizeAntivirus(result.antivirus), quarantine: sanitizeQuarantine(result.quarantine), history, progress: hostScanProgress(result),
+          resolve({ state: result.state, ...sanitizeFindings(result), antivirus: sanitizeAntivirus(result.antivirus), rules: sanitizeRules(result.rules), rule_hits: sanitizeRuleHits(result.rule_hits), quarantine: sanitizeQuarantine(result.quarantine), history, progress: hostScanProgress(result),
             coverage: result.state === 'finished' ? hostScanCoverage(result) : undefined,
             history_state: historyState, checked_at: safeTimestamp(result.checked_at),
             reason: result.state === 'unavailable' ? '本机检查频率限制或代理异常' : undefined, checks });

@@ -28,6 +28,7 @@ WORK=$(mktemp -d /opt/ironcurtain-deployment-test.XXXXXXXX)
 install -d -m 750 "$WORK/source"
 tar -C "$ROOT" --exclude=.git --exclude=.codex --exclude=dist --exclude='__pycache__' -cf - . | tar -C "$WORK/source" -xf -
 SOURCE=$WORK/source
+node "$SOURCE/tests/helpers/rule-deployment-fixture.js" "$SOURCE" "$WORK"
 CLOUD_HOST=$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')
 [[ $CLOUD_HOST =~ ^[0-9.]+$ ]] || { echo 'Docker bridge gateway unavailable' >&2; exit 1; }
 bash "$SOURCE/scripts/install-independent.sh" --role cloud --host "$CLOUD_HOST" --bind "$CLOUD_HOST"
@@ -55,6 +56,14 @@ ic_role local; ic_load
 mv "$PAIR/identity" "$CONF/runtime/cloud"
 chown root:10001 "$CONF/runtime/cloud" "$CONF/runtime/cloud/"*; chmod 750 "$CONF/runtime/cloud"; chmod 640 "$CONF/runtime/cloud/"*
 node "$SOURCE/tests/helpers/independent-deployment-probe.js"
+# Exercise real cloud publication, authenticated native pull and real file-byte hits.
+python3 /opt/ironcurtain/cloud/current/scripts/rules-client.py cloud import "$WORK/signed-rules-1.json"
+/usr/local/bin/ironcurtain rules-sync
+jq '.business_roots=["/srv/ironcurtain-rule-ci"]' "$CONF/profile.json" > "$WORK/profile-rules.json"
+install -m 600 "$WORK/profile-rules.json" "$CONF/profile.json"
+systemctl restart ironcurtain-agent.service
+ic_scan_wait
+IRONCURTAIN_EXPECT_RULE_SEQUENCE=1 node "$SOURCE/tests/helpers/independent-deployment-probe.js"
 # Agent restarts must preserve the directory inode bound into the web container.
 [[ $(stat -c '%a:%u:%g' /run/ironcurtain) == 750:0:10001 ]]
 runtime_inode=$(stat -c '%d:%i' /run/ironcurtain)
@@ -86,6 +95,16 @@ for recovery_role in local cloud; do
   [[ -n $package ]]
   bash "$SOURCE/scripts/independent-backup.sh" "$ROLE" verify-backup "$package"
   printf after-backup > "$DATA/runtime/recovery-fixture"
+  # Snapshot sequence 1, then activate 2: ordinary recovery must preserve the live
+  # signed rule and independent high-water mark, including cloud distribution.
+  if [[ $ROLE == local ]]; then
+    python3 /opt/ironcurtain/cloud/current/scripts/rules-client.py cloud import "$WORK/signed-rules-2.json"
+    /usr/local/bin/ironcurtain rules-sync
+    live_rules="$CONF"
+  else
+    live_rules="$CONF/runtime"
+  fi
+  rules_before=$(sha256sum "$live_rules/rules.json" "$live_rules/rules.highwater.json")
   if [[ $ROLE == cloud ]]; then
     # Revoke AFTER snapshot. Restoring the old archive must not restore this identity.
     jq 'del(.nodes["node-ci"])' "$CONF/runtime/config.json" > "$WORK/config-revoked.json"
@@ -94,7 +113,13 @@ for recovery_role in local cloud; do
   bash "$SOURCE/scripts/independent-backup.sh" "$ROLE" restore-backup "$package" SAME-HOST-RESTORE
   [[ $(cat "$DATA/runtime/recovery-fixture") == before-recovery ]]
   [[ $(sha256sum "$CONF/runtime/"*.crt) == "$identity_before" ]]
+  [[ $(sha256sum "$live_rules/rules.json" "$live_rules/rules.highwater.json") == "$rules_before" ]]
+  python3 "$BASE/current/scripts/rules-client.py" "$ROLE" status | jq -e '.state == "ready" and .sequence == 2' >/dev/null
   ic_healthy
+  if [[ $ROLE == local ]]; then
+    ic_scan_wait
+    IRONCURTAIN_EXPECT_RULE_SEQUENCE=2 node "$SOURCE/tests/helpers/independent-deployment-probe.js"
+  fi
   if [[ $ROLE == cloud ]]; then jq -e '.nodes | has("node-ci") | not' "$CONF/runtime/config.json" >/dev/null; fi
   cp "$package" "$WORK/$ROLE-corrupt.icbackup"
   printf corrupt >> "$WORK/$ROLE-corrupt.icbackup"; chmod 600 "$WORK/$ROLE-corrupt.icbackup"

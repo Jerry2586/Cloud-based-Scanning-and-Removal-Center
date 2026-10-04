@@ -81,7 +81,16 @@ case "$ACTION" in
     else
       python3 "$ROOT/src/host/agent.py" --validate-profile --profile "$STAGE/conf/profile.json"
       # Historical scan evidence may not authorize a fresh quarantine after rollback.
-      rm -f -- "$STAGE/data/agent/last-findings.json"
+      rm -f -- "$STAGE/data/agent/last-findings.json" "$STAGE/data/agent/last-rule-hits.json"
+      # Never roll back a currently activated publisher rule or its high-water mark.
+      for name in rules.json rules.highwater.json; do
+        if [[ -e $CONF/$name || -L $CONF/$name ]]; then
+          ic_private_file "$CONF/$name"
+          cp -p -- "$CONF/$name" "$STAGE/conf/$name"
+        else
+          rm -f -- "$STAGE/conf/$name"
+        fi
+      done
     fi
     ic_tx_begin
     ic_tx_mutating

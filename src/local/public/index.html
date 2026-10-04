@@ -307,7 +307,7 @@
           <div class="sc-cloud-event"><b id="security-event-title">云端状态未知</b><p id="security-event-message">尚无已核验的云端事件</p>
           </div>
           </article>
-          <article class="sc-panel"><h4>玄武引擎更新服务</h4><p>铁幕程序、病毒特征库与防护规则分别管理版本。连接状态与更新服务分开核验。</p><div class="sc-cloud-grid"><div><span>铁幕程序更新</span><strong>发布服务待接入</strong></div><div><span>病毒特征库</span><strong>云端同步待接入</strong></div><div><span>防护规则与策略</span><strong>规则服务待接入</strong></div></div></article><div class="sc-notice">当前云端监测提供可用性与摘要核验；病毒库、策略编辑和程序分发服务待接入。玄武引擎失联时数据为未知，本机检查独立运行。</div>
+          <article class="sc-panel"><h4>玄武引擎更新服务</h4><p>铁幕程序、官方病毒库与签名哈希规则分别管理版本。Linux 菜单执行验签更新，面板展示实际状态。</p><div class="sc-cloud-grid"><div><span>铁幕程序更新</span><strong>发布服务待接入</strong></div><div><span>官方病毒库</span><strong>Linux 菜单独立更新</strong></div><div><span>玄武已发布规则</span><strong id="security-cloud-rules">等待认证连接</strong></div><div><span>本机已启用规则</span><strong id="security-local-rules">等待代理状态</strong></div></div><p id="security-rule-hits-state">等待哈希检测结果</p><ul id="security-rule-hits" class="sc-check-list"></ul></article><div class="sc-notice">哈希规则命中只告警与留证，需人工核查；通用程序和官方病毒库的云端分发仍待接入。玄武失联时，本机在规则有效期内继续检测。</div>
           </section>
           </div>
           </div>
