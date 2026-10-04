@@ -31,7 +31,7 @@ work=$(mktemp -d /tmp/ironcurtain-online.XXXXXXXX)
 trap 'rm -rf -- "$work"' 0
 trap 'exit 130' 2
 trap 'exit 143' 15
-url=https://api.github.com/repos/Jerry2586/Cloud-based-Scanning-and-Removal-Center/contents/install.sh?ref=ebceaf3a7a7aabd749f185f43c9b0c02deeadc62
+url=https://api.github.com/repos/Jerry2586/Cloud-based-Scanning-and-Removal-Center/contents/install.sh?ref=9843edbfdf87f2c4003f595b8a99f1711a401c84
 token_file=/etc/ironcurtain/github-release.token
 fetch() { curl -q --proto '=https' --tlsv1.2 -fsS --connect-timeout 15 --max-time 120 -H 'Accept: application/vnd.github.raw+json' "$@" "$url" -o "$work/install.sh" -w '%{http_code}' > "$work/http-status"; }
 if [ -e "$token_file" ] || [ -L "$token_file" ]; then
@@ -56,5 +56,5 @@ elif ! fetch; then
   printf '\n私有仓库需要只读 GitHub Token。下一行 password 提示输入 Token，不是服务器或 GitHub 登录密码。\n安装器稍后再次询问同一个 Token，用于保存后续更新凭据。\n' >&2
   fetch --user Jerry2586 || fail 'Git 下载失败，请核对 Token 权限与网络。'
 fi
-printf '%s  %s\n' 5852387ff3f35d7499be3e7e52fdaec4f90f703d80a32949965de150fc4cabc4 "$work/install.sh" | sha256sum -c - || fail '引导器校验失败，停止执行。'
+printf '%s  %s\n' 02f1136f4ba50e864a6f16c3d1321c1fcb1c4e9ff5d9d14a408c2e5782afa341 "$work/install.sh" | sha256sum -c - || fail '引导器校验失败，停止执行。'
 sh "$work/install.sh" --role "$role" --token-file "$token_file"
