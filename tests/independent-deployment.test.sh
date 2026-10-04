@@ -16,6 +16,11 @@ docker buildx version >/dev/null
 for container in ironcurtain-local ironcurtain-cloud; do
   ! docker inspect "$container" >/dev/null 2>&1 || { echo 'Test container already exists.' >&2; exit 1; }
 done
+# GitHub hosted runners keep /opt group-writable for tool caches. This test's
+# explicit disposable-runner gate allows preparing the production trust boundary.
+[[ -d /opt && ! -L /opt && $(realpath /opt) == /opt ]] || { echo 'Unsafe runner /opt path.' >&2; exit 1; }
+chown root:root /opt
+chmod 755 /opt
 WORK=$(mktemp -d /opt/ironcurtain-deployment-test.XXXXXXXX)
 # Keep installed files on this ephemeral runner for diagnostics. Runner teardown removes them.
 install -d -m 750 "$WORK/source"

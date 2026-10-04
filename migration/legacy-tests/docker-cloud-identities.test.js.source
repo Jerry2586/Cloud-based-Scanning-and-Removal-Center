@@ -34,4 +34,3 @@ test('split build cloud linkage requires build and reader identities but never a
   assert.equal(existsSync(join(security, 'license.crt')), false);
   assert.equal(existsSync(join(security, 'license.key')), false);
 });
-

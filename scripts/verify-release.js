@@ -1,3 +1,4 @@
+import { validateReleaseContract } from '../src/release-contract.js';
 import { isDeepStrictEqual } from 'node:util';
 import { execFileSync } from 'node:child_process';
 import { createHash, verify } from 'node:crypto';
@@ -41,19 +42,7 @@ const packagedPackage = readArchiveJson('package.json');
 if (!isDeepStrictEqual(manifest.environment, packagedContract)) {
   throw Error('Release manifest contract does not match packaged release-contract.json');
 }
-const requiredContract = {
-  schema: 1,
-  product: manifest.product,
-  artifact_prefix: prefix,
-  node_version: '24.19.0',
-  node_major: 24,
-  architectures: ['amd64', 'arm64'],
-  service: 'appgog-security.service',
-  install_root: '/opt/appgog-security',
-  config_root: '/etc/appgog-security',
-  data_root: '/var/lib/appgog-security',
-};
-if (!isDeepStrictEqual(packagedContract, requiredContract)) throw Error('Release contract is invalid');
+validateReleaseContract(packagedContract, manifest.version);
 if (packagedPackage.name !== manifest.product || packagedPackage.version !== manifest.version) {
   throw Error('Packaged application identity does not match release manifest');
 }

@@ -5,9 +5,9 @@ umask 077
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 [[ $EUID == 0 && $(uname -s) == Linux ]] || { echo 'Requires Linux root; service operations are simulated.' >&2; exit 1; }
 for tool in jq tar realpath; do command -v "$tool" >/dev/null; done
-WORK=$(mktemp -d /opt/ironcurtain-transaction-test.XXXXXXXX)
+WORK=$(mktemp -d /root/ironcurtain-transaction-test.XXXXXXXX)
 cleanup() {
-  [[ $WORK == /opt/ironcurtain-transaction-test.* && $(dirname "$WORK") == /opt && -d $WORK && ! -L $WORK ]] || return 1
+  [[ $WORK == /root/ironcurtain-transaction-test.* && $(dirname "$WORK") == /root && -d $WORK && ! -L $WORK ]] || return 1
   rm -rf -- "$WORK"
 }
 trap cleanup EXIT
