@@ -16,3 +16,9 @@ jobs:
         run: |
           sudo systemctl status ironcurtain-antivirus-update.service --no-pager || true
           sudo journalctl -u ironcurtain-antivirus-update.service --no-pager -n 80 || true
+          sudo journalctl -k --no-pager -n 150 | grep -E 'apparmor|DENIED|freshclam|avc:' || true
+          sudo stat -c '%a %u %g %F %n' /etc/ironcurtain-antivirus /etc/ironcurtain-antivirus/freshclam.conf /var/lib/ironcurtain-antivirus /var/lib/ironcurtain-antivirus/database || true
+          sudo runuser -u ironcurtain-av -- cat /etc/ironcurtain-antivirus/freshclam.conf || true
+          sudo runuser -u ironcurtain-av -- clamconf --config-dir=/etc/ironcurtain-antivirus --non-default || true
+          sudo aa-status || true
+          sudo cat /etc/apparmor.d/usr.bin.freshclam || true
