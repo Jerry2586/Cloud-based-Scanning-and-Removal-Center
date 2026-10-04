@@ -6,11 +6,14 @@ permissions:
 jobs:
   official-database:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-      - name: Download official signed databases and scan clean/EICAR samples
-        run: sudo env GITHUB_ACTIONS=true IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER=1 bash tests/antivirus-official-db.test.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Download, cloud-stream, activate official signed databases and scan clean/EICAR samples
+        run: sudo env "PATH=$PATH" GITHUB_ACTIONS=true IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER=1 bash tests/antivirus-official-db.test.sh
       - name: Diagnose public database or engine failures
         if: failure()
         run: |

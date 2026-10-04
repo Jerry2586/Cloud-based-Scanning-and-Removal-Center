@@ -7,3 +7,7 @@ test('antivirus metadata never upgrades missing or malformed state to ready', ()
   for(const bad of [null, {...configured, installed:false}, {...configured, database_at:'bad'}, {...configured, signatures:-1}, {...configured, state:'ready'}, {...configured, updater:'green'}]) assert.equal(sanitizeAntivirus(bad).state,'unavailable');
   assert.equal('path' in sanitizeAntivirus({...configured,path:'/secret', token:'secret'}),false);
 });
+
+test('valid cloud database remains configured with official updater disabled',()=>{
+ const value={...configured,updater:'disabled',source:'xuanwu-signed'};assert.deepEqual(sanitizeAntivirus(value),value);assert.equal(sanitizeAntivirus({...value,source:'execute-command'}).state,'unavailable');
+});

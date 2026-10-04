@@ -24,11 +24,13 @@ export function sanitizeAntivirus(value) {
   const unavailable = { engine: 'ClamAV', installed: false, state: 'unavailable', updater: 'unknown', detail: '病毒引擎状态不可用' };
   if (!value || value.engine !== 'ClamAV' || typeof value.installed !== 'boolean' ||
       !['unavailable','configured','stale'].includes(value.state) || !['scheduled','disabled','failed','unknown'].includes(value.updater) ||
-      typeof value.detail !== 'string' || value.detail.length > 180) return unavailable;
+      typeof value.detail !== 'string' || value.detail.length > 180 ||
+      value.source !== undefined && !['official-direct','xuanwu-signed','unknown'].includes(value.source)) return unavailable;
   if (value.state !== 'unavailable' && (!value.installed || !safeTimestamp(value.database_at) ||
       !Number.isSafeInteger(value.database_version) || value.database_version <= 0 ||
       !Number.isSafeInteger(value.signatures) || value.signatures <= 0)) return unavailable;
   return {engine:'ClamAV', installed:value.installed, state:value.state, updater:value.updater, detail:value.detail,
+    ...(value.source !== undefined ? {source:value.source} : {}),
     ...(value.state !== 'unavailable' ? {database_at:value.database_at, database_version:value.database_version, signatures:value.signatures} : {})};
 }
 

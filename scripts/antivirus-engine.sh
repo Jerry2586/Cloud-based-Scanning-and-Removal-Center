@@ -19,6 +19,20 @@ ic_trusted_dir "$CONF"
 ic_trusted_dir "$DATA"
 # These dedicated directories contain no keys and must be traversable by the updater user.
 chmod 755 "$CONF" "$DATA"
+if [[ -e $DATA/activation.json || -L $DATA/activation.json ]]; then
+  systemctl disable --now ironcurtain-antivirus-update.timer
+  ic_fail '病毒库切换事务待恢复，请运行 ironcurtain virus-db-update；保持官方更新器停用'
+fi
+if [[ -e $DATA/source.json || -L $DATA/source.json ]]; then
+  python3 - "$SOURCE" <<'PY'
+import importlib.util,pathlib,sys
+spec=importlib.util.spec_from_file_location('db_cache',pathlib.Path(sys.argv[1])/'scripts/virus-db-cache.py');cache=importlib.util.module_from_spec(spec);spec.loader.exec_module(cache)
+v=cache.bytes_json(pathlib.Path('/var/lib/ironcurtain-antivirus/source.json'))
+assert isinstance(v,dict) and set(v)=={'schema','source','snapshot'} and v['schema']=='ironcurtain-virus-db-source/v1' and v['source']=='xuanwu-signed' and cache.re.fullmatch('[a-f0-9]{64}',v['snapshot']), 'DB_SOURCE'
+PY
+  if [[ $ACTION == policy ]]; then systemctl disable --now ironcurtain-antivirus-update.timer; exit; fi
+  ic_fail '当前使用玄武签名病毒库，请使用 ironcurtain virus-db-update；禁止混用更新源'
+fi
 if [[ $ACTION == install ]]; then
   . /etc/os-release
   case "$ID" in

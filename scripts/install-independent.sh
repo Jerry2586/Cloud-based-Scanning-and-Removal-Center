@@ -163,6 +163,9 @@ if [[ $ROLE == cloud ]]; then
   chown root:10001 "$DATA/releases"
   chmod 750 "$DATA/releases"
 fi
+ic_trusted_dir "$DATA/virus-db"
+chown root:10001 "$DATA/virus-db"
+chmod 750 "$DATA/virus-db"
 if [[ $ROLE == local ]]; then
   if [[ ! -f $CONF/runtime/panel-auth.json ]]; then
     [[ -f $CONF/credentials/panel-auth.json ]] || ic_helper "$CONF/credentials" init-local

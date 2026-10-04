@@ -1,4 +1,4 @@
-import importlib.util, pathlib, tempfile, unittest, time, os
+import importlib.util, pathlib, tempfile, unittest, time, os, json
 from unittest.mock import patch
 spec=importlib.util.spec_from_file_location('av',pathlib.Path(__file__).parents[1]/'src/host/antivirus.py')
 av=importlib.util.module_from_spec(spec);spec.loader.exec_module(av)
@@ -30,5 +30,41 @@ class DatabaseTests(unittest.TestCase):
     def test_uninstalled_never_claims_configured(self):
         with patch.object(av.shutil,'which',return_value=None),patch.object(av,'updater_status',return_value='unknown'),patch.object(av,'database_status',return_value={'state':'configured'}):
             self.assertEqual(av.engine_status()['state'],'unavailable')
+
+
+@unittest.skipUnless(os.name=='posix' and os.getuid()==0,'Linux root source metadata checks')
+class SourceTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory(prefix='ic-source-');self.addCleanup(self.temp.cleanup)
+        self.root=pathlib.Path(self.temp.name);self.root.chmod(0o700)
+        self.database=self.root/'database';self.database.mkdir(mode=0o755)
+        self.marker=self.root/'source.json'
+    def marker_write(self):
+        self.marker.write_text(json.dumps({'schema':'ironcurtain-virus-db-source/v1','source':'xuanwu-signed','snapshot':'a'*64}));self.marker.chmod(0o600)
+    def test_direct_signed_and_unfinished_transaction(self):
+        self.assertEqual(av.database_source(self.database),'official-direct')
+        self.marker_write();self.assertEqual(av.database_source(self.database),'xuanwu-signed')
+        journal=self.root/'activation.json';journal.symlink_to(self.root/'absent')
+        self.assertEqual(av.database_source(self.database),'unknown')
+        with patch.object(av.shutil,'which',return_value='/usr/bin/clamscan'),patch.object(av,'database_status',return_value={'state':'configured'}),patch.object(av,'updater_status',return_value='disabled'):
+            self.assertEqual(av.engine_status(self.database)['state'],'unavailable')
+    def test_untrusted_parent_rejected_even_without_marker(self):
+        self.root.chmod(0o777);self.assertEqual(av.database_source(self.database),'unknown')
+        self.root.chmod(0o700)
+        alias=self.root/'alias';alias.symlink_to(self.root,target_is_directory=True)
+        self.assertEqual(av.database_source(alias/'database'),'unknown')
+        os.chown(self.root,65534,-1);self.assertEqual(av.database_source(self.database),'unknown');os.chown(self.root,0,-1)
+    def test_marker_permissions_links_owner_and_size(self):
+        self.marker_write();self.marker.chmod(0o666);self.assertEqual(av.database_source(self.database),'unknown')
+        self.marker.chmod(0o600);os.chown(self.marker,65534,-1);self.assertEqual(av.database_source(self.database),'unknown');os.chown(self.marker,0,-1)
+        hard=self.root/'hard';os.link(self.marker,hard);self.assertEqual(av.database_source(self.database),'unknown');hard.unlink()
+        self.marker.unlink();self.marker.symlink_to(self.root/'absent');self.assertEqual(av.database_source(self.database),'unknown')
+        self.marker.unlink();self.marker.write_bytes(b'x'*4097);self.marker.chmod(0o600);self.assertEqual(av.database_source(self.database),'unknown')
+    def test_invalid_content_and_cloud_updater_disabled_are_distinct(self):
+        self.marker_write()
+        with patch.object(av.shutil,'which',return_value='/usr/bin/clamscan'),patch.object(av,'database_status',return_value={'state':'configured'}),patch.object(av,'updater_status',return_value='disabled'):
+            status=av.engine_status(self.database);self.assertEqual(status['state'],'configured');self.assertEqual(status['source'],'xuanwu-signed');self.assertEqual(status['updater'],'disabled')
+        self.marker.write_text('{broken');self.assertEqual(av.database_source(self.database),'unknown')
+        self.marker.write_text(json.dumps({'schema':'ironcurtain-virus-db-source/v1','source':'xuanwu-signed','snapshot':'bad'}));self.assertEqual(av.database_source(self.database),'unknown')
 
 if __name__=='__main__': unittest.main()

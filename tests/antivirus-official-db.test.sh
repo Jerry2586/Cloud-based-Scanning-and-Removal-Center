@@ -12,9 +12,10 @@ for target in /etc/ironcurtain-antivirus /var/lib/ironcurtain-antivirus /etc/sys
 done
 WORK=$(mktemp -d)
 cleanup() {
+  systemctl stop ironcurtain-antivirus-update.service >/dev/null 2>&1 || true
   systemctl disable --now ironcurtain-antivirus-update.timer >/dev/null 2>&1 || true
-  rm -f -- "$WORK/clean.txt" "$WORK/eicar.txt" "$WORK/scan-clean.log" "$WORK/scan-eicar.log" "$WORK/database-info.log"
-  rmdir -- "$WORK"
+  [[ $WORK == /tmp/tmp.* && -d $WORK && ! -L $WORK ]] || return 1
+  rm -rf -- "$WORK"
 }
 trap cleanup EXIT
 # Calls the real installer and real systemd updater. HTTP/CDN failures fail this gate.
@@ -50,3 +51,25 @@ clamscan --database="$DATABASE" --no-summary "$WORK/eicar.txt" > "$WORK/scan-eic
 grep -q 'FOUND' "$WORK/scan-eicar.log"
 grep -qi 'Eicar' "$WORK/scan-eicar.log"
 echo 'Official signed databases load; clean sample passes and EICAR test sample is detected.'
+
+# Independently sign only genuine freshly downloaded CVD files. CLD is not
+# silently converted: unsupported input fails this cloud acceptance explicitly.
+systemctl disable --now ironcurtain-antivirus-update.timer
+systemctl stop ironcurtain-antivirus-update.service
+install -d -m 700 "$WORK/publisher-input" "$WORK/signed" "$WORK/cloud-cache"
+for family in main daily bytecode; do
+  [[ -f $DATABASE/$family.cvd && ! -L $DATABASE/$family.cvd ]] || { echo 'Official retrieval produced CLD; CVD cloud delivery was not accepted' >&2; exit 1; }
+  install -m 600 "$DATABASE/$family.cvd" "$WORK/publisher-input/$family.cvd"
+done
+openssl genpkey -algorithm ED25519 -out "$WORK/publisher-private.pem"
+openssl pkey -in "$WORK/publisher-private.pem" -pubout -out "$WORK/publisher-public.pem"
+chmod 600 "$WORK/publisher-private.pem" "$WORK/publisher-public.pem"
+python3 "$ROOT/scripts/sign-virus-db.py" --input "$WORK/publisher-input" --output "$WORK/signed" --signing-key "$WORK/publisher-private.pem"
+python3 - "$ROOT" "$WORK" <<'PY'
+import importlib.util,pathlib,sys
+root,work=map(pathlib.Path,sys.argv[1:]);s=importlib.util.spec_from_file_location('cache',root/'scripts/virus-db-cache.py');m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
+a=m.import_database(work/'signed',work/'cloud-cache',work/'publisher-public.pem');b=m.import_database(work/'signed',work/'cloud-cache',work/'publisher-public.pem');assert a['snapshot']==b['snapshot'];print('Genuine CVD cache import/reuse and vendor verification: accepted')
+PY
+rm -f -- "$WORK/publisher-private.pem"
+IRONCURTAIN_OFFICIAL_DB_WORK="$WORK" node --test "$ROOT/tests/virus-db-official.accept.js"
+python3 "$ROOT/src/host/antivirus.py" | python3 -c 'import json,sys;v=json.load(sys.stdin);assert v["installed"] and v["state"]=="configured" and v["updater"]=="disabled" and v["source"]=="xuanwu-signed",json.dumps(v);print("Cloud-activated official database metadata: configured, updater disabled")'

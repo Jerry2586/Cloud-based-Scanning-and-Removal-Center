@@ -12,10 +12,17 @@ source "$SOURCE/scripts/lib/management-transaction.sh"
 ic_role "$ROLE"
 ic_load
 [[ ! -e $BASE/transaction.json ]] || ic_fail '存在未完成的安装事务，请先重复运行安装命令恢复'
-STAGE='' RELEASE_STAGE='' IC_ADMIN_TX='' MANAGEMENT_LOCKED=false
+STAGE='' RELEASE_STAGE='' IC_ADMIN_TX='' MANAGEMENT_LOCKED=false AV_TIMER_RESTORE=false
 cleanup() {
   local result=$?
   trap - EXIT INT TERM
+  if $AV_TIMER_RESTORE; then
+    if [[ ! -e /var/lib/ironcurtain-antivirus/source.json && ! -L /var/lib/ironcurtain-antivirus/source.json && ! -e /var/lib/ironcurtain-antivirus/activation.json && ! -L /var/lib/ironcurtain-antivirus/activation.json ]]; then
+      systemctl start ironcurtain-antivirus-update.timer || result=1
+    else
+      systemctl disable --now ironcurtain-antivirus-update.timer || result=1
+    fi
+  fi
   if $MANAGEMENT_LOCKED && [[ -e $BASE/admin-transaction.json || -L $BASE/admin-transaction.json ]]; then
     ic_admin_recover || { echo '管理操作恢复尚未完成，请重复运行菜单继续恢复。' >&2; result=1; }
   fi
@@ -316,6 +323,46 @@ release_action() {
     bash "$RELEASE_STAGE/$run_name" --role local --host "$HOST" --bind "$BIND"
   fi
 }
+virus_database_action() {
+  lock
+  local input='' result=''
+  if [[ $ROLE == cloud ]]; then
+    [[ $1 != virus-db-update ]] || ic_fail '玄武导入签名库；铁幕负责下载启用'
+    if [[ $1 == virus-db-import ]]; then
+      ask '独立发布环境签名的五个病毒库附件所在绝对目录：' input
+      [[ $input == /* ]] || ic_fail '请输入绝对目录'
+      if ! command -v sigtool >/dev/null; then
+        if command -v apt-get >/dev/null; then apt-get update; DEBIAN_FRONTEND=noninteractive apt-get install -y clamav;
+        elif command -v dnf >/dev/null; then dnf install -y clamav;
+        else ic_fail '系统软件源暂不支持提供官方验证器 sigtool'; fi
+      fi
+      python3 "$SOURCE/scripts/virus-db-cache.py" import "$input" "$DATA/virus-db"
+      audit virus-db-import
+    else python3 "$SOURCE/scripts/virus-db-cache.py" status "$DATA/virus-db"; fi
+    return
+  fi
+  [[ $1 == virus-db-update ]] || ic_fail '铁幕从玄武更新请选择 virus-db-update'
+  [[ -d $CONF/runtime/cloud ]] || ic_fail '请先加密配对玄武'
+  command -v sigtool >/dev/null && command -v clamscan >/dev/null || ic_fail '请先安装本地病毒引擎'
+  [[ -d /var/lib/ironcurtain-antivirus/database && -f /etc/systemd/system/ironcurtain-antivirus-update.timer ]] || ic_fail '请先安装本地官方病毒库'
+  exec 8>/run/lock/ironcurtain-antivirus.lock
+  flock -n 8 || ic_fail '病毒引擎安装或更新正在运行'
+  release_stage
+  docker run --rm --network bridge --user 0:0 --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 32 --memory 192m \
+    --mount "type=bind,source=$CONF/runtime/cloud,target=/identity,readonly" \
+    --mount "type=bind,source=$RELEASE_STAGE,target=/output" "$IMAGE" node scripts/virus-db-pull.js
+  if systemctl is-active --quiet ironcurtain-antivirus-update.timer; then AV_TIMER_RESTORE=true; fi
+  systemctl stop ironcurtain-antivirus-update.timer ironcurtain-antivirus-update.service
+  if result=$(python3 "$SOURCE/scripts/virus-db-activate.py" "$RELEASE_STAGE"); then
+    systemctl disable ironcurtain-antivirus-update.timer
+    audit virus-db-activated
+    printf '%s\n' "$result"
+    echo '玄武签名病毒库已启用；以后使用菜单 29 更新。官方直连计时器已停用，避免两种更新源同时写库。'
+  else
+    # EXIT cleanup resumes the official updater only when no cloud commit exists.
+    ic_fail '启用失败，保留原病毒库；请检查签名、版本与引擎加载记录'
+  fi
+}
 dispatch() {
   case "$1" in
     status) status ;; logs) ic_compose logs --tail 100 ;;
@@ -328,6 +375,7 @@ dispatch() {
     backup|verify-backup|restore-backup) recovery "$1" ;;
     rules-sync|rules-status) rules_action "$1" ;;
     release-import|release-status|release-update) release_action "$1" ;;
+    virus-db-import|virus-db-status|virus-db-update) virus_database_action "$1" ;;
     update) update ;; doctor) doctor ;; scan) scan ;; profile) profile ;;
     pair) pair ;; cloud-status) cloud_status ;; unpair) unpair ;;
     register) register ;; revoke) revoke ;; nodes) [[ $ROLE == cloud ]] || ic_fail '仅用于玄武'; jq -r '.nodes | keys[]' "$CONF/runtime/config.json" ;;
@@ -345,9 +393,11 @@ while true; do
     echo ' 8. 一键扫描   9. 配置保护范围   10. 导入玄武身份包'
     echo '11. 检查加密连接   12. 解绑玄武   13. 查看面板凭据   14. 重置面板密码'
     echo '15. 安装病毒引擎   16. 更新官方病毒库   17. 病毒引擎状态'
+    echo '29. 从玄武下载并启用签名病毒库'
     echo '18. 命中文件证据   19. 隔离命中文件   20. 隔离记录   21. 恢复隔离文件'
   else
     echo ' 8. 登记节点与加密导出   9. 撤销节点   10. 查看节点'
+    echo '29. 导入签名官方病毒库   30. 云端病毒库状态'
     echo '11. 浏览器面板证书'
   fi
   echo '22. 创建加密恢复包   23. 验证恢复包   24. 同机恢复（保留当前身份）'
@@ -375,6 +425,8 @@ while true; do
     25) action=rules-sync ;; 26) action=rules-status ;;
     27) [[ $ROLE == local ]] && action=release-update || action=release-import ;;
     28) [[ $ROLE == cloud ]] || continue; action=release-status ;;
+    29) if [[ $ROLE == cloud ]]; then action=virus-db-import; else action=virus-db-update; fi ;;
+    30) [[ $ROLE == cloud ]] || continue; action=virus-db-status ;;
     *) echo '请选择有效菜单项'; continue ;;
   esac
   bash "$SOURCE/scripts/ironcurtain.sh" --role "$ROLE" "$action" || echo '操作未完成；现有状态请运行诊断核对。'

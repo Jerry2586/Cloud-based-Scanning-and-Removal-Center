@@ -34,6 +34,10 @@ jobs:
         run: node --test
       - name: Test root-owned signed program delivery and snapshot boundaries
         run: sudo env "PATH=$PATH" node --test tests/release-delivery.test.js
+      - name: Verify root virus database transport and activation boundaries
+        run: |
+          sudo env "PATH=$PATH" node --test tests/virus-db.test.js
+          sudo env "PATH=$PATH" python3 tests/virus-db-cache.test.py
       - name: Test signed install, update, rollback, backup and restore
         run: sudo env "PATH=$PATH" bash tests/release-install.test.sh
       - name: Test independent root transaction recovery (simulated services)

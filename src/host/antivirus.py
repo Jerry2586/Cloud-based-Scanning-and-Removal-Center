@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Bounded metadata inspection; only a real ClamAV scan can confirm database loading."""
-import datetime, json, os, pathlib, shutil, stat, subprocess, time
+import datetime, json, os, pathlib, re, shutil, stat, subprocess, time
 DATABASE_DIR = '/var/lib/ironcurtain-antivirus/database'
 
 def _header(directory, name):
@@ -54,11 +54,47 @@ def updater_status():
         return 'disabled'
     except (OSError, ValueError, subprocess.SubprocessError): return 'unknown'
 
+def database_source(directory=None):
+    data=pathlib.PurePosixPath(directory or DATABASE_DIR).parent
+    parent_fd=None
+    try:
+        if not data.is_absolute() or '..' in data.parts:raise ValueError('unsafe source directory')
+        parent_fd=os.open('/',os.O_RDONLY|os.O_DIRECTORY)
+        walked=pathlib.PurePosixPath('/')
+        for component in data.parts[1:]:
+            nxt=os.open(component,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=parent_fd)
+            os.close(parent_fd);parent_fd=nxt
+            info=os.fstat(parent_fd)
+            walked=walked/component
+            sticky_tmp=str(walked)=='/tmp' and walked!=data and info.st_mode & stat.S_ISVTX
+            if info.st_uid!=0 or info.st_mode & 0o022 and not sticky_tmp:raise ValueError('untrusted source parent')
+        # Resolve both markers under the verified directory descriptor. A broken
+        # symlink or unfinished journal is still a present, untrusted marker.
+        try:os.stat('activation.json',dir_fd=parent_fd,follow_symlinks=False)
+        except FileNotFoundError:pass
+        else:return 'unknown'
+        try:fd=os.open('source.json',os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=parent_fd)
+        except FileNotFoundError:
+            try:os.stat('source.json',dir_fd=parent_fd,follow_symlinks=False)
+            except FileNotFoundError:return 'official-direct'
+            return 'unknown'
+        with os.fdopen(fd,'rb') as handle:
+            info=os.fstat(handle.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid!=0 or info.st_nlink!=1 or info.st_mode & 0o022 or not 0<info.st_size<=4096:raise ValueError('invalid source marker')
+            value=json.loads(handle.read(4097))
+        if not isinstance(value,dict) or set(value)!={'schema','source','snapshot'} or value['schema']!='ironcurtain-virus-db-source/v1' or value['source']!='xuanwu-signed' or not isinstance(value['snapshot'],str) or not re.fullmatch('[a-f0-9]{64}',value['snapshot']):raise ValueError('invalid source marker')
+        return 'xuanwu-signed'
+    except (OSError,ValueError,TypeError):return 'unknown'
+    finally:
+        if parent_fd is not None:os.close(parent_fd)
+
 def engine_status(directory=None):
     installed = shutil.which('clamscan') is not None
     result = database_status(directory)
     if not installed: result = {'state':'unavailable', 'detail':'ClamAV 未安装，请在 Linux 菜单安装病毒引擎'}
-    return {'engine':'ClamAV', 'installed': installed, 'updater':updater_status(), **result}
+    source=database_source(directory)
+    if source=='unknown':result={'state':'unavailable','detail':'病毒库更新源异常或切换事务待恢复，请检查 Linux 菜单'}
+    return {'engine':'ClamAV', 'installed': installed, 'updater':updater_status(), 'source':source, **result}
 
 if __name__ == '__main__':
     print(json.dumps(engine_status(), ensure_ascii=False))

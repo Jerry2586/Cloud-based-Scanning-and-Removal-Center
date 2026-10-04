@@ -41,10 +41,10 @@ test('missing rule source and malformed metadata never show ready or zero threat
  assert.equal(sanitizeRuleHits({state:'complete',items:[],total:9}).total,9);
  assert.equal(sanitizeRuleHits({state:'complete',items:[],total:20001}).state,'unavailable');
 });
-test('cloud rule dashboard shows actual signature metadata and keeps unfinished delivery explicit',()=>{
+test('cloud rule dashboard shows signature metadata and honest missing database state',()=>{
  const rules=ruleSummary(verifyRuleEnvelope(envelope(payload()),key,now));
  const html=renderDashboard({status:{nodes:{},rules},identities:{nodes:[],readers:[]},policy:{version:1}});
- assert.match(html,/签名已核验/);assert.match(html,new RegExp(rules.payload_sha256));assert.match(html,/云端病毒库分发尚待验收/);
+ assert.match(html,/签名已核验/);assert.match(html,new RegExp(rules.payload_sha256));assert.match(html,/官方病毒库/);assert.match(html,/尚未导入签名病毒库/);assert.match(html,/铁幕菜单 29/);
  const escaped=renderDashboard({status:{nodes:{},rules:{...rules,version:'<script>bad</script>'}},identities:{nodes:[],readers:[]},policy:{version:1}});
  assert.doesNotMatch(escaped,/<script>bad/);assert.match(escaped,/&lt;script&gt;bad/);
 });

@@ -5,6 +5,8 @@ import { ruleSource, ruleSummary } from './rules.js';
 import { createServer } from 'node:https';
 import { renderDashboard } from './dashboard.js';
 import { releaseSource } from './release-store.js';
+import { virusDatabaseSource } from './virus-db-store.js';
+import { pipeline } from 'node:stream/promises';
 
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 const equal = (left, right) => {
@@ -142,7 +144,7 @@ export function validateConfiguration(config) {
   return config;
 }
 
-export function createMonitor({ nodes, readers, policy, stateFile, now = () => Date.now(), probe = defaultProbe, rules = () => ({error:'RULE_MISSING'}), releases }) {
+export function createMonitor({ nodes, readers, policy, stateFile, now = () => Date.now(), probe = defaultProbe, rules = () => ({error:'RULE_MISSING'}), releases, virusDatabases }) {
   const state = { probes: {}, reports: {}, reportFreshness: {}, reportIds: {}, hostReports: {}, hostReportState: {}, events: [] };
   if (stateFile) {
     try { Object.assign(state, normalizePersistedState(JSON.parse(readFileSync(stateFile, 'utf8')))); } catch (error) {
@@ -257,6 +259,7 @@ export function createMonitor({ nodes, readers, policy, stateFile, now = () => D
     events: state.events.slice(0, 40),
     rules: rulesStatus(),
     releases: releases?.summary() ?? {state:'missing',delivery:'pull-only',activation:'local-admin'},
+    virus_databases: virusDatabases?.summary() ?? {state:'missing',delivery:'pull-only',activation:'local-admin'},
   }; };
   const rulesStatus = () => {const value=rules();return value.error ? {state:value.error==='RULE_MISSING'?'missing':'unavailable',delivery:'pull-only'} : ruleSummary(value);};
   const audit = () => {
@@ -310,7 +313,7 @@ export function createMonitor({ nodes, readers, policy, stateFile, now = () => D
     persist();
     return status();
   }
-  let releaseTransfers=0;
+  let releaseTransfers=0, virusTransfers=0;
   async function handler(req, res) {
     const path = new URL(req.url, 'https://localhost').pathname;
     if (req.method === 'GET' && path === '/health') return reply(res, 200, { ok: true });
@@ -324,6 +327,26 @@ export function createMonitor({ nodes, readers, policy, stateFile, now = () => D
       if (!readers.some(reader=>identity(req,reader)) && !Object.values(nodes).some(node=>identity(req,node))) return reply(res,403,{error:'AUTH_REQUIRED'});
       const value=rules();
       return value.error ? reply(res,503,{error:'RULE_UNAVAILABLE'}) : reply(res,200,value.envelope);
+    }
+    if (path.startsWith('/v1/virus-db/')) {
+      if (!readers.some(reader=>identity(req,reader)) && !Object.values(nodes).some(node=>identity(req,node))) return reply(res,403,{error:'AUTH_REQUIRED'});
+      if(req.method!=='GET'||new URL(req.url,'https://localhost').search)return reply(res,404,{error:'NOT_FOUND'});
+      if(!virusDatabases)return reply(res,503,{error:'DB_UNAVAILABLE'});
+      if(path==='/v1/virus-db/latest') {
+        try{return reply(res,200,virusDatabases.latest());}catch{return reply(res,503,{error:'DB_UNAVAILABLE'});}
+      }
+      const match=/^\/v1\/virus-db\/([a-f0-9]{64})\/(main|daily|bytecode)\.cvd$/.exec(path);
+      if(!match)return reply(res,404,{error:'NOT_FOUND'});
+      if(virusTransfers>=2)return reply(res,503,{error:'DB_BUSY'});
+      virusTransfers++;let finished=false,stream;
+      const finish=()=>{if(!finished){finished=true;virusTransfers--;}};
+      res.once('close',()=>{stream?.destroy();finish();});res.once('finish',finish);
+      try {
+        const asset=virusDatabases.asset(match[1],match[2]+'.cvd');stream=asset.stream;
+        res.setTimeout(120000,()=>res.destroy());
+        res.writeHead(200,{'content-type':'application/octet-stream','content-length':asset.size,...securityHeaders});
+        await pipeline(stream,res);return;
+      }catch(error){finish();if(res.headersSent){res.destroy();return;}return reply(res,error.message==='DB_NOT_FOUND'?404:503,{error:'DB_UNAVAILABLE'});}
     }
     if (path.startsWith('/v1/releases/')) {
       if (!readers.some(reader=>identity(req,reader)) && !Object.values(nodes).some(node=>identity(req,node))) return reply(res,403,{error:'AUTH_REQUIRED'});
@@ -347,7 +370,7 @@ export function createMonitor({ nodes, readers, policy, stateFile, now = () => D
     if (req.method === 'GET' && path === '/v1/node/status') {
       const entry = Object.entries(nodes).find(([, config]) => identity(req, config));
       if (!entry) return reply(res, 403, { error: 'AUTH_REQUIRED' });
-      return reply(res, 200, { identity: entry[0], generated_at: new Date(now()).toISOString(), node: nodeSnapshot(...entry), policy: publicPolicy(policy), rules: rulesStatus(), releases: releases?.summary() ?? {state:'missing'} });
+      return reply(res, 200, { identity: entry[0], generated_at: new Date(now()).toISOString(), node: nodeSnapshot(...entry), policy: publicPolicy(policy), rules: rulesStatus(), releases: releases?.summary() ?? {state:'missing'}, virus_databases: virusDatabases?.summary() ?? {state:'missing'} });
     }
     if (req.method === 'GET' && path === '/v1/status') {
       if (!readers.some(reader => identity(req, reader))) return reply(res, 403, { error: 'AUTH_REQUIRED' });
@@ -447,7 +470,8 @@ export function startFromEnvironment(env = process.env) {
   const monitor = createMonitor({ nodes: config.nodes ?? {}, readers: config.readers ?? [], policy: config.policy,
     stateFile: env.SECURITY_STATE_FILE ?? './var/state.json',
     rules: ruleSource(join(dirname(env.SECURITY_CONFIG),'rules.json'),readFileSync(new URL('../release-public.pem',import.meta.url))),
-    releases: env.SECURITY_RELEASE_DIR ? releaseSource(env.SECURITY_RELEASE_DIR,readFileSync(new URL('../release-public.pem',import.meta.url))) : undefined });
+    releases: env.SECURITY_RELEASE_DIR ? releaseSource(env.SECURITY_RELEASE_DIR,readFileSync(new URL('../release-public.pem',import.meta.url))) : undefined,
+    virusDatabases: env.SECURITY_VIRUS_DB_DIR ? virusDatabaseSource(env.SECURITY_VIRUS_DB_DIR,readFileSync(new URL('../release-public.pem',import.meta.url))) : undefined });
   const server = createServer({ key: readFileSync(env.SECURITY_TLS_KEY), cert: readFileSync(env.SECURITY_TLS_CERT),
     ca: readFileSync(env.SECURITY_CLIENT_CA), requestCert: true, rejectUnauthorized: true }, monitor.handler);
   server.listen(Number(env.SECURITY_PORT ?? 9443), env.SECURITY_HOST ?? '0.0.0.0');

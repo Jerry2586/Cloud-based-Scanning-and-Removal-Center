@@ -23,10 +23,12 @@ services:
       SECURITY_CONFIG: /etc/xuanwu/config.json
       SECURITY_STATE_FILE: /var/lib/xuanwu/state.json
       SECURITY_RELEASE_DIR: /var/lib/xuanwu-releases
+      SECURITY_VIRUS_DB_DIR: /var/lib/xuanwu-virus-db
     volumes:
       - ${IRONCURTAIN_CONFIG:?}/runtime:/etc/xuanwu:ro
       - ${IRONCURTAIN_DATA:?}:/var/lib/xuanwu
       - ${IRONCURTAIN_RELEASES:?}:/var/lib/xuanwu-releases:ro
+      - ${IRONCURTAIN_VIRUS_DATABASES:?}:/var/lib/xuanwu-virus-db:ro
     healthcheck:
       test: [CMD, node, src/healthcheck.js]
       interval: 10s
