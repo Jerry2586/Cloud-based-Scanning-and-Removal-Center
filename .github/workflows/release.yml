@@ -58,7 +58,7 @@ jobs:
       - name: Build and independently verify six release assets
         run: |
           bash scripts/package-release.sh --signing-key "$RUNNER_TEMP/appgog-release-private.pem" --output-dir dist
-          node scripts/verify-release.js --dir dist --public-key release-public.pem
+          node scripts/verify-release.js --dir dist --public-key release-public.pem --version "${GITHUB_REF_NAME#v}"
           (cd dist && sha256sum -c APPGOG-Cloud-Security-Center-*.tar.gz.sha256)
           (cd dist && sha256sum -c APPGOG-Cloud-Security-Center-*.run.sha256)
           mapfile -t assets < <(find dist -maxdepth 1 -type f -printf '%f\n' | sort)
@@ -81,4 +81,19 @@ jobs:
             dist/APPGOG-Cloud-Security-Center-*.tar.gz.sha256 \
             dist/release-manifest.json \
             dist/release-manifest.json.sig \
-            --verify-tag --generate-notes --title "APPGOG Cloud Security Center $GITHUB_REF_NAME"
+            --verify-tag --generate-notes --title "IronCurtain / Xuanwu $GITHUB_REF_NAME"
+      - name: Re-download published assets and verify accepted commit and Latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/verify-published-release.js --tag "$GITHUB_REF_NAME" --expected-commit "$GITHUB_SHA" --output-dir "$RUNNER_TEMP/published-verified"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: published-verification
+          path: |
+            ${{ runner.temp }}/published-verified/*
+            ${{ runner.temp }}/v*-verification.json
+          retention-days: 7
+
+      - name: Remove temporary signing key on every outcome
+        if: always()
+        run: rm -f -- "$RUNNER_TEMP/appgog-release-private.pem"

@@ -84,3 +84,33 @@ jobs:
       - uses: actions/checkout@v4
       - name: Real ClamAV package provisioning and deterministic engine acceptance
         run: sudo env "PATH=$PATH" GITHUB_ACTIONS=true bash tests/antivirus-engine.test.sh
+
+  candidate-sign:
+    if: startsWith(github.ref, 'refs/heads/candidate/')
+    needs: [verify, independent-deployment, antivirus-engine]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Sign and verify candidate without publishing
+        env:
+          SIGNING_KEY: ${{ secrets.APPGOG_SECURITY_RELEASE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ -n "$SIGNING_KEY" ]]
+          key="$RUNNER_TEMP/ironcurtain-candidate-private.pem"
+          trap 'rm -f -- "$key"' EXIT
+          printf '%s\n' "$SIGNING_KEY" > "$key"
+          unset SIGNING_KEY
+          bash scripts/package-release.sh --signing-key "$key" --output-dir dist
+          node scripts/verify-release.js --dir dist --public-key release-public.pem --version "$(node -p 'JSON.parse(require("fs").readFileSync("package.json")).version')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: independent-signed-candidate
+          path: dist/*
+          retention-days: 7

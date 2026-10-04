@@ -1,0 +1,18 @@
+name: Accept official antivirus database retrieval
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  official-database:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download official signed databases and scan clean/EICAR samples
+        run: sudo env GITHUB_ACTIONS=true IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER=1 bash tests/antivirus-official-db.test.sh
+      - name: Diagnose public database or engine failures
+        if: failure()
+        run: |
+          sudo systemctl status ironcurtain-antivirus-update.service --no-pager || true
+          sudo journalctl -u ironcurtain-antivirus-update.service --no-pager -n 80 || true
