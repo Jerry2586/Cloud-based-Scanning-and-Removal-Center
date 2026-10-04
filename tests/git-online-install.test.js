@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { oneLineInstall } from '../scripts/lib/git-install-command.js';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const entry = await readFile(join(root, 'scripts/git-install-entry.sh'), 'utf8');
 const shortEntry = await readFile(join(root, 'scripts/git-install-short.sh'), 'utf8');
@@ -68,7 +69,9 @@ async function run(options = {}) {
     TEST_PAYLOAD: payloadFile, TEST_TOKEN_FILE: tokenFile, TEST_INSTALL_EXIT: '0',
     TEST_UID: '0', TEST_OS: 'Linux', TEST_TOKEN_UID: '0', TEST_TOKEN_MODE: '600', TEST_PARENT_MODE: '700',
     TEST_DOWNLOAD: options.download ?? 'public', TEST_PACKAGES_FAIL: options.packagesFail ? '1' : '0', ...options.env };
-  const result = options.readmeCommand
+  const result = options.short && options.readmeCommand
+    ? spawnSync('sh', ['-c', oneLineInstall(body, options.role ?? 'local').replace(/^sudo /, '')], { encoding: 'utf8', env })
+    : options.readmeCommand
     ? spawnSync('sh', ['-s', '--', options.role ?? 'local'], { input: body, encoding: 'utf8', env })
     : spawnSync('sh', [script, options.role ?? 'local'], { encoding: 'utf8', env });
   const read = async path => { try { return await readFile(path, 'utf8'); } catch { return ''; } };
@@ -118,6 +121,9 @@ for (const download of ['failure', 'rate_limit', 'upstream']) {
 test('short entry retains pinned download and is materially smaller', () => {
   assert.ok(shortEntry.includes('ref=' + pin)); assert.ok(shortEntry.includes(hash));
   assert.ok(shortEntry.length < entry.length * 0.6);
+  const command = oneLineInstall(shortEntry, 'local');
+  assert.equal(command.split('\n').length, 1);
+  assert.ok(command.endsWith('-- local'));
   assert.match(shortEntry, /curl -q --proto '=https' --tlsv1\.2/);
   assert.doesNotMatch(shortEntry, /--location|--insecure|ref=main/);
 });
@@ -136,19 +142,30 @@ for (const [label, options] of [
   ['package failure', { missingCa: true, packagesFail: true }], ['bad role', { role: 'other' }],
   ['non-root', { env: { TEST_UID: '1000' } }], ['non-Linux', { env: { TEST_OS: 'Darwin' } }]
 ]) test('short ' + label + ' never launches installer', { skip: !linux }, async () => {
-  const r = await run({ ...options, short: true });
+  const r = await run({ ...options, short: true, readmeCommand: options.role !== 'other' });
   assert.notEqual(r.status, 0); assert.equal(r.receipt, ''); assert.deepEqual(r.tmpLeft, []);
 });
 for (const download of ['failure', 'rate_limit', 'upstream']) test('short ' + download + ' does not request credentials', { skip: !linux }, async () => {
-  const r = await run({ short: true, download });
+  const r = await run({ short: true, download, readmeCommand: true });
   assert.notEqual(r.status, 0); assert.equal(r.receipt, ''); assert.doesNotMatch(r.requests, /--user/);
   assert.deepEqual(r.tmpLeft, []);
 });
 test('short missing CA prepares tools before downloading', { skip: !linux }, async () => {
-  const r = await run({ short: true, missingCa: true });
+  const r = await run({ short: true, missingCa: true, readmeCommand: true });
   assert.equal(r.status, 0, r.stderr); assert.match(r.packages, /--no-remove/);
 });
 test('short installer failure propagates and cleans up', { skip: !linux }, async () => {
-  const r = await run({ short: true, env: { TEST_INSTALL_EXIT: '42' } });
+  const r = await run({ short: true, env: { TEST_INSTALL_EXIT: '42' }, readmeCommand: true });
   assert.equal(r.status, 42); assert.deepEqual(r.tmpLeft, []);
+});
+
+test('README first-install commands have exactly one physical line', async () => {
+  const readme = await readFile(join(root, 'README.md'), 'utf8');
+  const section = readme.split('<!-- ONLINE-INSTALL:START -->')[1].split('<!-- ONLINE-INSTALL:END -->')[0];
+  const commands = [...section.matchAll(/```sh\n([^]*?)\n```/g)].map(match => match[1]);
+  assert.equal(commands.length, 2);
+  for (const [i, role] of ['local', 'cloud'].entries()) {
+    assert.equal(commands[i].split('\n').length, 1);
+    assert.equal(commands[i], oneLineInstall(shortEntry, role));
+  }
 });

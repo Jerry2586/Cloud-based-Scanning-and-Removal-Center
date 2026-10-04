@@ -6,9 +6,9 @@ APPGOG 的授权、打包、账号、数据库和升级仍由其自己的项目�
 
 > 当前程序版本 **0.4.0**，增加玄武官方病毒库签名缓存、认证流式下发和铁幕 root 菜单原子启用。源码验收 37189710268 三组 Linux 检查全部通过；官方库验收 37189710784 完成真实 CVD 下载、独立发布/官方双重验签、mTLS 传输、本地启用及正常/EICAR 扫描。v0.3.0 的六附件正式验收记录保留；新版本正式状态以 GitHub Release 与回取验签报告为准。异地灾备和跨主机扩展仍需补齐。实际范围见 [功能与验收矩阵](docs/capability-status.md)。
 
-## 安装 / 更新：复制短命令
+## 一行安装 / 更新
 
-首次安装：选择下方 **铁幕** 或 **玄武**，点击代码框的复制按钮，整段粘贴到 Linux SSH 终端。可在空的 `/root` 或任何目录执行，无需上传文件、克隆源码或安装 Git。
+首次安装：选择下方 **铁幕** 或 **玄武**，复制代码框里的 **一行命令**，粘贴到 Linux SSH 终端。可在空的 `/root` 或任何目录执行，无需上传文件、克隆源码或安装 Git。
 
 私有仓库出现 `password` 提示时，输入本仓库 `Contents: Read` 的 **GitHub 只读 Token**，输入隐藏。首次安装器还会询问同一个 Token，将其安全保存；不要输入服务器密码或六位验证码。公开仓库匿名下载成功时不用 Token。短入口每次下载私有引导器会重新询问 Token；安装后的日常更新用下方一行命令，会复用已保存令牌。
 
@@ -19,43 +19,13 @@ APPGOG 的授权、打包、账号、数据库和升级仍由其自己的项目�
 **需要保护的服务器：铁幕安全。**
 
 ```sh
-sudo sh -s -- local <<'IC'
-set -eu; set +x; umask 077
-[ "$(id -u)" = 0 ] && [ "$(uname -s)" = Linux ] || { echo '请在 Linux 使用 sudo 或 root。' >&2; exit 1; }
-[ "$#" = 1 ]; case "$1" in local|cloud) ;; *) exit 1 ;; esac
-ca_ready() { for ca in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/cert.pem; do [ ! -s "$ca" ] || return 0; done; return 1; }
-if ! command -v curl >/dev/null || ! command -v sha256sum >/dev/null || ! ca_ready; then
-  . /etc/os-release; case "$ID" in debian|ubuntu) apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove curl ca-certificates coreutils ;; centos|rhel|rocky|almalinux|fedora|ol) if command -v dnf >/dev/null; then dnf install -y curl ca-certificates coreutils; else yum install -y curl ca-certificates coreutils; fi ;; *) echo '软件源不受支持。' >&2; exit 1 ;; esac
-  ca_ready || exit 1
-fi
-work=$(mktemp -d /tmp/ironcurtain-online.XXXXXXXX); trap 'rm -rf -- "$work"' 0; trap 'exit 130' 2; trap 'exit 143' 15
-url=https://api.github.com/repos/Jerry2586/Cloud-based-Scanning-and-Removal-Center/contents/install.sh?ref=ebceaf3a7a7aabd749f185f43c9b0c02deeadc62
-fetch() { curl -q --proto '=https' --tlsv1.2 -fsS --connect-timeout 15 --max-time 120 -H 'Accept: application/vnd.github.raw+json' "$@" "$url" -o "$work/install.sh" -w '%{http_code}' > "$work/http-status"; }
-if ! fetch; then case "$(cat "$work/http-status")" in 401|404) echo 'password 提示请输入 GitHub 只读 Token；安装器首次保存时会再询问一次。' >&2; fetch --user Jerry2586 ;; *) echo '下载失败，请检查网络、CA 或限流；不需要输入 Token。' >&2; exit 1 ;; esac; fi
-printf '%s  %s\n' 5852387ff3f35d7499be3e7e52fdaec4f90f703d80a32949965de150fc4cabc4 "$work/install.sh" | sha256sum -c -
-sh "$work/install.sh" --role "$1"
-IC
+sudo sh -c 'set -eu; set +x; umask 077; [ "$(id -u)" = 0 ] && [ "$(uname -s)" = Linux ] || { echo '\''请在 Linux 使用 sudo 或 root。'\'' >&2; exit 1; }; [ "$#" = 1 ]; case "$1" in local|cloud) ;; *) exit 1 ;; esac; ca_ready() { for ca in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/cert.pem; do [ ! -s "$ca" ] || return 0; done; return 1; }; if ! command -v curl >/dev/null || ! command -v sha256sum >/dev/null || ! ca_ready; then . /etc/os-release; case "$ID" in debian|ubuntu) apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove curl ca-certificates coreutils ;; centos|rhel|rocky|almalinux|fedora|ol) if command -v dnf >/dev/null; then dnf install -y curl ca-certificates coreutils; else yum install -y curl ca-certificates coreutils; fi ;; *) echo '\''软件源不受支持。'\'' >&2; exit 1 ;; esac; ca_ready || exit 1; fi; work=$(mktemp -d /tmp/ironcurtain-online.XXXXXXXX); trap '\''rm -rf -- "$work"'\'' 0; trap '\''exit 130'\'' 2; trap '\''exit 143'\'' 15; url=https://api.github.com/repos/Jerry2586/Cloud-based-Scanning-and-Removal-Center/contents/install.sh?ref=ebceaf3a7a7aabd749f185f43c9b0c02deeadc62; fetch() { curl -q --proto '\''=https'\'' --tlsv1.2 -fsS --connect-timeout 15 --max-time 120 -H '\''Accept: application/vnd.github.raw+json'\'' "$@" "$url" -o "$work/install.sh" -w '\''%{http_code}'\'' > "$work/http-status"; }; if ! fetch; then case "$(cat "$work/http-status")" in 401|404) echo '\''password 提示请输入 GitHub 只读 Token；安装器首次保存时会再询问一次。'\'' >&2; fetch --user Jerry2586 ;; *) echo '\''下载失败，请检查网络、CA 或限流；不需要输入 Token。'\'' >&2; exit 1 ;; esac; fi; printf '\''%s  %s\n'\'' 5852387ff3f35d7499be3e7e52fdaec4f90f703d80a32949965de150fc4cabc4 "$work/install.sh" | sha256sum -c -; sh "$work/install.sh" --role "$1"' -- local
 ```
 
 **独立安全服务器：玄武引擎。**
 
 ```sh
-sudo sh -s -- cloud <<'IC'
-set -eu; set +x; umask 077
-[ "$(id -u)" = 0 ] && [ "$(uname -s)" = Linux ] || { echo '请在 Linux 使用 sudo 或 root。' >&2; exit 1; }
-[ "$#" = 1 ]; case "$1" in local|cloud) ;; *) exit 1 ;; esac
-ca_ready() { for ca in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/cert.pem; do [ ! -s "$ca" ] || return 0; done; return 1; }
-if ! command -v curl >/dev/null || ! command -v sha256sum >/dev/null || ! ca_ready; then
-  . /etc/os-release; case "$ID" in debian|ubuntu) apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove curl ca-certificates coreutils ;; centos|rhel|rocky|almalinux|fedora|ol) if command -v dnf >/dev/null; then dnf install -y curl ca-certificates coreutils; else yum install -y curl ca-certificates coreutils; fi ;; *) echo '软件源不受支持。' >&2; exit 1 ;; esac
-  ca_ready || exit 1
-fi
-work=$(mktemp -d /tmp/ironcurtain-online.XXXXXXXX); trap 'rm -rf -- "$work"' 0; trap 'exit 130' 2; trap 'exit 143' 15
-url=https://api.github.com/repos/Jerry2586/Cloud-based-Scanning-and-Removal-Center/contents/install.sh?ref=ebceaf3a7a7aabd749f185f43c9b0c02deeadc62
-fetch() { curl -q --proto '=https' --tlsv1.2 -fsS --connect-timeout 15 --max-time 120 -H 'Accept: application/vnd.github.raw+json' "$@" "$url" -o "$work/install.sh" -w '%{http_code}' > "$work/http-status"; }
-if ! fetch; then case "$(cat "$work/http-status")" in 401|404) echo 'password 提示请输入 GitHub 只读 Token；安装器首次保存时会再询问一次。' >&2; fetch --user Jerry2586 ;; *) echo '下载失败，请检查网络、CA 或限流；不需要输入 Token。' >&2; exit 1 ;; esac; fi
-printf '%s  %s\n' 5852387ff3f35d7499be3e7e52fdaec4f90f703d80a32949965de150fc4cabc4 "$work/install.sh" | sha256sum -c -
-sh "$work/install.sh" --role "$1"
-IC
+sudo sh -c 'set -eu; set +x; umask 077; [ "$(id -u)" = 0 ] && [ "$(uname -s)" = Linux ] || { echo '\''请在 Linux 使用 sudo 或 root。'\'' >&2; exit 1; }; [ "$#" = 1 ]; case "$1" in local|cloud) ;; *) exit 1 ;; esac; ca_ready() { for ca in /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt /etc/ssl/cert.pem; do [ ! -s "$ca" ] || return 0; done; return 1; }; if ! command -v curl >/dev/null || ! command -v sha256sum >/dev/null || ! ca_ready; then . /etc/os-release; case "$ID" in debian|ubuntu) apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove curl ca-certificates coreutils ;; centos|rhel|rocky|almalinux|fedora|ol) if command -v dnf >/dev/null; then dnf install -y curl ca-certificates coreutils; else yum install -y curl ca-certificates coreutils; fi ;; *) echo '\''软件源不受支持。'\'' >&2; exit 1 ;; esac; ca_ready || exit 1; fi; work=$(mktemp -d /tmp/ironcurtain-online.XXXXXXXX); trap '\''rm -rf -- "$work"'\'' 0; trap '\''exit 130'\'' 2; trap '\''exit 143'\'' 15; url=https://api.github.com/repos/Jerry2586/Cloud-based-Scanning-and-Removal-Center/contents/install.sh?ref=ebceaf3a7a7aabd749f185f43c9b0c02deeadc62; fetch() { curl -q --proto '\''=https'\'' --tlsv1.2 -fsS --connect-timeout 15 --max-time 120 -H '\''Accept: application/vnd.github.raw+json'\'' "$@" "$url" -o "$work/install.sh" -w '\''%{http_code}'\'' > "$work/http-status"; }; if ! fetch; then case "$(cat "$work/http-status")" in 401|404) echo '\''password 提示请输入 GitHub 只读 Token；安装器首次保存时会再询问一次。'\'' >&2; fetch --user Jerry2586 ;; *) echo '\''下载失败，请检查网络、CA 或限流；不需要输入 Token。'\'' >&2; exit 1 ;; esac; fi; printf '\''%s  %s\n'\'' 5852387ff3f35d7499be3e7e52fdaec4f90f703d80a32949965de150fc4cabc4 "$work/install.sh" | sha256sum -c -; sh "$work/install.sh" --role "$1"' -- cloud
 ```
 
 <!-- ONLINE-INSTALL:END -->

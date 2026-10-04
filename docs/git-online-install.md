@@ -1,6 +1,6 @@
 # Git 在线安装：空服务器也能直接运行
 
-README 中 local/cloud 的代码框是一个完整命令。复制从 `sudo sh -s` 到最后单独一行的 `IC` 的所有行，一次粘贴到 Linux SSH 终端。任何目录都能运行，不要求服务器已有 `install.sh`、源码或 Git。
+README 中 local/cloud 的代码框各只有一行，复制对应的一行命令，粘贴到 Linux SSH 终端执行。任何目录都能运行，不要求服务器已有 `install.sh`、源码或 Git。
 
 ## 首次准备
 

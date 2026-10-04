@@ -2,6 +2,7 @@
 // Generate short README commands and retain the full token-reusing entry in advanced docs.
 import { readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { oneLineInstall } from './lib/git-install-command.js';
 const root = new URL('../', import.meta.url);
 const check = process.argv.includes('--check');
 for (const [target, source, delimiter] of [
@@ -11,7 +12,8 @@ for (const [target, source, delimiter] of [
   const entry = (await readFile(new URL(source, root), 'utf8')).trimEnd().replace(/^#![^\n]*\n/, '');
   const blocks = ['local', 'cloud'].map(role => {
     const title = role === 'local' ? '**需要保护的服务器：铁幕安全。**' : '**独立安全服务器：玄武引擎。**';
-    return title + '\n\n```sh\nsudo sh -s -- ' + role + " <<'" + delimiter + "'\n" + entry + '\n' + delimiter + '\n```';
+    const command = target === 'README.md' ? oneLineInstall(entry, role) : 'sudo sh -s -- ' + role + " <<'" + delimiter + "'\n" + entry + '\n' + delimiter;
+    return title + '\n\n```sh\n' + command + '\n```';
   }).join('\n\n');
   const path = new URL(target, root), text = await readFile(path, 'utf8');
   const start = '<!-- ONLINE-INSTALL:START -->', end = '<!-- ONLINE-INSTALL:END -->';
