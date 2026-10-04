@@ -44,7 +44,7 @@ test('protected signed CVD cache uses stable bounded streams and rejects tamperi
 });
 test('real mTLS virus database delivery enforces identities, GET-only fixed routes and signed offers',{skip:rootOnly},async t=>{
   const item=fixture(t),source=virusDatabaseSource(item.directory,publisher.publicKey),tls=deliveryTLS(fixture(t).directory);
-  const monitor=createMonitor({nodes:{'node-ci':{fingerprint256:tls['node-ci'].fingerprint256,token_sha256:hash(tls['node-ci'].token)}},readers:[{fingerprint256:tls.reader.fingerprint256,token_sha256:hash(tls.reader.token)}],virusDatabases:source});
+  const monitor=createMonitor({readers:[],nodes:{'node-ci':{fingerprint256:tls['node-ci'].fingerprint256,token_sha256:hash(tls['node-ci'].token)}},readers:[{fingerprint256:tls.reader.fingerprint256,token_sha256:hash(tls.reader.token)}],virusDatabases:source});
   const {endpoint}=await tlsServer(t,tls.server,monitor.handler);
   const get=(identity=tls['node-ci'],options={})=>requestRelease(endpoint,identity,{path:'/v1/virus-db/latest',...options});
   for(const actor of [tls['node-ci'],tls.reader]){
@@ -61,7 +61,7 @@ test('real mTLS virus database delivery enforces identities, GET-only fixed rout
 
 test('local mTLS pull streams exactly signed bytes; failures remove the incomplete output',{skip:rootOnly},async t=>{
   const item=fixture(t),source=virusDatabaseSource(item.directory,publisher.publicKey),tls=deliveryTLS(fixture(t).directory);
-  const monitor=createMonitor({nodes:{'node-ci':{fingerprint256:tls['node-ci'].fingerprint256,token_sha256:hash(tls['node-ci'].token)}},virusDatabases:source});
+  const monitor=createMonitor({readers:[],nodes:{'node-ci':{fingerprint256:tls['node-ci'].fingerprint256,token_sha256:hash(tls['node-ci'].token)}},virusDatabases:source});
   const {endpoint}=await tlsServer(t,tls.server,monitor.handler),identity=fixture(t).directory;for(const name of readdirSync(identity))rmSync(join(identity,name),{recursive:true,force:true});
   pairedIdentity(identity,tls['node-ci'],endpoint);
   const empty=()=>{const output=fixture(t).directory;for(const name of readdirSync(output))rmSync(join(output,name),{recursive:true,force:true});return output;};

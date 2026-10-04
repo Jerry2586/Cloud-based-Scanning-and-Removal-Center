@@ -360,7 +360,7 @@ virus_database_action() {
     echo '玄武签名病毒库已启用；以后使用菜单 29 更新。官方直连计时器已停用，避免两种更新源同时写库。'
   else
     # EXIT cleanup resumes the official updater only when no cloud commit exists.
-    ic_fail '启用失败，保留原病毒库；请检查签名、版本与引擎加载记录'
+    ic_fail '启用未完成；交换前保留原库，交换后保留已验证的新库与恢复日志。请检查记录后重试菜单 29'
   fi
 }
 dispatch() {

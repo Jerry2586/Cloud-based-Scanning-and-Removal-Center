@@ -20,7 +20,7 @@ test('real official signed CVD cloud transport, root activation and clean/EICAR 
  const dirs={};for(const name of ['tls','identity','download','local-cache']){dirs[name]=join(work,name);mkdirSync(dirs[name],{mode:0o700});}
  const tls=deliveryTLS(dirs.tls),store=virusDatabaseSource(join(work,'cloud-cache'),publicKey);
  assert.equal(store.summary().state,'ready');
- const monitor=createMonitor({nodes:{'node-ci':{fingerprint256:tls['node-ci'].fingerprint256,token_sha256:hash(tls['node-ci'].token)}},virusDatabases:store});
+ const monitor=createMonitor({readers:[],nodes:{'node-ci':{fingerprint256:tls['node-ci'].fingerprint256,token_sha256:hash(tls['node-ci'].token)}},virusDatabases:store});
  const {endpoint}=await tlsServer(t,tls.server,monitor.handler);
  pairedIdentity(dirs.identity,tls['node-ci'],endpoint);
  assert.equal((await requestRelease(endpoint,tls['node-ci'],{path:'/v1/virus-db/latest',token:'invalid'})).status,403);
