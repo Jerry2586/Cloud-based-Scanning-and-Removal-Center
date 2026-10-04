@@ -26,7 +26,7 @@ def private_open(path):
     info = os.fstat(fd)
     if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1:
         os.close(fd)
-        raise ValueError("输入必须是 root:0600、无链接的普通文件")
+        raise ValueError(f"输入必须是 root:0600、无链接的普通文件（{Path(path).name}: uid={info.st_uid}, mode={stat.S_IMODE(info.st_mode):04o}, links={info.st_nlink}）")
     return os.fdopen(fd, "rb")
 
 

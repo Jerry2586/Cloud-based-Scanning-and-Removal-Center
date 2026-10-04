@@ -94,7 +94,11 @@ ic_admin_recover
 [[ $(cat "$CONF/value") == changed && ! -e $BASE/admin-transaction.json ]]
 pass 'committed operation survives interrupted checkpoint cleanup'
 fixture
-ic_tx_begin; ic_tx_mutating
+ic_tx_begin
+for archive in config.tar data.tar; do
+  [[ $(stat -c "%a:%u:%h" "$IC_TX/$archive") == 600:0:1 ]] || { stat -c "%a:%u:%h %n" "$IC_TX/$archive"; exit 1; }
+done
+ic_tx_mutating
 printf changed > "$CONF/value"; printf changed > "$DATA/value"
 printf changed > "$MENU"; printf changed > "$AGENT_UNIT"
 ic_tx_recover
