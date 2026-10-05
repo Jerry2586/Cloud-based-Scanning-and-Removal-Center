@@ -88,7 +88,9 @@ jobs:
       - name: Actual mirror pull and build after injected official registry timeout
         run: sudo env "PATH=$PATH" GITHUB_ACTIONS=true IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER=1 bash tests/install-image-mirror.test.sh
       - name: Real independent local and cloud Docker installation and upgrade
-        run: sudo env "PATH=$PATH" IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER=1 bash tests/independent-deployment.test.sh
+        run: |
+          set -o pipefail
+          sudo env "PATH=$PATH" IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER=1 bash tests/independent-deployment.test.sh 2>&1 | tee "$RUNNER_TEMP/independent-deployment.log"
       - name: Diagnose independent scanner failure
         if: failure()
         run: |
@@ -97,7 +99,8 @@ jobs:
           sudo systemctl status ironcurtain-rules-sync.service ironcurtain-rules-sync.timer --no-pager || true
           sudo journalctl -u ironcurtain-rules-sync.service --no-pager -n 30 || true
           sudo stat -c '%a %u %g %F %n' /run/ironcurtain /run/ironcurtain/scan.sock || true
-          sudo docker exec ironcurtain-local node --input-type=module -e 'import {localSecurityScan} from "./src/local/scan-client.js"; console.log(JSON.stringify(await localSecurityScan("status")));' || true
+          sudo docker exec ironcurtain-local node --input-type=module -e 'import {localSecurityScan} from "./src/local/scan-client.js"; const s=await localSecurityScan("status"); console.log(JSON.stringify({state:s.state,reason:s.reason,progress:s.progress,protection:s.protection,full_scan:s.full_scan}));' || true
+          tail -n 45 "$RUNNER_TEMP/independent-deployment.log" || true
 
   antivirus-engine:
     runs-on: ubuntu-latest
