@@ -1,4 +1,4 @@
-import importlib.util, pathlib, tempfile, json, hashlib, subprocess, os, unittest
+import importlib.util, pathlib, tempfile, json, hashlib, subprocess, os, unittest, contextlib, io
 from unittest.mock import patch
 from types import SimpleNamespace
 spec=importlib.util.spec_from_file_location('updates',pathlib.Path(__file__).parents[1]/'src/host/updates.py')
@@ -77,6 +77,19 @@ class UpdatesTests(unittest.TestCase):
   self.assertEqual(u.payload_digest(self.current,self.read),actual)
   (self.current/'src/link').symlink_to(self.current/'package.json')
   with self.assertRaises(ValueError):u.payload_digest(self.current,self.read)
+class FixedJobTests(unittest.TestCase):
+ @unittest.skipUnless(os.name=='posix' and os.geteuid()==0,'Linux root fixed service job')
+ def test_check_preflight_failure_records_time_and_redacts_exception(self):
+  with tempfile.TemporaryDirectory(prefix='ironcurtain-job-test-',dir='/opt') as temporary:
+   base=pathlib.Path(temporary)/'local';base.mkdir(mode=0o700)
+   (base/'install.json').write_text('{}');(base/'install.json').chmod(0o600)
+   diagnostics=io.StringIO()
+   with patch.object(u,'BASE',base),patch.object(u,'DATA',base),patch.object(u,'check_release',side_effect=ValueError('secret-token-should-never-log')),contextlib.redirect_stderr(diagnostics):
+    with self.assertRaises(SystemExit):u.work('check')
+   record=json.loads((base/'panel-update/check.json').read_text())
+   self.assertEqual(record['state'],'failed');self.assertTrue(record['checked_at']);self.assertEqual(record['installed_integrity'],'unavailable');self.assertFalse(record['update_available'])
+   self.assertNotIn('secret-token',diagnostics.getvalue());self.assertIn('ValueError',diagnostics.getvalue())
+   self.assertEqual((base/'panel-update/check.json').stat().st_mode & 0o777,0o600)
 class BoundaryTests(unittest.TestCase):
  def test_canonical_versions_without_filesystem(self):
   for value in ['00.1.0','1.02.3',None,{},'1.0']:

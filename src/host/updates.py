@@ -12,6 +12,7 @@ import re
 import ssl
 import stat
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -346,14 +347,18 @@ def work(action):
             if result.returncode or actual != checked['latest_version']:
                 raise ValueError('update unsuccessful')
             host.atomic_json(target, {'state': 'finished', 'finished_at': stamp(), 'version': actual, 'result': 'updated'})
-        except Exception:
+        except Exception as error:
+            # Report fixed diagnostics only; never log URLs, tokens or arbitrary exception text.
+            safe_errors = {'version invalid', 'receipt invalid', 'image invalid', 'host invalid', 'current invalid', 'payload link', 'payload limit', 'trust file outside budget', 'trust file must be root-controlled', 'trust directory must be root-controlled', 'trust file changed during read', 'check failed', 'update unsuccessful'}
+            detail = str(error) if type(error) is ValueError and str(error) in safe_errors else type(error).__name__
+            print('IronCurtain fixed release job failed: ' + detail, file=sys.stderr)
             if action == 'update':
                 host.atomic_json(target, {'state': 'failed', 'finished_at': stamp(), 'reason': FAILURE})
             else:
                 # Preserve independently observed Git metadata if formal verification failed.
                 existing = json.loads(host.private_bytes(target, 8192))
                 if existing.get('state') == 'running':
-                    host.atomic_json(target, {'state': 'failed', 'finished_at': stamp(), 'reason': FAILURE})
+                    host.atomic_json(target, {'state': 'failed', 'checked_at': stamp(), 'finished_at': stamp(), 'reason': FAILURE, 'installed_integrity': 'unavailable', 'source': {'state': 'unavailable'}, 'update_available': False})
             raise SystemExit(1)
 
 
