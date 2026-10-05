@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -55,14 +55,15 @@ test('cloud configuration cannot broaden the endpoint into credentials, paths or
  assert.throws(()=>new CloudClient({...base,nodeId:'arbitrary-project'}),/INVALID/);
 });
 
-test('unpaired and invalid cloud identity expose disconnected state without stopping the local link',async()=>{
- const directory=mkdtempSync(join(tmpdir(),'ic-cloud-offline-'));
+test('unpaired and invalid or untrusted cloud identity expose disconnected state without stopping the local link',async()=>{
+ const workspace=mkdtempSync(join(tmpdir(),'ic-cloud-offline-'));
+ const directory=join(workspace,'identity');
  const link=createCloudLink({directory,interval:60000});
  try {
   const unpaired=await link.status();assert.equal(unpaired.state,'unpaired');assert.equal(unpaired.connected,false);
-  writeFileSync(join(directory,'cloud.json'),'{}');
+  mkdirSync(directory);writeFileSync(join(directory,'cloud.json'),'{}');
   const invalid=await link.refresh();assert.equal(invalid.state,'unavailable');assert.equal(invalid.connected,false);
-  rmSync(join(directory,'cloud.json'));
+  rmSync(directory,{recursive:true});
   const restored=await link.refresh();assert.equal(restored.state,'unpaired');assert.equal(restored.connected,false);
- } finally {link.close();rmSync(directory,{recursive:true,force:true});}
+ } finally {link.close();rmSync(workspace,{recursive:true,force:true});}
 });

@@ -129,7 +129,7 @@ test('real update callbacks preserve accepted, busy, throttled and failed status
 });
 
 test('unpaired cloud does not gate local checkup, scan or official updater', async t => {
- const dir=await mkdtemp(join(tmpdir(),'ic-unpaired-')); const cloud=createCloudLink({directory:dir});
+ const dir=await mkdtemp(join(tmpdir(),'ic-unpaired-')); const cloud=createCloudLink({directory:join(dir,'identity')});
  t.after(async()=>{cloud.close();await rm(dir,{recursive:true,force:true});});
  const f=await fixture(t,undefined,undefined,()=>cloud.status()); const identity=await f.login();
  const headers={cookie:identity.cookie,'x-csrf-token':identity.csrf};
