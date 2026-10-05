@@ -97,6 +97,8 @@ jobs:
       - name: Diagnose independent scanner failure
         if: failure()
         run: |
+          sudo systemctl status ironcurtain-panel-check.service ironcurtain-panel-update.service --no-pager || true
+          sudo journalctl -u ironcurtain-panel-check.service -u ironcurtain-panel-update.service --no-pager -n 40 || true
           sudo systemctl status ironcurtain-agent.service --no-pager || true
           sudo journalctl -u ironcurtain-agent.service --no-pager -n 30 || true
           sudo systemctl status ironcurtain-rules-sync.service ironcurtain-rules-sync.timer --no-pager || true

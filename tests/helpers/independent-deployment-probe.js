@@ -62,13 +62,14 @@ assert.equal((await call('/api/updates/check',{command:'arbitrary'})).status,400
 if(process.env.IRONCURTAIN_CHECK_PANEL_UPDATE==='1'){
  const trigger=await call('/api/updates/check',{});
  assert.ok([202,409].includes(trigger.status),'Actual check service must start or be running');
- let checked;
+ let checked,lastCheck;
  for(let attempt=0;attempt<120;attempt++){
   const response=await call('/api/updates');assert.equal(response.status,200);
+  lastCheck=response.data.check;
   if(['verified','failed'].includes(response.data.check.state) && response.data.check.checked_at){checked=response.data.check;break;}
   await new Promise(resolve=>setTimeout(resolve,1000));
  }
- assert.ok(checked,'Actual systemd release check must finish with recorded evidence');
+ assert.ok(checked,'Actual systemd release check must finish with recorded evidence: '+JSON.stringify(lastCheck));
  assert.equal(checked.installed_integrity,'verified');
  if(checked.state==='verified'){
   assert.match(checked.manifest_sha256,/^[a-f0-9]{64}$/);
