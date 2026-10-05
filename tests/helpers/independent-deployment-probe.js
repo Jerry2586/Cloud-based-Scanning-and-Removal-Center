@@ -57,8 +57,15 @@ if(process.env.IRONCURTAIN_EXPECT_RULE_SEQUENCE){
  assert.equal(finished.checks.find(check=>check.id==='malware.business').state,'finding');
  console.log('Live signed rules and real file-byte hash hit passed.');
 }
-const cloud=await call('/api/cloud/status');
-assert.equal(cloud.status,200);assert.equal(cloud.data.connected,true);assert.equal(cloud.data.node_id,'node-ci');
+// Identity imports become visible through the panel's 30-second status refresh.
+// Wait for the actual authenticated identity, never accept a stale prior node.
+let cloud;
+for(let attempt=0;attempt<45;attempt++){
+ cloud=await call('/api/cloud/status');assert.equal(cloud.status,200);
+ if(cloud.data.connected===true && cloud.data.node_id==='node-ci') break;
+ await new Promise(resolve=>setTimeout(resolve,1000));
+}
+assert.equal(cloud.data.connected,true,'Panel must establish mTLS after identity refresh; state='+cloud.data.state);assert.equal(cloud.data.node_id,'node-ci');
 assert.equal(cloud.data.policy.remote_execution,false);
 if(process.env.IRONCURTAIN_EXPECT_RELEASE_VERSION){
  assert.equal(cloud.data.releases.state,'ready');
