@@ -4,7 +4,7 @@ set -euo pipefail
 umask 077
 [[ $EUID == 0 && $(uname -s) == Linux && ${IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER:-} == 1 ]] || { echo 'Requires an explicitly disposable Linux root runner.' >&2; exit 1; }
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-for path in /opt/ironcurtain /etc/ironcurtain /var/lib/ironcurtain /etc/systemd/system/ironcurtain-agent.service /etc/systemd/system/ironcurtain-rules-sync.service /etc/systemd/system/ironcurtain-rules-sync.timer /usr/local/bin/ironcurtain /usr/local/bin/xuanwu; do
+for path in /opt/ironcurtain /etc/ironcurtain /var/lib/ironcurtain /etc/systemd/system/ironcurtain-agent.service /etc/systemd/system/ironcurtain-rules-sync.service /etc/systemd/system/ironcurtain-rules-sync.timer /usr/local/bin/ironcurtain /usr/local/bin/tiemu /usr/local/bin/xuanwu; do
   [[ ! -e $path && ! -L $path ]] || { echo 'Independent installation already exists; test refuses to replace it.' >&2; exit 1; }
 done
 # Docker is a CI prerequisite; empty-host dependency provisioning is a separate matrix.
@@ -33,6 +33,20 @@ CLOUD_HOST=$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Ga
 [[ $CLOUD_HOST =~ ^[0-9.]+$ ]] || { echo 'Docker bridge gateway unavailable' >&2; exit 1; }
 bash "$SOURCE/scripts/install-independent.sh" --role cloud --host "$CLOUD_HOST" --bind "$CLOUD_HOST"
 bash "$SOURCE/scripts/install-independent.sh" --role local --antivirus skip --host 127.0.0.1 --bind 127.0.0.1
+# Both role menus must open in a real terminal; the legacy entry still works.
+for entry in tiemu ironcurtain xuanwu; do
+  [[ -f /usr/local/bin/$entry && ! -L /usr/local/bin/$entry && $(stat -c '%a:%u:%h' /usr/local/bin/$entry) == 755:0:1 ]]
+done
+/usr/local/bin/ironcurtain status > "$WORK/legacy-status.log"
+/usr/local/bin/tiemu status > "$WORK/tiemu-status.log"
+[[ $(cat "$WORK/legacy-status.log") == "$(cat "$WORK/tiemu-status.log")" ]]
+for entry in tiemu xuanwu; do
+  printf '0\n' | timeout 60 script -q -e -c "/usr/local/bin/$entry" "$WORK/$entry-menu.log"
+  grep -q 'Linux 管理菜单' "$WORK/$entry-menu.log"
+  grep -q "打开菜单：sudo $entry" "$WORK/$entry-menu.log"
+  grep -q "更新程序：sudo $entry update" "$WORK/$entry-menu.log"
+  grep -q '请输入菜单编号（0 退出）' "$WORK/$entry-menu.log"
+done
 systemctl is-enabled --quiet ironcurtain-rules-sync.timer
 systemctl is-active --quiet ironcurtain-rules-sync.timer
 [[ $(systemctl show ironcurtain-rules-sync.service -p CapabilityBoundingSet --value) == '' ]]
@@ -119,10 +133,10 @@ active_run="/var/lib/ironcurtain/cloud/releases/$version/APPGOG-Cloud-Security-C
 cp "$active_run" "$WORK/program-valid.run"
 printf damage >> "$active_run"
 installed_before=$(sha256sum /opt/ironcurtain/local/install.json)
-if /usr/local/bin/ironcurtain release-update; then echo 'Damaged cloud program accepted' >&2; exit 1; fi
+if /usr/local/bin/tiemu release-update; then echo 'Damaged cloud program accepted' >&2; exit 1; fi
 [[ $(sha256sum /opt/ironcurtain/local/install.json) == "$installed_before" ]]
 install -m 640 -o root -g 10001 "$WORK/program-valid.run" "$active_run"
-/usr/local/bin/ironcurtain release-update
+/usr/local/bin/tiemu release-update
 [[ $(jq -er .version /opt/ironcurtain/local/install.json) == "$version" ]]
 [[ $(jq -er .antivirus /opt/ironcurtain/local/install.json) == skip ]]
 [[ $(sha256sum /etc/ironcurtain/local/profile.json) == "$profile_before" ]]
@@ -130,14 +144,14 @@ install -m 640 -o root -g 10001 "$WORK/program-valid.run" "$active_run"
 [[ $(sha256sum /etc/ironcurtain/local/rules.json /etc/ironcurtain/local/rules.highwater.json) == "$rules_before" ]]
 IRONCURTAIN_EXPECT_RULE_SEQUENCE=1 IRONCURTAIN_EXPECT_RELEASE_VERSION="$version" node "$SOURCE/tests/helpers/independent-deployment-probe.js"
 # Same signed cloud program can be re-downloaded and safely reused.
-/usr/local/bin/ironcurtain release-update
+/usr/local/bin/tiemu release-update
 bash "$SOURCE/scripts/install-independent.sh" --role cloud
 after=$(sha256sum /etc/ironcurtain/local/runtime/panel-auth.json /etc/ironcurtain/cloud/ca.key)
 [[ $before == "$after" ]] || { echo 'Upgrade replaced existing identity.' >&2; exit 1; }
 ! systemctl is-enabled --quiet ironcurtain-rules-sync.timer
 ! systemctl is-active --quiet ironcurtain-rules-sync.timer
 systemctl enable --now ironcurtain-rules-sync.timer
-/usr/local/bin/ironcurtain doctor
+/usr/local/bin/tiemu doctor
 /usr/local/bin/xuanwu doctor
 node "$SOURCE/tests/helpers/independent-deployment-probe.js"
 # Authenticated same-host recovery uses the REAL role containers and root agent.
@@ -187,7 +201,7 @@ for recovery_role in local cloud; do
   [[ $(cat "$DATA/runtime/recovery-fixture") == before-recovery ]]; ic_healthy
   [[ ! -e $BASE/transaction.json ]]
 done
-/usr/local/bin/ironcurtain doctor
+/usr/local/bin/tiemu doctor
 /usr/local/bin/xuanwu doctor
 echo 'Real encrypted local/cloud recovery passed; current identity and revocation state retained.'
 echo 'Real local/cloud Docker first installation, rerun and upgrade passed; identities preserved.'

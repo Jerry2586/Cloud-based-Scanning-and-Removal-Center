@@ -11,6 +11,8 @@ ic_role() {
   PROJECT=ironcurtain-$ROLE
   CONTAINER=ironcurtain-$ROLE
   [[ $ROLE == local ]] && PORT=8790 || PORT=9443
+  if [[ $ROLE == local ]]; then MENU_COMMAND=tiemu; PRODUCT_NAME=铁幕安全;
+  else MENU_COMMAND=xuanwu; PRODUCT_NAME=玄武引擎; fi
 }
 ic_check_dir() {
   local dir=$1 parent mode
@@ -91,4 +93,24 @@ ic_scan_wait() {
     sleep 1
   done
   return 1
+}
+
+# Menu destinations are regular root-owned files; use a private atomic replacement.
+ic_menu_check() {
+  local target=$1 mode
+  ic_check_dir "$(dirname "$target")"
+  if [[ -e $target || -L $target ]]; then
+    [[ -f $target && ! -L $target && $(stat -c %u "$target") == 0 && $(stat -c %h "$target") == 1 ]] || ic_fail '菜单入口不受 root 控制'
+    mode=$(stat -c %a "$target")
+    (( (8#$mode & 0022) == 0 )) || ic_fail '菜单入口不能对其他用户开放写入'
+  fi
+}
+ic_menu_write() {
+  local target=$1 temporary
+  ic_menu_check "$target"
+  temporary=$(mktemp "$target.XXXXXXXX") || return 1
+  if ! { printf '#!/usr/bin/env bash\nexec bash /opt/ironcurtain/%s/current/scripts/ironcurtain.sh --role %s "$@"\n' "$ROLE" "$ROLE" > "$temporary" && chmod 755 "$temporary" && mv -Tf -- "$temporary" "$target"; }; then
+    rm -f -- "$temporary"
+    return 1
+  fi
 }

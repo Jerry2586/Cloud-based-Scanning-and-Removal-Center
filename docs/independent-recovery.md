@@ -1,14 +1,14 @@
 # 铁幕 / 玄武独立恢复
 
-每个角色有自己的恢复密钥和恢复包。只由可信 Linux root 菜单或 CLI 发起；网页、云端节点不能执行恢复。菜单 22 创建，23 验证，24 同机恢复。角色命令为 `ironcurtain` / `xuanwu`。
+每个角色有自己的恢复密钥和恢复包。只由可信 Linux root 菜单或 CLI 发起；网页、云端节点不能执行恢复。菜单 22 创建，23 验证，24 同机恢复。角色命令为 `tiemu` / `xuanwu`。
 
 ```sh
-sudo ironcurtain backup
-sudo ironcurtain verify-backup
-sudo ironcurtain restore-backup
+sudo tiemu backup
+sudo tiemu verify-backup
+sudo tiemu restore-backup
 ```
 
-后两项交互询问恢复包的绝对路径；恢复还要求输入 `SAME-HOST-RESTORE`。玄武把上述命令的 `ironcurtain` 换成 `xuanwu`。安装目录内的专用脚本支持可信运维自动化：
+后两项交互询问恢复包的绝对路径；恢复还要求输入 `SAME-HOST-RESTORE`。玄武把上述命令的 `tiemu` 换成 `xuanwu`。安装目录内的专用脚本支持可信运维自动化：
 
 ```sh
 sudo bash /opt/ironcurtain/local/current/scripts/independent-backup.sh local verify-backup /绝对路径/local.icbackup

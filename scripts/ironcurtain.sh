@@ -4,7 +4,7 @@ set -euo pipefail
 umask 077
 ROLE=''
 if [[ ${1:-} == --role ]]; then ROLE=${2:?}; shift 2; fi
-case "${ROLE:-$(basename "$0")}" in local|ironcurtain) ROLE=local ;; cloud|xuanwu) ROLE=cloud ;; *) echo '角色无效' >&2; exit 1 ;; esac
+case "${ROLE:-$(basename "$0")}" in local|tiemu|ironcurtain) ROLE=local ;; cloud|xuanwu) ROLE=cloud ;; *) echo '角色无效' >&2; exit 1 ;; esac
 SOURCE=/opt/ironcurtain/$ROLE/current
 source "$SOURCE/scripts/lib/independent.sh"
 source "$SOURCE/scripts/lib/management-transaction.sh"
@@ -63,8 +63,11 @@ audit() {
   chmod 600 "$CONF/management-audit.jsonl"
 }
 status() {
-  echo "$([[ $ROLE == local ]] && echo 铁幕安全 || echo 玄武引擎) · $(jq -r .version "$BASE/install.json")"
-  echo "独立面板：https://$HOST:$PORT"
+  echo "════════════════════════════════════════════════════"
+  echo "  $PRODUCT_NAME · Linux 管理菜单 · v$(jq -r .version "$BASE/install.json")"
+  echo "════════════════════════════════════════════════════"
+  echo "网页面板：https://$HOST:$PORT"
+  echo "打开菜单：sudo $MENU_COMMAND    更新程序：sudo $MENU_COMMAND update"
   if ic_healthy; then echo '容器：健康'; else echo '容器：未通过健康检查'; fi
   if [[ $ROLE == local ]]; then
     echo "扫描代理：$(systemctl is-active ironcurtain-agent.service || true)"
@@ -433,7 +436,7 @@ while true; do
   [[ $ROLE == local ]] && echo '25. 从玄武验签更新哈希规则   26. 本机规则状态' || echo '25. 导入已签名哈希规则   26. 云端规则状态'
   [[ $ROLE == local ]] && echo '27. 从玄武验签下载并更新铁幕程序' || echo '27. 导入正式签名程序包   28. 云端程序发布状态'
   echo ' 0. 退出'
-  ask '选择：' choice
+  ask "$PRODUCT_NAME · 请输入菜单编号（0 退出）：" choice
   case "$choice" in
     0) exit 0 ;; 1) action=status ;; 2) action=logs ;; 3) action=start ;; 4) action=stop ;; 5) action=restart ;; 6) action=update ;; 7) action=doctor ;;
     8) [[ $ROLE == local ]] && action=scan || action=register ;;

@@ -28,11 +28,11 @@ sudo xuanwu rules-status
 
 ## 铁幕拉取
 
-先通过 Linux 菜单导入节点加密身份包并核对 CA 指纹。sudo ironcurtain 菜单 25 主动拉取，26 查看状态；命令方式：
+先通过 Linux 菜单导入节点加密身份包并核对 CA 指纹。sudo tiemu 菜单 25 主动拉取，26 查看状态；命令方式：
 
 ~~~sh
-sudo ironcurtain rules-sync
-sudo ironcurtain rules-status
+sudo tiemu rules-sync
+sudo tiemu rules-status
 ~~~
 
 原生客户端只访问已配对 HTTPS 主机的 /v1/connectivity 和 /v1/rules；验证主机名、mTLS、独立令牌、节点名称、两次响应的相同服务端证书，并限制总时间和字节数。拒绝重定向、超大响应、过期、不兼容和无效签名。配对后的铁幕通过 root 固定服务每 15 分钟主动拉取一次（另有最多 60 秒随机延迟），也可随时手动同步。未配对时跳过；安装或管理持锁时延后；存在未完成事务时停止此次同步。网络、身份或签名失败保留现行规则，过期会明确报告；宿主周期扫描继续独立运行。Linux 实际验收以功能矩阵为准。

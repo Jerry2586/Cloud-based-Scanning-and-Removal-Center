@@ -7,7 +7,7 @@ README 中 local/cloud 的代码框各只有一行，复制对应的一行命令
 1. 登录 GitHub，为 `Jerry2586/Cloud-based-Scanning-and-Removal-Center` 创建只读细粒度 Token，只选择此仓库，授予 `Contents: Read`。如仓库受组织审批或 SSO 约束，还需完成相应授权。
 2. 在需要保护的服务器复制 README 的 local 完整命令；在独立安全服务器复制 cloud 完整命令。
 3. 若匿名请求报 404/401，接下来 curl 会提示 `Enter host password for user 'Jerry2586'`，输入 Token，输入不显示。安装器随后再次隐藏询问同一个 Token，用于保存更新凭据；第一次 curl 的交互输入不会被保存。
-4. 首次安装自动识别公网 IPv4，无需填写；升级保留已有地址，等待安装检查。以后使用角色菜单；更新分别运行 `sudo ironcurtain update` 或 `sudo xuanwu update`。重复 README 短命令也会检查最新签名正式版本，但下载私有引导器会重新询问 Token；安装器读取已保存令牌。日常更新优先使用一行菜单命令。需要下载时自动复用令牌，请使用本页下方完整入口。
+4. 首次安装自动识别公网 IPv4，无需填写；升级保留已有地址，等待安装检查。以后使用角色菜单；更新分别运行 `sudo tiemu update` 或 `sudo xuanwu update`。重复 README 短命令也会检查最新签名正式版本，但下载私有引导器会重新询问 Token；安装器读取已保存令牌。日常更新优先使用一行菜单命令。需要下载时自动复用令牌，请使用本页下方完整入口。
 
 ## 获取和更新的边界
 

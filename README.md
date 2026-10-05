@@ -4,7 +4,7 @@
 
 APPGOG 的授权、打包、账号、数据库和升级仍由其自己的项目负责。安全面板、检测逻辑、节点身份和安全更新在本仓库维护。
 
-> 当前程序版本 **0.5.0**，新增宿主/容器发现、目录纳管、真实文件深度查杀、扫描计数和重启恢复，保留自动补环境、公网 IPv4 识别与摘要固定镜像回退。正式状态以对应 GitHub Release 与回取验签报告为准。v0.4.0 官方病毒库验收 37189710784 的历史证据保留。异地灾备和跨主机扩展仍需补齐。实际范围见 [功能与验收矩阵](docs/capability-status.md)。
+> 当前程序版本 **0.5.1**，铁幕 Linux 菜单入口统一为 `tiemu`，玄武为 `xuanwu`，保留旧 `ironcurtain` 命令兼容；已有宿主/容器发现、目录纳管、真实文件深度查杀、扫描计数和重启恢复，保留自动补环境、公网 IPv4 识别与摘要固定镜像回退。正式状态以对应 GitHub Release 与回取验签报告为准。v0.4.0 官方病毒库验收 37189710784 的历史证据保留。异地灾备和跨主机扩展仍需补齐。实际范围见 [功能与验收矩阵](docs/capability-status.md)。
 
 ## 本地宿主检查与文件深度查杀
 
@@ -39,7 +39,7 @@ sudo sh -c 'set -eu; set +x; umask 077; [ "$(id -u)" = 0 ] && [ "$(uname -s)" = 
 铁幕更新：
 
 ```sh
-sudo ironcurtain update
+sudo tiemu update
 ```
 
 玄武更新：
@@ -48,7 +48,9 @@ sudo ironcurtain update
 sudo xuanwu update
 ```
 
-打开菜单：铁幕输入 `sudo ironcurtain`；玄武输入 `sudo xuanwu`。
+打开菜单：铁幕输入 `sudo tiemu`；玄武输入 `sudo xuanwu`。
+
+**旧版铁幕先运行一次 `sudo ironcurtain update`，升级至 v0.5.1 或更新正式版后即可使用 `tiemu`。**旧命令仍可用。两边菜单都会显示产品名称、网页面板地址和更新命令。
 
 详细步骤、令牌权限与失败处理见 [Git 在线安装说明](docs/git-online-install.md)。正式安装仍验证 Ed25519 清单签名与安装包 SHA-256，拒绝降级和同版本内容变更。私有仓库令牌过期时，更新受保护令牌文件后重试；无人值守维护也可用已获得的引导器指定 `--token-file /绝对路径/令牌文件`。手动获取 `install.sh` 仍可作为离线传输入口，但不再是在线安装的前置步骤。
 
@@ -60,7 +62,7 @@ sudo xuanwu update
 
 源码安装器已增加基础镜像网络回退：优先 Docker Hub，连接超时、DNS 故障或限流时尝试 DaoCloud 的固定镜像路径。两者使用同一份 SHA-256 摘要，摘要不一致、鉴权失败或镜像不存在时立即停止。安装器复用摘要一致的本地镜像，不修改宿主 DNS、Docker 全局配置或关闭 TLS。每次拉取最多 180 秒、每次构建最多 300 秒，记录保存在 `/var/lib/ironcurtain/<local或cloud>/logs/image-build.*.log`。**v0.4.1 安装包包含此修复；原 v0.4.0 安装包没有备用源切换功能。安装时请确认验签提示版本至少为 v0.4.1。**
 
-本地角色默认尝试安装 ClamAV/freshclam。RPM 系采用当前可用的 dnf 或 yum；软件源不提供病毒引擎或病毒库更新失败时显示“尚未就绪”，记录在角色 logs/antivirus-install.log，可运行 `sudo ironcurtain engine-install`重试。容器健康不等于病毒库已经可用。
+本地角色默认尝试安装 ClamAV/freshclam。RPM 系采用当前可用的 dnf 或 yum；软件源不提供病毒引擎或病毒库更新失败时显示“尚未就绪”，记录在角色 logs/antivirus-install.log，可运行 `sudo tiemu engine-install`重试。容器健康不等于病毒库已经可用。
 
 默认面板端口：铁幕 8790，玄武 9443。按管理来源限制安全组与主机防火墙；自签/私有 CA 证书须核对指纹并导入信任，安装器不关闭 TLS 校验。
 
@@ -79,7 +81,7 @@ sudo bash scripts/install-independent.sh --role cloud
 
 ## Linux 可视化菜单与加密对接
 
-铁幕运行 `sudo ironcurtain`，玄武运行 `sudo xuanwu`。菜单提供启停、日志、签名更新、环境诊断和角色专属对接。
+铁幕运行 `sudo tiemu`，玄武运行 `sudo xuanwu`。菜单提供启停、日志、签名更新、环境诊断和角色专属对接。
 
 1. 在玄武选择“登记节点与加密导出”，填写如 `node-server1` 的唯一名称和至少 16 字符的解锁密码。每台铁幕独立登记，玄武可管理多个节点。
 2. 将生成的 `.icpair` **加密身份包**通过可信通道复制到对应铁幕主机。玄武 CA 私钥和浏览器 reader 身份留在玄武管理域。
@@ -87,7 +89,7 @@ sudo bash scripts/install-independent.sh --role cloud
 4. 在铁幕选择“配置保护范围”，填写程序目录、业务目录、关键配置、凭据权限检查项、SQLite、容器和允许端口。未配置的项目显示未就绪。
 5. 用“一键扫描”和“检查加密连接”查看真实结果；在玄武选择“浏览器面板证书”获取 reader 导入指引。
 
-本地面板使用独立随机管理员密码；`sudo ironcurtain credentials` 仅在可信终端查看，`sudo ironcurtain reset-password` 重置并使旧会话失效。玄武网页 `/dashboard` 需 reader 客户端证书及独立登录凭据。网页当前读取状态；保护范围、配对、撤销、更新等管理动作走 Linux 菜单。
+本地面板使用独立随机管理员密码；`sudo tiemu credentials` 仅在可信终端查看，`sudo tiemu reset-password` 重置并使旧会话失效。玄武网页 `/dashboard` 需 reader 客户端证书及独立登录凭据。网页当前读取状态；保护范围、配对、撤销、更新等管理动作走 Linux 菜单。
 
 ## 检测范围与边界
 
@@ -112,7 +114,7 @@ sudo bash scripts/install-independent.sh --role cloud
 
 ## 玄武分发签名程序包
 
-玄武 root 管理员使用 `xuanwu release-import` 导入独立发布环境签名的六份正式附件；铁幕 root 管理员使用 `ironcurtain release-update`，通过已有节点 mTLS 身份主动获取并独立验签，然后调用原安装器更新。程序更新不由网页或规则自动同步触发。命令、信任边界与验收范围见 [签名程序分发说明](docs/signed-program-delivery.md)。
+玄武 root 管理员使用 `xuanwu release-import` 导入独立发布环境签名的六份正式附件；铁幕 root 管理员使用 `tiemu release-update`，通过已有节点 mTLS 身份主动获取并独立验签，然后调用原安装器更新。程序更新不由网页或规则自动同步触发。命令、信任边界与验收范围见 [签名程序分发说明](docs/signed-program-delivery.md)。
 
 ## 玄武分发官方病毒库
 

@@ -56,6 +56,7 @@ number=0
 fixture() {
   number=$((number+1)); ROLE=local
   BASE=$WORK/case-$number/base; CONF=$WORK/case-$number/config; DATA=$WORK/case-$number/data
+  MENU_EXTRA=$WORK/case-$number/tiemu
   MENU=$WORK/case-$number/menu; AGENT_UNIT=$WORK/case-$number/agent.service
   RULES_SERVICE=$WORK/case-$number/ironcurtain-rules-sync.service
   RULES_TIMER=$WORK/case-$number/ironcurtain-rules-sync.timer
@@ -66,6 +67,7 @@ fixture() {
   printf '{"schema":1}\n' > "$BASE/install.json"; chmod 600 "$BASE/install.json"
   ln -s "$BASE/releases/1.0.0" "$BASE/current"
   printf old-config > "$CONF/value"; printf old-data > "$DATA/value"
+  printf old-extra > "$MENU_EXTRA"
   printf old-menu > "$MENU"; printf old-agent > "$AGENT_UNIT"
   printf old-rules-service > "$RULES_SERVICE"; printf old-rules-timer > "$RULES_TIMER"
 }
@@ -117,11 +119,13 @@ for archive in config.tar data.tar; do
 done
 ic_tx_mutating
 printf changed > "$CONF/value"; printf changed > "$DATA/value"
+printf changed > "$MENU_EXTRA"
 printf changed > "$MENU"; printf changed > "$AGENT_UNIT"
 printf changed > "$RULES_SERVICE"; printf changed > "$RULES_TIMER"
 ic_tx_recover
 assert_old
 [[ $(cat "$DATA/value") == old-data && $(cat "$MENU") == old-menu && $(cat "$AGENT_UNIT") == old-agent ]]
+[[ $(cat "$MENU_EXTRA") == old-extra ]]
 [[ $CONTAINER_RUNNING == true && $AGENT_RUNNING == true && $AGENT_ENABLED == true ]]
 [[ $(cat "$RULES_SERVICE") == old-rules-service && $(cat "$RULES_TIMER") == old-rules-timer ]]
 [[ $TIMER_RUNNING == true && $TIMER_ENABLED == true ]]
@@ -154,12 +158,13 @@ if ic_tx_recover; then echo 'Expected install health failure' >&2; exit 1; fi
 pass 'installation recovery remains pending on failed health'
 fixture
 # First install has no previous installation, menu or agent.
-rm -f -- "$BASE/current" "$BASE/install.json" "$MENU" "$AGENT_UNIT" "$RULES_SERVICE" "$RULES_TIMER"
+rm -f -- "$BASE/current" "$BASE/install.json" "$MENU" "$MENU_EXTRA" "$AGENT_UNIT" "$RULES_SERVICE" "$RULES_TIMER"
 CONTAINER_RUNNING=false; AGENT_RUNNING=false; AGENT_ENABLED=false
 TIMER_RUNNING=false; TIMER_ENABLED=false
 ic_tx_begin; ic_tx_mutating
 printf changed > "$CONF/value"; printf changed > "$DATA/value"
 printf candidate > "$BASE/install.json"; ln -s "$BASE/releases/1.0.0" "$BASE/current"
+printf candidate > "$MENU_EXTRA"
 printf candidate > "$MENU"; printf candidate > "$AGENT_UNIT"
 printf candidate > "$RULES_SERVICE"; printf candidate > "$RULES_TIMER"
 TIMER_ENABLED=true; TIMER_RUNNING=true
@@ -167,6 +172,7 @@ AGENT_ENABLED=true; AGENT_RUNNING=true; CONTAINER_RUNNING=true
 ic_tx_recover; assert_old
 [[ ! -e $BASE/install.json && ! -L $BASE/current && ! -e $MENU && ! -e $AGENT_UNIT && $AGENT_ENABLED == false && $AGENT_RUNNING == false ]]
 [[ ! -e $RULES_SERVICE && ! -e $RULES_TIMER && $TIMER_ENABLED == false && $TIMER_RUNNING == false ]]
+[[ ! -e $MENU_EXTRA ]]
 pass 'failed first installation restores pre-install state without orphan rule timer'
 fixture
 ic_tx_begin
@@ -197,4 +203,31 @@ TIMER_RUNNING=false; TIMER_ENABLED=false
 ic_tx_begin; ic_tx_finish
 [[ $TIMER_RUNNING == false && $TIMER_ENABLED == false ]]
 pass 'successful snapshot operation retains stopped disabled timer'
-echo '16 Linux filesystem transaction checks passed; no real Docker/systemd acceptance claimed.'
+fixture
+ic_tx_begin; ic_tx_mutating
+# A pre-tiemu checkpoint must restore the legacy menu and ignore any new entry.
+rm -f -- "$IC_TX/menu-extra-managed" "$IC_TX/menu-extra"
+printf changed > "$MENU"; printf independent-entry > "$MENU_EXTRA"
+ic_tx_recover
+[[ $(cat "$MENU") == old-menu && $(cat "$MENU_EXTRA") == independent-entry ]]
+pass 'legacy installation checkpoint preserves menu path mapping'
+fixture
+# Upgrading a pre-tiemu installation leaves no new entry when rollback is needed.
+rm -f -- "$MENU_EXTRA"
+ic_tx_begin; ic_tx_mutating; printf candidate > "$MENU_EXTRA"
+ic_tx_recover
+[[ ! -e $MENU_EXTRA && $(cat "$MENU") == old-menu ]]
+pass 'upgrade rollback removes newly introduced tiemu entry'
+fixture
+rm -f -- "$MENU_EXTRA"
+ln -s "$CONF/value" "$MENU_EXTRA"
+if (ic_tx_begin) 2>/dev/null; then echo 'Expected unsafe menu rejection' >&2; exit 1; fi
+assert_old; [[ -L $MENU_EXTRA && ! -e $BASE/transaction.json ]]
+pass 'new menu symlink cannot overwrite another file'
+fixture
+ic_menu_write "$MENU_EXTRA"
+[[ $(stat -c '%a:%u:%h' "$MENU_EXTRA") == 755:0:1 ]]
+bash -n "$MENU_EXTRA"
+grep -q 'exec bash /opt/ironcurtain/local/current/scripts/ironcurtain.sh --role local' "$MENU_EXTRA"
+pass 'atomic tiemu wrapper retains fixed local role and root ownership'
+echo '20 Linux filesystem transaction checks passed; no real Docker/systemd acceptance claimed.'

@@ -24,7 +24,7 @@ ic_trusted_dir "$DATA"
 chmod 755 "$CONF" "$DATA"
 if [[ -e $DATA/activation.json || -L $DATA/activation.json ]]; then
   systemctl disable --now ironcurtain-antivirus-update.timer
-  ic_fail '病毒库切换事务待恢复，请运行 ironcurtain virus-db-update；保持官方更新器停用'
+  ic_fail '病毒库切换事务待恢复，请运行 tiemu virus-db-update；保持官方更新器停用'
 fi
 if [[ -e $DATA/source.json || -L $DATA/source.json ]]; then
   python3 - "$SOURCE" <<'PY'
@@ -34,7 +34,7 @@ v=cache.bytes_json(pathlib.Path('/var/lib/ironcurtain-antivirus/source.json'))
 assert isinstance(v,dict) and set(v)=={'schema','source','snapshot'} and v['schema']=='ironcurtain-virus-db-source/v1' and v['source']=='xuanwu-signed' and cache.re.fullmatch('[a-f0-9]{64}',v['snapshot']), 'DB_SOURCE'
 PY
   if [[ $ACTION == policy ]]; then systemctl disable --now ironcurtain-antivirus-update.timer; exit; fi
-  ic_fail '当前使用玄武签名病毒库，请使用 ironcurtain virus-db-update；禁止混用更新源'
+  ic_fail '当前使用玄武签名病毒库，请使用 tiemu virus-db-update；禁止混用更新源'
 fi
 if [[ $ACTION == install ]]; then
   . /etc/os-release
@@ -43,7 +43,7 @@ if [[ $ACTION == install ]]; then
     apt-get update || ic_fail '病毒引擎软件源更新失败；检查网络与 apt 源'
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove clamav clamav-freshclam       || ic_fail '无法从受信任软件源安装 ClamAV，病毒扫描尚未就绪'
   else
-    "$MANAGER" install -y clamav clamav-update       || ic_fail '当前受信任 RPM 软件源未提供 ClamAV/freshclam；请启用发行版支持的病毒引擎软件源后运行 ironcurtain engine-install'
+    "$MANAGER" install -y clamav clamav-update       || ic_fail '当前受信任 RPM 软件源未提供 ClamAV/freshclam；请启用发行版支持的病毒引擎软件源后运行 tiemu engine-install'
   fi
   command -v clamscan >/dev/null && command -v freshclam >/dev/null || ic_fail '系统软件源未提供病毒引擎，尚未就绪'
   if ! getent passwd ironcurtain-av >/dev/null; then
@@ -102,7 +102,7 @@ EOF
   systemctl daemon-reload
   systemctl enable --now ironcurtain-antivirus-update.timer
 fi
-[[ -f $UNIT && ! -L $UNIT && -f $CONF/freshclam.conf && ! -L $CONF/freshclam.conf ]] || ic_fail '请先运行 ironcurtain engine-install'
+[[ -f $UNIT && ! -L $UNIT && -f $CONF/freshclam.conf && ! -L $CONF/freshclam.conf ]] || ic_fail '请先运行 tiemu engine-install'
 ic_av_apparmor
 [[ $ACTION != policy ]] || exit 0
 if ! systemctl start ironcurtain-antivirus-update.service; then

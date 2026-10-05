@@ -23,7 +23,7 @@ sudo xuanwu release-status
 先通过 Linux 菜单完成玄武配对，再运行：
 
 ~~~sh
-sudo ironcurtain release-update
+sudo tiemu release-update
 ~~~
 
 铁幕使用每节点证书、私钥、令牌与受信 CA 主动拉取；核对节点身份，不接受重定向。下载有大小和总超时限制。铁幕用自己保存的固定发布公钥独立验签，拒绝伪造、损坏和降级，再调用经过验证的 .run 安装 local 角色。已有域名、绑定地址、身份、扫描配置和病毒引擎安装模式保留；失败使用原安装事务恢复。

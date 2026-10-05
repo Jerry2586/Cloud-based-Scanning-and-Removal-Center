@@ -23,6 +23,9 @@ done
 ic_role "$ROLE"
 MENU=/usr/local/bin/ironcurtain
 [[ $ROLE != cloud ]] || MENU=/usr/local/bin/xuanwu
+# Keep MENU fixed for recovery of pre-tiemu transactions and signed bootstrap contracts.
+MENU_EXTRA=
+[[ $ROLE != local ]] || MENU_EXTRA=/usr/local/bin/tiemu
 AGENT_UNIT=/etc/systemd/system/ironcurtain-agent.service
 RULES_SERVICE=/etc/systemd/system/ironcurtain-rules-sync.service
 RULES_TIMER=/etc/systemd/system/ironcurtain-rules-sync.timer
@@ -32,7 +35,7 @@ engine_setup() {
   if command -v clamscan >/dev/null && [[ -f /etc/systemd/system/ironcurtain-antivirus-update.timer ]]; then engine_action=policy; fi
   install -d -m 700 "$DATA/logs"
   if ! bash "$BASE/current/scripts/antivirus-engine.sh" "$engine_action" > "$DATA/logs/antivirus-install.log" 2>&1; then
-    echo "病毒引擎尚未就绪；安装记录：$DATA/logs/antivirus-install.log。请运行 ironcurtain engine-install 重试。" >&2
+    echo "病毒引擎尚未就绪；安装记录：$DATA/logs/antivirus-install.log。请运行 tiemu engine-install 重试。" >&2
   fi
 }
 
@@ -86,9 +89,9 @@ if [[ -f $BASE/current/package.json ]]; then
     [[ $DIGEST == "$(cat "$BASE/current/.payload-sha256")" && $(payload_digest "$BASE/current") == "$DIGEST" ]] || ic_fail '相同版本源码内容不同，需发布新版本'
     ic_load
     ic_healthy || ic_fail '当前版本服务不健康，请从菜单诊断，避免自动覆盖'
-    [[ $ROLE != local ]] || ic_scan_wait || ic_fail '本地扫描代理不可用，请运行 ironcurtain doctor'
+    [[ $ROLE != local ]] || ic_scan_wait || ic_fail '本地扫描代理不可用，请运行 tiemu doctor'
     engine_setup
-    echo "当前版本 $VERSION 已安装且健康。"; exit 0
+    echo "$PRODUCT_NAME v$VERSION 已安装且健康。打开 Linux 管理菜单：sudo $MENU_COMMAND"; exit 0
   fi
 fi
 if docker inspect "$CONTAINER" >/dev/null 2>&1; then
@@ -248,8 +251,8 @@ jq -n --arg role "$ROLE" --arg host "$HOST" --arg bind "$BIND" --arg image "$IMA
 chmod 600 "$BASE/install.json.new"; mv -f "$BASE/install.json.new" "$BASE/install.json"
 ln -sfn "$RELEASE" "$BASE/current.next"; mv -Tf "$BASE/current.next" "$BASE/current"
 ic_check_dir /usr/local/bin
-printf '#!/usr/bin/env bash\nexec bash /opt/ironcurtain/%s/current/scripts/ironcurtain.sh --role %s "$@"\n' "$ROLE" "$ROLE" > "$MENU.new"
-chmod 755 "$MENU.new"; mv -f "$MENU.new" "$MENU"
+ic_menu_write "$MENU"
+[[ -z $MENU_EXTRA ]] || ic_menu_write "$MENU_EXTRA"
 if [[ $ROLE == local ]]; then
   systemctl daemon-reload
   systemctl enable --now ironcurtain-agent.service
@@ -271,7 +274,10 @@ fi
 ic_tx_finish
 SUCCESS=true
 engine_setup
-echo "独立 $ROLE v$VERSION 安装完成：https://$HOST:$PORT"
+echo "$PRODUCT_NAME v$VERSION 安装完成"
+echo "网页面板：https://$HOST:$PORT"
+echo "打开 Linux 管理菜单：sudo $MENU_COMMAND"
+echo "检查并更新程序：sudo $MENU_COMMAND update"
 echo '请在防火墙限制管理来源，确认服务器证书指纹后导入信任；脚本不会关闭 TLS 校验。'
-[[ $ROLE != local ]] || echo '输入 ironcurtain 打开管理菜单并配置受保护项目。'
-[[ $ROLE != cloud ]] || { echo '输入 xuanwu 打开管理菜单、登记节点和导出加密身份包。'; ic_fingerprint; }
+[[ $ROLE != local ]] || echo '在铁幕菜单配置保护范围和玄武连接；旧命令 ironcurtain 继续可用。'
+[[ $ROLE != cloud ]] || { echo '在玄武菜单登记铁幕节点、导出加密身份包。'; ic_fingerprint; }

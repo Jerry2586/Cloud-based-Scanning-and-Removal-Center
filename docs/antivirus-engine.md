@@ -2,12 +2,12 @@
 
 独立 local 安装默认从系统已配置的软件源安装 ClamAV，建立专属病毒库和更新定时器。云端角色不安装宿主病毒引擎。离线可使用 --antivirus skip；跳过或下载失败时面板明确显示不可用。
 
-在 Linux 输入 ironcurtain 打开菜单，可安装引擎、更新官方病毒库和查看状态：
+在 Linux 输入 tiemu 打开菜单，可安装引擎、更新官方病毒库和查看状态：
 
 ~~~sh
-sudo ironcurtain engine-install
-sudo ironcurtain engine-update
-sudo ironcurtain engine-status
+sudo tiemu engine-install
+sudo tiemu engine-update
+sudo tiemu engine-status
 ~~~
 
 引擎包由 apt/dnf 受信任软件源提供；缺包时停止，不自动添加未知源。病毒库位于 /var/lib/ironcurtain-antivirus/database，专用无登录账户 ironcurtain-av 写入。freshclam 使用固定官方镜像和 TestDatabases 检查，定时器每六小时触发并加入随机延迟。真实日志通过 journalctl -u ironcurtain-antivirus-update.service 查看。

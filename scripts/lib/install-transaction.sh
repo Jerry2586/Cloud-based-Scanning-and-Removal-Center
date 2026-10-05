@@ -8,10 +8,15 @@ ic_tx_begin() {
   if [[ -L $BASE/current ]]; then readlink "$BASE/current" > "$IC_TX/current"; elif [[ -e $BASE/current ]]; then ic_fail 'current 必须为受控版本链接'; fi
   for name in "$MENU"; do
     if [[ -e $name || -L $name ]]; then
-      [[ -f $name && ! -L $name && $(stat -c %u "$name") == 0 ]] || ic_fail '菜单入口不受 root 控制'
+      ic_menu_check "$name"
       cp -p "$name" "$IC_TX/menu"
     fi
   done
+  if [[ $ROLE == local && -n ${MENU_EXTRA:-} ]]; then
+    ic_menu_check "$MENU_EXTRA"
+    if [[ -e $MENU_EXTRA ]]; then cp -p "$MENU_EXTRA" "$IC_TX/menu-extra"; fi
+    touch "$IC_TX/menu-extra-managed"
+  fi
   if [[ $ROLE == local ]]; then
     if [[ -e $AGENT_UNIT || -L $AGENT_UNIT ]]; then
       [[ -f $AGENT_UNIT && ! -L $AGENT_UNIT && $(stat -c %u "$AGENT_UNIT") == 0 ]] || ic_fail '扫描服务定义不受 root 控制'
@@ -97,7 +102,14 @@ ic_tx_recover() {
       [[ ! -e $BASE/current || -L $BASE/current ]] || ic_fail 'current 被替换，停止清理'
       rm -f -- "$BASE/current" || return 1
     fi
+    ic_menu_check "$MENU"
     if [[ -s $snapshot/menu ]]; then cp -p "$snapshot/menu" "$MENU" || return 1; else rm -f -- "$MENU" || return 1; fi
+    # Old snapshots only know MENU=ironcurtain; never reinterpret or touch the new entry.
+    if [[ $ROLE == local && -f $snapshot/menu-extra-managed ]]; then
+      [[ -n ${MENU_EXTRA:-} ]] || ic_fail '新菜单恢复路径缺失'
+      ic_menu_check "$MENU_EXTRA"
+      if [[ -s $snapshot/menu-extra ]]; then cp -p "$snapshot/menu-extra" "$MENU_EXTRA" || return 1; else rm -f -- "$MENU_EXTRA" || return 1; fi
+    fi
     if [[ $ROLE == local ]]; then
       if [[ -s $snapshot/agent.service ]]; then cp -p "$snapshot/agent.service" "$AGENT_UNIT" || return 1; else rm -f -- "$AGENT_UNIT" || return 1; fi
       if [[ -n ${RULES_TIMER:-} ]]; then

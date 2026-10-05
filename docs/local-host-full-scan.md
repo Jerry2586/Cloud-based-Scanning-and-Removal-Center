@@ -4,13 +4,13 @@
 
 ## 使用顺序
 
-安装后在 Linux 执行 `sudo ironcurtain` 打开 root 管理菜单。选择 31 发现保护对象，选择 32 重新发现并按序号纳管。选择 33 提交文件深度查杀或继续暂停任务，选择 34 查看保护覆盖与扫描计数。对应固定命令：
+安装后在 Linux 执行 `sudo tiemu` 打开 root 管理菜单。选择 31 发现保护对象，选择 32 重新发现并按序号纳管。选择 33 提交文件深度查杀或继续暂停任务，选择 34 查看保护覆盖与扫描计数。对应固定命令：
 
 ~~~sh
-sudo ironcurtain discover
-sudo ironcurtain enroll
-sudo ironcurtain full-scan
-sudo ironcurtain scan-status
+sudo tiemu discover
+sudo tiemu enroll
+sudo tiemu full-scan
+sudo tiemu scan-status
 ~~~
 
 纳管时重新读取候选记录；候选超过 120 秒、目录已变化或 profile 不合法均拒绝。配置切换走管理事务，代理启动与健康检查失败恢复旧配置。发现和纳管不会自动批准镜像、端口、路由或程序签名基线。
