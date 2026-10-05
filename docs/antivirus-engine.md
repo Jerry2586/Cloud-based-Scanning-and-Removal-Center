@@ -19,3 +19,5 @@ sudo ironcurtain engine-status
 root 菜单隔离需使用固定扫描证据和重新扫描后的文件描述符，复制校验后再移除原文件。权限、目标范围和恢复限制见 independent-recovery.md 与 security-center-architecture.md。程序升级回滚保留引擎和官方数据库。
 
 常规 CI 使用真实 ClamAV 和明确隔离的测试特征库，不能代替官方库公网下载。独立官方库闸门实际运行 systemd 更新器，验证 main/daily/bytecode 签名，再扫描正常与 EICAR 样本；失败必须明确记录。
+
+R009 新增文件深度查杀队列，扫描前后及最终汇总核对病毒库 generation，包含 main/daily 和可选 bytecode 的元数据及文件身份。程序版本相同但库文件替换也不能复用旧队列。真实计数、资源限制、逐文件 clamscan 性能和中断恢复见 [本地宿主发现与文件深度查杀](local-host-full-scan.md)。当前新增实现尚未进入 v0.4.1 正式包。

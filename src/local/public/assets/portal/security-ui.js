@@ -70,10 +70,11 @@ export function createSecurityUi({ state, can, request, notify }) {
   function renderFileFindings(report) {
     const list = $('security-malware-findings'), status = $('security-malware-findings-state');
     list?.replaceChildren();
-    const visible = report.state === 'finished' && ['complete','partial'].includes(report.findings_state);
+    const visible = (report.state === 'finished' || report.findings_source === 'full') && ['complete','partial'].includes(report.findings_state);
     if (status) status.textContent = !visible ? '等候本次扫描的可核验文件证据' : report.findings_total > (report.findings?.length || 0)
       ? '特征命中 '+report.findings_total+'；页面仅展示已复核的 '+(report.findings?.length || 0)+' 条，完整记录请在 Linux 菜单查看'
       : report.findings_state === 'partial' ? '部分文件证据未完成复核；扫描告警继续保留' : '本次命中 '+report.findings_total+' 个文件；隔离请在可信 Linux 菜单执行';
+    if (visible && status) status.textContent = (report.findings_source==='full'?'文件深度查杀：':'环境与范围核验：')+status.textContent;
     if (!visible) return;
     for (const item of report.findings || []) {
       const row = document.createElement('li'); row.dataset.state = 'finding';
@@ -128,7 +129,7 @@ export function createSecurityUi({ state, can, request, notify }) {
     const history = $('security-local-history');
     const historyState = $('security-local-history-state');
     if (!status || !timestamp || !list) return;
-    localRunning = report.state === 'running';
+    localRunning = report.state === 'running' || ['indexing','scanning'].includes(report.full_scan?.state);
     const checks = Array.isArray(report.checks) ? report.checks : [];
     const findings = checks.filter(item => item.state === 'finding').length;
     const incomplete = checks.length ? checks.filter(item => item.state !== 'ok').length : 1;
@@ -247,7 +248,7 @@ export function createSecurityUi({ state, can, request, notify }) {
     bound = true;
     consoleView.bind();
     void renderSecurity(); void renderLocalSecurity();
-    document.querySelectorAll('[data-security-scan]').forEach(button => button.addEventListener('click', async () => {
+    document.querySelectorAll('[data-security-scan], [data-security-full-scan]').forEach(button => button.addEventListener('click', async () => {
       if (scanRequested || !state.csrf || !can('system.manage')) return;
       const session = state.csrf;
       const generation = ++scanGeneration;
@@ -255,10 +256,10 @@ export function createSecurityUi({ state, can, request, notify }) {
       scanRequested = true;
       consoleView.setBusy(true);
       try {
-        await request('/api/scan', { method: 'POST', body: {} });
+        await request(button.hasAttribute('data-security-full-scan') ? '/api/full-scan' : '/api/scan', { method: 'POST', body: {} });
         if (current()) await localSecurityPoller.refresh();
       } catch (error) { if (current()) notify(error.message, true); }
-      finally { if (current()) { scanRequested = false; consoleView.setBusy(localRunning); } }
+      finally { if (current()) { scanRequested = false; consoleView.setBusy(false); } }
     }));
   }
   return Object.freeze({ bind, render() { void renderSecurity(); void renderLocalSecurity(); } });

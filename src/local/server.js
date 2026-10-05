@@ -10,6 +10,7 @@ import { localSecurityScan, localCloudSnapshot } from './scan-client.js';
 const PUBLIC = new URL('./public/', import.meta.url);
 const ASSETS = new Map([
   ['/contracts/host-scan-contract.js', [new URL('../contracts/host-scan-contract.js', import.meta.url), 'text/javascript; charset=utf-8']],
+  ['/contracts/protection-status.js', [new URL('../contracts/protection-status.js', import.meta.url), 'text/javascript; charset=utf-8']],
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/assets/local.css', ['assets/local.css', 'text/css; charset=utf-8']],
   ['/assets/security-preview.css', ['assets/security-preview.css', 'text/css; charset=utf-8']],
@@ -67,7 +68,7 @@ export function createLocalServer({ credentials, origin, tls, scan = localSecuri
         const value = await body(req);
         if (Object.keys(value).length !== 0) return json(res, 400, { error: '此操作不接受路径或命令参数' });
         if (url.pathname === '/api/logout') { sessions.remove(sessionId); res.setHeader('Set-Cookie', 'ironcurtain_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0' + (secure ? '; Secure' : '')); return json(res, 200, { authenticated: false }); }
-        if (url.pathname === '/api/scan') { const result = await scan('scan'); return json(res, result.state === 'running' ? 202 : 503, result); }
+        if (['/api/scan','/api/full-scan'].includes(url.pathname)) { const result = await scan(url.pathname === '/api/full-scan' ? 'full-scan' : 'scan'); return json(res, result.state === 'running' ? 202 : [409,429,503].includes(result.response_status) ? result.response_status : 503, result); }
       }
       if (req.method === 'GET' && url.pathname === '/api/scan') return json(res, 200, await scan('status'));
       if (req.method === 'GET' && url.pathname === '/api/cloud/status') return json(res, 200, await cloudStatus());

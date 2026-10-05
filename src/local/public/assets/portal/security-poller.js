@@ -22,7 +22,7 @@ export function createSecurityPoller({ request, render, onError, allowed, sessio
     pending = Promise.resolve().then(request).then(report => {
       if (!current()) return;
       render(report);
-      if (report.state === 'running') delay = 2000;
+      if (report.state === 'running' || ['indexing','scanning'].includes(report.full_scan?.state)) delay = 2000;
     }).catch(error => {
       if (current()) onError(error);
     }).finally(() => {

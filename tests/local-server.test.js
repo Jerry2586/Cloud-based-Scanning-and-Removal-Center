@@ -9,7 +9,7 @@ import { passwordRecord, loadCredentials, verifyPassword, createSessions } from 
 const password = 'fixture-independent-password-only';
 async function fixture(t) {
   let invoked = 0;
-  const server = createLocalServer({ credentials: passwordRecord(password), origin: 'http://127.0.0.1:8791', scan: async action => { invoked++; return { state: action === 'scan' ? 'running' : 'idle', checks: [] }; } });
+  const server = createLocalServer({ credentials: passwordRecord(password), origin: 'http://127.0.0.1:8791', scan: async action => { invoked++; return { state: ['scan','full-scan'].includes(action) ? 'running' : 'idle', checks: [] }; } });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
   const base = 'http://127.0.0.1:' + server.address().port;
@@ -66,4 +66,13 @@ test('sessions expire and maximum does not evict active sessions', () => {
   let time = 0; const sessions = createSessions({ now: () => time, ttl: 10, maximum: 1 });
   const first = sessions.create(); assert.equal(sessions.create(), null); assert.ok(sessions.get(first.id)); time = 11;
   assert.equal(sessions.get(first.id), undefined); assert.ok(sessions.create());
+});
+
+test('full scan is a fixed session/CSRF action without supplied paths or commands',async t=>{
+ const f=await fixture(t);assert.equal((await f.post('/api/full-scan',{})).status,401);
+ const identity=await f.login();const headers={cookie:identity.cookie,'x-csrf-token':identity.csrf};
+ assert.equal((await f.post('/api/full-scan',{}, {cookie:identity.cookie})).status,403);
+ assert.equal((await f.post('/api/full-scan',{path:'/etc',command:'sh'},headers)).status,400);
+ assert.equal(f.invoked(),0);
+ const result=await f.post('/api/full-scan',{},headers);assert.equal(result.status,202);assert.equal((await result.json()).state,'running');assert.equal(f.invoked(),1);
 });

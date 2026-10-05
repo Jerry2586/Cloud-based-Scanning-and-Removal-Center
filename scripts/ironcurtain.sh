@@ -79,6 +79,33 @@ scan() {
   curl --max-time 10 -fsS --unix-socket /run/ironcurtain/scan.sock -X POST -H 'Content-Length: 0' http://localhost/scan | jq .
   echo '扫描任务已提交；在独立网页查看实际进度和逐项结果。'
 }
+full_scan() {
+  [[ $ROLE == local ]] || ic_fail '此操作仅用于铁幕本地节点'
+  curl --max-time 10 -fsS --unix-socket /run/ironcurtain/scan.sock -X POST -H 'Content-Length: 0' http://localhost/full-scan | jq .
+  echo '已提交文件深度查杀；只检查纳管目录。暂停任务将在相同范围与病毒库版本下继续。'
+}
+scan_status() {
+  [[ $ROLE == local ]] || ic_fail '此操作仅用于铁幕本地节点'
+  curl --max-time 10 -fsS --unix-socket /run/ironcurtain/scan.sock http://localhost/status | jq '{state,protection,inventory,full_scan,findings_source}'
+}
+discover_scope() {
+  [[ $ROLE == local ]] || ic_fail '此操作仅用于铁幕本地节点'
+  python3 "$SOURCE/src/host/inventory.py" discover --profile "$CONF/profile.json"
+}
+enroll_scope() {
+  [[ $ROLE == local ]] || ic_fail '此操作仅用于铁幕本地节点'
+  lock; stage
+  python3 "$SOURCE/src/host/inventory.py" discover --profile "$CONF/profile.json" --output "$STAGE/inventory.json"
+  ask '选择需要保护的对象序号（英文逗号分隔；留空取消）：' selected
+  [[ -n $selected ]] || { echo '已取消'; return; }
+  printf '%s\n' "$selected" | python3 "$SOURCE/src/host/inventory.py" enroll --profile "$CONF/profile.json" --inventory "$STAGE/inventory.json" --output "$STAGE/profile.json"
+  python3 "$SOURCE/src/host/agent.py" --validate-profile --profile "$STAGE/profile.json"
+  ic_admin_begin profile
+  install -m 600 "$STAGE/profile.json" "$CONF/profile.json.new"; mv -f "$CONF/profile.json.new" "$CONF/profile.json"
+  if ! systemctl restart ironcurtain-agent.service || ! ic_scan_wait; then ic_fail '扫描代理未启动，将恢复之前的保护配置'; fi
+  audit scope-enrolled; ic_admin_finish
+  echo '保护范围已保存；镜像批准、端口允许清单和独立签名基线仍需单独核验。'
+}
 response() {
   [[ $ROLE == local ]] || ic_fail '文件处置仅用于铁幕本机'
   lock
@@ -377,6 +404,7 @@ dispatch() {
     release-import|release-status|release-update) release_action "$1" ;;
     virus-db-import|virus-db-status|virus-db-update) virus_database_action "$1" ;;
     update) update ;; doctor) doctor ;; scan) scan ;; profile) profile ;;
+    discover) discover_scope ;; enroll) enroll_scope ;; full-scan) full_scan ;; scan-status) scan_status ;;
     pair) pair ;; cloud-status) cloud_status ;; unpair) unpair ;;
     register) register ;; revoke) revoke ;; nodes) [[ $ROLE == cloud ]] || ic_fail '仅用于玄武'; jq -r '.nodes | keys[]' "$CONF/runtime/config.json" ;;
     reader) reader ;; credentials) credentials ;; reset-password) reset_password ;;
@@ -390,10 +418,11 @@ while true; do
   echo ' 1. 状态   2. 日志   3. 启动   4. 停止   5. 重启'
   echo ' 6. 签名安全更新   7. 环境诊断'
   if [[ $ROLE == local ]]; then
-    echo ' 8. 一键扫描   9. 配置保护范围   10. 导入玄武身份包'
+    echo ' 8. 环境与范围核验   9. 配置保护范围   10. 导入玄武身份包'
     echo '11. 检查加密连接   12. 解绑玄武   13. 查看面板凭据   14. 重置面板密码'
     echo '15. 安装病毒引擎   16. 更新官方病毒库   17. 病毒引擎状态'
     echo '29. 从玄武下载并启用签名病毒库'
+    echo '31. 发现保护对象   32. 选择对象纳管   33. 文件深度查杀/继续   34. 保护覆盖与扫描进度'
     echo '18. 命中文件证据   19. 隔离命中文件   20. 隔离记录   21. 恢复隔离文件'
   else
     echo ' 8. 登记节点与加密导出   9. 撤销节点   10. 查看节点'
@@ -427,6 +456,10 @@ while true; do
     28) [[ $ROLE == cloud ]] || continue; action=release-status ;;
     29) if [[ $ROLE == cloud ]]; then action=virus-db-import; else action=virus-db-update; fi ;;
     30) [[ $ROLE == cloud ]] || continue; action=virus-db-status ;;
+    31) [[ $ROLE == local ]] || continue; action=discover ;;
+    32) [[ $ROLE == local ]] || continue; action=enroll ;;
+    33) [[ $ROLE == local ]] || continue; action=full-scan ;;
+    34) [[ $ROLE == local ]] || continue; action=scan-status ;;
     *) echo '请选择有效菜单项'; continue ;;
   esac
   bash "$SOURCE/scripts/ironcurtain.sh" --role "$ROLE" "$action" || echo '操作未完成；现有状态请运行诊断核对。'

@@ -56,6 +56,11 @@ jobs:
         run: sudo env "PATH=$PATH" IRONCURTAIN_REQUIRE_LINUX_RULES_TESTS=1 python3 tests/rules.test.py
       - name: Test generic Linux host scanner
         run: sudo env "PATH=$PATH" python3 tests/host-agent.test.py
+      - name: Test host discovery, full file queue faults and agent restart boundaries
+        run: |
+          sudo env "PATH=$PATH" python3 tests/host-inventory.test.py
+          sudo env "PATH=$PATH" python3 tests/fullscan.test.py
+          sudo env "PATH=$PATH" python3 tests/host-agent-recovery.test.py
       - name: Test pinned findings and bounded local quarantine
         run: |
           sudo env "PATH=$PATH" python3 tests/findings.test.py

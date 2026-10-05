@@ -27,6 +27,17 @@ class DatabaseTests(unittest.TestCase):
             (root/'daily.cvd').chmod(0o644); (root/'real.cvd').write_bytes((root/'daily.cvd').read_bytes())
             (root/'daily.cvd').unlink(); (root/'daily.cvd').symlink_to(root/'real.cvd')
             self.assertEqual(av.database_status(tmp)['state'],'unavailable')
+    def test_same_metadata_replacement_changes_generation_and_bytecode_is_bound(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=pathlib.Path(tmp); now=int(time.time()); self.headers(root,now)
+            before=av.database_status(tmp,now); replacement=root/'replacement'
+            replacement.write_bytes((root/'daily.cvd').read_bytes()); replacement.chmod(0o644); replacement.replace(root/'daily.cvd')
+            after=av.database_status(tmp,now)
+            self.assertEqual(before['database_version'],after['database_version']); self.assertNotEqual(before['database_generation'],after['database_generation'])
+            (root/'bytecode.cvd').write_bytes((root/'daily.cvd').read_bytes()); (root/'bytecode.cvd').chmod(0o644)
+            bytecode=av.database_status(tmp,now); self.assertEqual(bytecode['signatures'],126); self.assertNotEqual(after['database_generation'],bytecode['database_generation'])
+            (root/'bytecode.cld').write_bytes((root/'daily.cvd').read_bytes()); (root/'bytecode.cld').chmod(0o644)
+            self.assertEqual(av.database_status(tmp,now)['state'],'unavailable')
     def test_uninstalled_never_claims_configured(self):
         with patch.object(av.shutil,'which',return_value=None),patch.object(av,'updater_status',return_value='unknown'),patch.object(av,'database_status',return_value={'state':'configured'}):
             self.assertEqual(av.engine_status()['state'],'unavailable')

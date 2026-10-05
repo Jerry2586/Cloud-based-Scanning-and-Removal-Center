@@ -128,3 +128,15 @@ body.ironcurtain .admin-entry a:focus-visible,body.ironcurtain .admin-entry butt
 @media(max-width:360px){body.ironcurtain .admin-entry-form{padding:26px 20px}body.ironcurtain .admin-entry .wordmark{font-size:18px}}
 
 body.ironcurtain.ic-focused .workspace{background:#080d16}
+
+/* Observed coverage and actual file-queue progress, independent of fixed checks. */
+.security-console .sc-coverage-panel,.security-console .sc-file-scan-card{margin-block:20px}
+.sc-coverage-counts,.sc-file-progress-heading{display:flex;justify-content:space-between;gap:16px;margin:16px 0;color:var(--sc-muted);font-size:12px;flex-wrap:wrap}
+.sc-inventory{border-top:1px solid var(--sc-line);margin-block:16px;padding-top:12px}.sc-inventory summary{cursor:pointer;color:var(--sc-text);font-size:13px}
+.sc-file-counters{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin:22px 0}.sc-file-counters div{display:grid;gap:7px}.sc-file-counters b{font-size:20px;overflow-wrap:anywhere}.sc-file-counters span{font-size:11px;color:var(--sc-muted)}
+.sc-file-progress>span{display:block;height:100%;background:linear-gradient(90deg,#4475ef,#6fd5eb);border-radius:inherit;transition:width .25s ease}
+.sc-file-progress[data-state="finding"]>span{background:linear-gradient(90deg,#e2566b,#ffa986)}
+.sc-file-progress[data-active="true"]:not([aria-valuenow])>span{animation:sc-file-indeterminate 1.8s ease-in-out infinite alternate}
+@keyframes sc-file-indeterminate{from{transform:translateX(0)}to{transform:translateX(310%)}}
+@media(max-width:760px){.sc-file-counters{grid-template-columns:repeat(2,minmax(0,1fr))}.sc-file-scan-card .sc-section-head{flex-wrap:wrap;gap:12px}}
+@media(prefers-reduced-motion:reduce){.sc-file-progress>span{animation:none!important;transition:none}}

@@ -1,4 +1,5 @@
 import { request as unixRequest } from 'node:http';
+import { sanitizeProtection, sanitizeInventory, sanitizeFullScan } from '../contracts/protection-status.js';
 import { sanitizeRules, sanitizeRuleHits } from '../contracts/rule-status.js';
 
 import { HOST_SCAN_IDS, CHECK_CATEGORIES, CHECK_SEVERITIES, CHECK_STATES, safeTimestamp, completeHostScan, hostScanCoverage, hostScanProgress } from '../contracts/host-scan-contract.js';
@@ -39,7 +40,7 @@ export function sanitizeFindings(value) {
   const unavailable = {findings: [], findings_state: 'unavailable', findings_total: 0};
   if (!value || !Array.isArray(value.findings) || value.findings.length > 8 ||
       !['complete','partial','unavailable'].includes(value.findings_state) ||
-      !Number.isSafeInteger(value.findings_total) || value.findings_total < value.findings.length || value.findings_total > 10000) return unavailable;
+      !Number.isSafeInteger(value.findings_total) || value.findings_total < value.findings.length || value.findings_total > 200000) return unavailable;
   const items = [];
   for (const item of value.findings) {
     if (!item || !/^[a-f0-9]{64}$/.test(item.id) || !/^[a-f0-9]{64}$/.test(item.sha256) ||
@@ -69,12 +70,12 @@ export function sanitizeQuarantine(value) {
 
 // One fixed local action. The browser never chooses a command or path.
 export function localSecurityScan(action, env = process.env) {
-  if (!['status', 'scan'].includes(action)) throw new TypeError('Unknown security action');
+  if (!['status', 'scan', 'full-scan'].includes(action)) throw new TypeError('Unknown security action');
   const socketPath = env.IRONCURTAIN_SCAN_SOCKET || env.APPGOG_HOST_SCAN_SOCKET || '/run/ironcurtain/scan.sock';
   return new Promise((resolve) => {
-    const req = unixRequest({ socketPath, path: action === 'scan' ? '/scan' : '/status',
-      method: action === 'scan' ? 'POST' : 'GET', timeout: 5000,
-      headers: action === 'scan' ? { 'Content-Length': '0' } : {} }, res => {
+    const req = unixRequest({ socketPath, path: action === 'status' ? '/status' : '/' + action,
+      method: action === 'status' ? 'GET' : 'POST', timeout: 5000,
+      headers: action === 'status' ? {} : { 'Content-Length': '0' } }, res => {
       let body = '';
       let byteCount = 0;
       res.setEncoding('utf8');
@@ -94,7 +95,7 @@ export function localSecurityScan(action, env = process.env) {
           const result = JSON.parse(body);
           const validStatus = action === 'status' ? res.statusCode === 200
             : ([202, 409].includes(res.statusCode) && result?.state === 'running')
-              || (res.statusCode === 429 && result?.state === 'unavailable');
+              || ([409, 429, 503].includes(res.statusCode) && result?.state === 'unavailable');
           if (!validStatus || !['idle', 'running', 'finished', 'failed', 'unavailable'].includes(result?.state)) {
             resolve({ state: 'unavailable', reason: '本机检查代理返回异常' }); return;
           }
@@ -110,10 +111,10 @@ export function localSecurityScan(action, env = process.env) {
           const invalidHistory = !Array.isArray(result.history) || history.length !== Math.min(8, result.history.length);
           const historyState = invalidHistory || result.history_state === 'unavailable' ? 'unavailable' : result.history.length > 8 ? 'truncated'
             : ['ok', 'unavailable', 'truncated'].includes(result.history_state) ? result.history_state : 'unavailable';
-          resolve({ state: result.state, ...sanitizeFindings(result), antivirus: sanitizeAntivirus(result.antivirus), rules: sanitizeRules(result.rules), rule_hits: sanitizeRuleHits(result.rule_hits), quarantine: sanitizeQuarantine(result.quarantine), history, progress: hostScanProgress(result),
+          resolve({ state: result.state, response_status: res.statusCode, inventory: sanitizeInventory(result.inventory), protection: sanitizeProtection(result.protection), full_scan: sanitizeFullScan(result.full_scan), findings_source: ['quick','full'].includes(result.findings_source) ? result.findings_source : 'unknown', ...sanitizeFindings(result), antivirus: sanitizeAntivirus(result.antivirus), rules: sanitizeRules(result.rules), rule_hits: sanitizeRuleHits(result.rule_hits), quarantine: sanitizeQuarantine(result.quarantine), history, progress: hostScanProgress(result),
             coverage: result.state === 'finished' ? hostScanCoverage(result) : undefined,
             history_state: historyState, checked_at: safeTimestamp(result.checked_at),
-            reason: result.state === 'unavailable' ? '本机检查频率限制或代理异常' : undefined, checks });
+            reason: result.state === 'unavailable' ? ({409:'已有扫描正在进行，请等待当前任务',429:'扫描请求过于频繁，请稍后重试',503:'请先在 Linux 菜单配置扫描目录与病毒引擎'}[res.statusCode] || '本机检查代理异常') : undefined, checks });
         } catch {
           resolve({ state: 'unavailable', reason: '本机检查代理响应无效' });
         }

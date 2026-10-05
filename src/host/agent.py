@@ -13,6 +13,10 @@ _findings_spec = importlib.util.spec_from_file_location('ironcurtain_findings', 
 findings = importlib.util.module_from_spec(_findings_spec); _findings_spec.loader.exec_module(findings)
 _rules_spec = importlib.util.spec_from_file_location('ironcurtain_rules', pathlib.Path(__file__).with_name('rules.py'))
 rules = importlib.util.module_from_spec(_rules_spec); _rules_spec.loader.exec_module(rules)
+_inventory_spec = importlib.util.spec_from_file_location('ironcurtain_inventory', pathlib.Path(__file__).with_name('inventory.py'))
+inventory = importlib.util.module_from_spec(_inventory_spec); _inventory_spec.loader.exec_module(inventory)
+_fullscan_spec = importlib.util.spec_from_file_location('ironcurtain_fullscan', pathlib.Path(__file__).with_name('fullscan.py'))
+fullscan = importlib.util.module_from_spec(_fullscan_spec); _fullscan_spec.loader.exec_module(fullscan)
 
 def utc(): return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00','Z')
 def canonical(value): return json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()
@@ -63,7 +67,7 @@ def private_json(file, maximum=2*1024*1024):
 
 
 def safe_root(value):
-    if not isinstance(value,str) or not value.startswith('/') or '\x00' in value: raise ValueError('protected paths must be absolute')
+    if not isinstance(value,str) or not value.startswith('/') or re.search(r'[\x00-\x1f\x7f]',value): raise ValueError('protected paths must be absolute')
     path=pathlib.PurePosixPath(value)
     if str(path)!=value or '..' in path.parts or value in ['/', '/etc', '/proc', '/sys', '/dev', '/run']: raise ValueError('protected root too broad')
     return str(path)
@@ -85,6 +89,7 @@ def profile_validate(value):
     if not isinstance(containers,list) or len(containers)>32: raise ValueError('too many containers')
     for item in containers:
         if not isinstance(item,dict) or not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}',item.get('name','')): raise ValueError('invalid container name')
+        if set(item)-{'name','image_id'}: raise ValueError('unknown container field')
         if item.get('image_id') and not re.fullmatch(r'sha256:[a-f0-9]{64}',item['image_id']): raise ValueError('invalid image digest')
     baseline=result.get('baseline')
     if baseline is not None:
@@ -407,35 +412,72 @@ class Agent:
         self.rule_path=rule_path; self.rule_hits={'items':[],'total':0,'state':'unavailable'}
         self.profile=profile_validate(profile); self.state_dir=pathlib.Path(state_dir); self.interval=interval; self.lock=threading.Lock(); self.last=0; self.stop=threading.Event()
         self.previous={}; self.history=[]; self.history_available=True; self.outbound=None; self.findings_bundle={'schema':'ironcurtain-findings/v1','state':'unavailable','items':[], 'total':0}
+        self.inventory={'state':'unavailable'}; self.full_result={'schema':'ironcurtain-full-scan/v1','state':'idle'}; self.full_running=False; self.findings_source='quick'
+        try:
+            saved_inventory=private_json(self.state_dir/'last-inventory.json')
+            if inventory.public_inventory(saved_inventory).get('state') != 'unavailable': self.inventory=saved_inventory
+        except (OSError,ValueError): pass
+        try:
+            saved_full=private_json(self.state_dir/'full-scan-report.json',65536)
+            if not fullscan.valid_report(saved_full) or saved_full['profile_digest'] != fullscan.profile_digest(self.profile): raise ValueError('invalid saved file scan')
+            self.full_result=saved_full
+            if self.full_result.get('state') in ('indexing','scanning'): self.full_result['state']='paused'
+        except (OSError,ValueError): pass
         self.result={'state':'idle','checks':[],'history':[],'history_state':'ok'}
         try:
             saved=private_json(self.state_dir/'last-report.json',256*1024)
-            if saved.get('state')!='finished' or len(saved.get('checks',[]))!=len(IDS) or [item.get('id') for item in saved['checks']]!=IDS: raise ValueError('invalid previous report')
+            if not isinstance(saved.get('profile_digest'),str) or not DIGEST.fullmatch(saved['profile_digest']) or saved.get('state')!='finished' or len(saved.get('checks',[]))!=len(IDS) or [item.get('id') for item in saved['checks']]!=IDS: raise ValueError('invalid previous report')
             if not isinstance(saved.get('history'),list) or not valid_timestamp(saved.get('checked_at')): raise ValueError('invalid history metadata')
             for item in saved['checks']+saved['history']:
                 if not valid_saved_check(item) or item['checked_at']>saved['checked_at']: raise ValueError('invalid history evidence')
             if saved.get('history_state') not in ['ok','truncated'] or len(saved.get('history',[]))>128: raise ValueError('invalid previous history')
-            self.previous={item['id']:item for item in saved['checks']}; self.history=saved['history']; self.result=saved
+            if saved['profile_digest'] != fullscan.profile_digest(self.profile):
+                atomic_json(self.state_dir/'previous-profile-report.json',saved)
+                self.history=saved['history']; self.result['history']=copy.deepcopy(self.history)
+            else:
+                self.previous={item['id']:item for item in saved['checks']}; self.history=saved['history']; self.result=saved
         except FileNotFoundError: pass
         except Exception:
             self.history_available=False; self.result['history_state']='unavailable'
+        # Restore only evidence bound to the active profile and a validated scan report.
+        try:
+            saved_bundle=private_json(self.state_dir/'last-findings.json',256*1024)
+            if (saved_bundle.get('schema') != 'ironcurtain-findings/v1' or saved_bundle.get('profile_digest') != fullscan.profile_digest(self.profile)
+                or saved_bundle.get('state') not in ('complete','partial') or saved_bundle.get('checked_at') != self.result.get('checked_at')
+                or self.result.get('state') != 'finished' or type(saved_bundle.get('total')) is not int or saved_bundle['total'] < 0
+                or not isinstance(saved_bundle.get('items'),list) or len(saved_bundle['items']) > 32 or len(saved_bundle['items']) > saved_bundle['total']
+                or not all(fullscan.valid_finding(x) for x in saved_bundle['items'])): raise ValueError('invalid saved findings')
+            self.findings_bundle=saved_bundle
+        except (OSError,ValueError,TypeError): pass
+        if fullscan.valid_report(self.full_result) and self.full_result['updated_at'] >= self.findings_bundle.get('checked_at',''):
+            self.findings_bundle={'schema':'ironcurtain-findings/v1','checked_at':self.full_result['updated_at'],'profile_digest':fullscan.profile_digest(self.profile),
+                'items':self.full_result['findings'],'total':self.full_result['infected'],
+                'state':'complete' if self.full_result['state']=='finished' and self.full_result['infected']==len(self.full_result['findings']) else 'partial'}
+            self.findings_source='full'
     def status(self):
+        engine=antivirus.engine_status()
         with self.lock:
             result=copy.deepcopy(self.result)
-            result['antivirus']=antivirus.engine_status()
+            result['antivirus']=engine
+            result['inventory']=inventory.public_inventory(self.inventory)
+            result['protection']=inventory.protection(self.profile,self.inventory,result['antivirus'],result.get('checks',[]),result.get('checked_at') if result['state']=='finished' else None)
+            result['full_scan']={k:copy.deepcopy(v) for k,v in self.full_result.items() if k != 'findings'}
+            result['findings_source']=self.findings_source
             result['rules']=rules.summary(self.rule_path)
             result['rule_hits']=copy.deepcopy(self.rule_hits)
             result['quarantine']=findings.quarantine_status(self.state_dir)
             bundle=self.findings_bundle
-            result['findings']=[{k:item[k] for k in ['id','path','signature','sha256','observed_at','size']} for item in bundle['items'][:8]] if result['state']=='finished' else []
-            result['findings_state']=bundle['state'] if result['state']=='finished' else 'unavailable'
-            result['findings_total']=bundle['total'] if result['state']=='finished' else 0
+            evidence_available=result['state']=='finished' or self.findings_source=='full'
+            result['findings']=[{k:item[k] for k in ['id','path','signature','sha256','observed_at','size']} for item in bundle['items'][:8]] if evidence_available else []
+            result['findings_state']=bundle['state'] if evidence_available else 'unavailable'
+            result['findings_total']=bundle['total'] if evidence_available else 0
             if len(result.get('history',[]))>8:
                 result['history']=result['history'][-8:]
                 if result['history_state']=='ok': result['history_state']='truncated'
             return result
     def trigger(self):
         with self.lock:
+            if self.full_running: return 409,{'state':'unavailable','reason':'file scan in progress'}
             if self.result['state']=='running': return 409,{**copy.deepcopy(self.result),'history':copy.deepcopy(self.history[-8:]),'history_state':'unavailable' if not self.history_available else 'truncated' if len(self.history)>8 else 'ok'}
             if self.last and time.monotonic()-self.last<60: return 429,{'state':'unavailable','reason':'scan cooldown'}
             self.last=time.monotonic(); self.result={'state':'running','started_at':utc(),'checks':[],'progress':{'completed':0,'total':len(IDS),'current':IDS[0]},'history':copy.deepcopy(self.history),'history_state':'ok' if self.history_available else 'unavailable'}
@@ -446,6 +488,9 @@ class Agent:
             with self.lock:
                 self.result['checks']=checks; self.result['progress']={'completed':len(checks),'total':len(IDS),'current':current}
         try:
+            observed=inventory.discover(Runner(),previous=self.inventory)
+            atomic_json(self.state_dir/'last-inventory.json',observed)
+            with self.lock: self.inventory=observed
             scanner=Scanner(self.profile,response_state=self.state_dir,rule_path=self.rule_path); checks=scanner.run_checks(update)
             events=copy.deepcopy(self.history)
             if self.history_available:
@@ -453,14 +498,14 @@ class Agent:
                     old=self.previous.get(item['id'])
                     if (old and (old['state']!=item['state'] or old['evidence_digest']!=item['evidence_digest'])) or (not old and item['state']!='ok'):
                         events.append({**item,'previous_state':old['state'] if old else None})
-            report={'state':'finished','checked_at':utc(),'checks':checks,'history':events[-128:],'history_state':'truncated' if len(events)>8 else 'ok','progress':{'completed':len(IDS),'total':len(IDS),'current':None}}
+            report={'state':'finished','profile_digest':fullscan.profile_digest(self.profile),'checked_at':utc(),'checks':checks,'history':events[-128:],'history_state':'truncated' if len(events)>8 else 'ok','progress':{'completed':len(IDS),'total':len(IDS),'current':None}}
             if not self.history_available: report['history_state']='unavailable'
             bundle={'schema':'ironcurtain-findings/v1','checked_at':report['checked_at'],'profile_digest':hashlib.sha256(canonical(self.profile)).hexdigest(),
                     'items':scanner.findings,'total':scanner.malware_count,'state':'complete' if scanner.findings_complete and all(item['state'] in ['ok','finding'] for item in checks if item['category']=='malware') else 'partial'}
             rule_hits={'items':scanner.rule_hits,'total':scanner.rule_hit_count,'state':'complete' if scanner.rule_pack and scanner.rule_scan_complete else 'partial' if scanner.rule_pack else 'unavailable'}
             atomic_json(self.state_dir/'last-rule-hits.json',rule_hits)
             atomic_json(self.state_dir/'last-findings.json',bundle)
-            with self.lock: self.findings_bundle=bundle; self.rule_hits=rule_hits
+            with self.lock: self.findings_bundle=bundle; self.rule_hits=rule_hits; self.findings_source='quick'
             # Do not overwrite corrupt prior evidence or silently reset its history.
             if self.history_available:
                 atomic_json(self.state_dir/'last-report.json',report)
@@ -472,6 +517,39 @@ class Agent:
                 self.outbound=digest_snapshot
         except Exception:
             with self.lock: self.result={'state':'failed','checked_at':utc(),'checks':[],'history':copy.deepcopy(self.history),'history_state':'unavailable'}
+    def trigger_full(self):
+        with self.lock:
+            if self.full_running or self.result['state']=='running': return 409,{'state':'unavailable','reason':'scan already active'}
+            engine=antivirus.engine_status()
+            if not (self.profile['program_roots'] or self.profile['business_roots']) or not engine.get('installed') or engine.get('state')!='configured':
+                return 503,{'state':'unavailable','reason':'scan scope or engine unavailable'}
+            if self.last and time.monotonic()-self.last<60: return 429,{'state':'unavailable','reason':'scan cooldown'}
+            self.last=time.monotonic(); self.full_running=True
+            self.full_result={'schema':'ironcurtain-full-scan/v1','state':'indexing','started_at':utc()}
+        threading.Thread(target=self.scan_full,args=(engine,),daemon=True).start()
+        return 202,{'state':'running'}
+    def scan_full(self,engine):
+        def publish(value):
+            atomic_json(self.state_dir/'full-scan-report.json',value)
+            bundle=None
+            if 'indexed' in value:
+                bundle={'schema':'ironcurtain-findings/v1','checked_at':value['updated_at'],'profile_digest':hashlib.sha256(canonical(self.profile)).hexdigest(),
+                        'items':value.get('findings',[]),'total':value['infected'],'state':'complete' if value['state']=='finished' and value['infected']<=len(value.get('findings',[])) else 'partial'}
+                atomic_json(self.state_dir/'last-findings.json',bundle)
+            with self.lock:
+                self.full_result=copy.deepcopy(value)
+                if bundle: self.findings_bundle=bundle; self.findings_source='full'
+        try:
+            task=fullscan.FullScan(self.profile,self.state_dir,Runner(),secure_fd,engine,antivirus.DATABASE_DIR,publish,self.stop,database_status=antivirus.database_status)
+            task.run()
+        except Exception:
+            with self.lock:
+                prior=self.full_result
+                self.full_result={'schema':'ironcurtain-full-scan/v1','state':'failed','started_at':prior.get('started_at',utc()),'updated_at':utc(),'finished_at':utc(),
+                                  **{k:prior.get(k,0) for k in ('indexed','processed','clean','infected','skipped','errors','bytes_scanned')},
+                                  'profile_digest':fullscan.profile_digest(self.profile),'findings':prior.get('findings',[]),'index_complete':False,'scope':'enrolled-directories-only','reasons':['扫描任务持久化失败，请核对代理日志与受保护状态目录']}
+        finally:
+            with self.lock: self.full_running=False
     def schedule(self):
         self.trigger()
         while not self.stop.wait(self.interval): self.trigger()
@@ -490,6 +568,19 @@ class UnixServer(socketserver.ThreadingMixIn,getattr(socketserver,'UnixStreamSer
     def process_request_thread(self,request,address):
         try: super().process_request_thread(request,address)
         finally: self.slots.release()
+
+def prepare_socket_parent(socket_path):
+    location=pathlib.Path(socket_path)
+    if not location.is_absolute() or '..' in location.parts: raise ValueError('unsafe socket path')
+    location.parent.mkdir(parents=True,exist_ok=True,mode=0o750)
+    for current in [location.parent,*location.parent.parents]:
+        info=current.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid!=0: raise ValueError('socket parent must be root owned without links')
+        if info.st_mode & 0o022 and (current==location.parent or not info.st_mode & stat.S_ISVTX): raise ValueError('socket parent cannot be writable by other users')
+    if location.exists() or location.is_symlink():
+        info=location.lstat()
+        if not stat.S_ISSOCK(info.st_mode) or info.st_uid!=0: raise ValueError('untrusted socket entry')
+    return location
 
 def serve(profile_file,state_dir,socket_path,allowed_uid,group):
     if os.name!='posix' or not hasattr(socketserver,'UnixStreamServer'): raise SystemExit('Linux Unix socket required')
@@ -516,9 +607,9 @@ def serve(profile_file,state_dir,socket_path,allowed_uid,group):
             return self.reply(404,{'state':'unavailable'})
         def do_POST(self):
             if not self.authorized(): return self.reply(403,{'state':'unavailable'})
-            if self.path!='/scan' or self.headers.get('Content-Length')!='0' or self.headers.get('Transfer-Encoding'): return self.reply(400,{'state':'unavailable'})
-            self.reply(*agent.trigger())
-    location=pathlib.Path(socket_path); location.parent.mkdir(parents=True,exist_ok=True,mode=0o750)
+            if self.path not in ['/scan','/full-scan'] or self.headers.get('Content-Length')!='0' or self.headers.get('Transfer-Encoding'): return self.reply(400,{'state':'unavailable'})
+            self.reply(*(agent.trigger_full() if self.path=='/full-scan' else agent.trigger()))
+    location=prepare_socket_parent(socket_path)
     if location.exists() or location.is_symlink():
         if not stat.S_ISSOCK(os.lstat(location).st_mode): raise SystemExit('refusing to replace non-socket')
         probe=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); probe.settimeout(1)

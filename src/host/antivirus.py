@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Bounded metadata inspection; only a real ClamAV scan can confirm database loading."""
-import datetime, json, os, pathlib, re, shutil, stat, subprocess, time
+import datetime, hashlib, json, os, pathlib, re, shutil, stat, subprocess, time
 DATABASE_DIR = '/var/lib/ironcurtain-antivirus/database'
 
 def _header(directory, name):
@@ -21,7 +21,8 @@ def _header(directory, name):
         if len(parts) != 9 or parts[0] != 'ClamAV-VDB': raise ValueError('invalid database header')
         version, signatures, timestamp = int(parts[2]), int(parts[3]), int(parts[8])
         if min(version, signatures, timestamp) <= 0: raise ValueError('invalid database metadata')
-        return {'version': version, 'signatures': signatures, 'timestamp': timestamp}
+        return {'version': version, 'signatures': signatures, 'timestamp': timestamp,
+                'identity': [info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns]}
     finally: os.close(fd)
 
 def database_status(directory=None, clock=None):
@@ -32,11 +33,15 @@ def database_status(directory=None, clock=None):
             names = [database + ext for ext in ['.cvd', '.cld'] if os.path.lexists(os.path.join(directory, database + ext))]
             if len(names) != 1: raise ValueError('missing or ambiguous official database')
             rows[database] = _header(directory, names[0])
+        names = ['bytecode' + ext for ext in ['.cvd','.cld'] if os.path.lexists(os.path.join(directory,'bytecode' + ext))]
+        if len(names) > 1: raise ValueError('ambiguous bytecode database')
+        if names: rows['bytecode'] = _header(directory,names[0])
+        generation = hashlib.sha256(json.dumps(rows,sort_keys=True,separators=(',',':')).encode()).hexdigest()
         daily = rows['daily']; age = now - daily['timestamp']
         if age < -300: raise ValueError('database time is in the future')
         return {'state': 'stale' if age > 7*86400 else 'configured',
                 'detail': '病毒库已过期，请更新' if age > 7*86400 else '病毒库元数据已配置，实际加载由扫描确认',
-                'database_version': daily['version'], 'signatures': sum(r['signatures'] for r in rows.values()),
+                'database_generation': generation, 'database_version': daily['version'], 'signatures': sum(r['signatures'] for r in rows.values()),
                 'database_at': datetime.datetime.fromtimestamp(daily['timestamp'], datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')}
     except (OSError, ValueError, UnicodeError, OverflowError):
         return {'state': 'unavailable', 'detail': '官方病毒库缺失、格式异常或目录权限不安全'}

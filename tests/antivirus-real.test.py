@@ -26,4 +26,25 @@ class EngineTests(unittest.TestCase):
                 self.assertEqual(scanner.findings[0]['signature'],'IronCurtain.TestOnly.UNOFFICIAL')
             with patch.object(a.antivirus,'DATABASE_DIR',str(root/'missing')):
                 self.assertEqual(scanner.malware([str(scope)])[0],'unavailable')
+    def test_real_engine_full_queue_counts_progress_and_restart_findings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=pathlib.Path(tmp); root.chmod(0o700); scope=root/'scope'; scope.mkdir(); db=root/'fixture-db'; db.mkdir()
+            pattern=b'IRONCURTAIN_FULL_QUEUE_TEST_ONLY'; (db/'fixture.ndb').write_text('IronCurtain.FullQueue:0:*:'+pattern.hex()+'\n')
+            (scope/'clean.txt').write_bytes(b'clean fixture'); (scope/'infected.txt').write_bytes(pattern)
+            agent=a.Agent({'schema':'ironcurtain-profile/v1','program_roots':[str(scope)]},root/'state')
+            engine={'installed':True,'state':'configured','database_version':1,'database_at':a.utc(),'signatures':1,'database_generation':'a'*64}
+            reports=[]
+            def runner(args,**kwargs):
+                self.assertIn('--official-db-only=yes',args); self.assertIn('--fail-if-cvd-older-than=7',args); self.assertEqual(args[-2:],['--','-']); self.assertIn('input_fd',kwargs)
+                fixture=[x for x in args if x not in ['--official-db-only=yes','--fail-if-cvd-older-than=7']]
+                fixture=[('--database='+str(db)) if x.startswith('--database=') else x for x in fixture]
+                return a.Runner()(fixture,**kwargs)
+            def publish(report):
+                reports.append(dict(report));a.atomic_json(agent.state_dir/'full-scan-report.json',report)
+            result=a.fullscan.FullScan(agent.profile,agent.state_dir,runner,a.secure_fd,engine,str(db),publish,database_status=lambda:engine).run()
+            self.assertEqual(result['state'],'finished'); self.assertEqual((result['indexed'],result['processed'],result['clean'],result['infected']),(2,2,1,1));self.assertGreater(result['bytes_scanned'],0)
+            self.assertTrue(a.fullscan.valid_report(result)); self.assertTrue(any(r['processed']==1 for r in reports));self.assertEqual(result['findings'][0]['signature'],'IronCurtain.FullQueue.UNOFFICIAL')
+            restored=a.Agent(agent.profile,agent.state_dir)
+            with patch.object(a.antivirus,'engine_status',return_value=engine):self.assertEqual(restored.status()['findings_total'],1)
+            self.assertEqual((scope/'infected.txt').read_bytes(),pattern)
 if __name__=='__main__':unittest.main()
