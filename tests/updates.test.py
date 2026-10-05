@@ -80,7 +80,7 @@ class UpdatesTests(unittest.TestCase):
 class FixedJobTests(unittest.TestCase):
  @unittest.skipUnless(os.name=='posix' and os.geteuid()==0,'Linux root fixed service job')
  def test_check_preflight_failure_records_time_and_redacts_exception(self):
-  with tempfile.TemporaryDirectory(prefix='ironcurtain-job-test-',dir='/opt') as temporary:
+  with tempfile.TemporaryDirectory(prefix='ironcurtain-job-test-',dir='/etc') as temporary:
    base=pathlib.Path(temporary)/'local';base.mkdir(mode=0o700)
    (base/'install.json').write_text('{}');(base/'install.json').chmod(0o600)
    diagnostics=io.StringIO()

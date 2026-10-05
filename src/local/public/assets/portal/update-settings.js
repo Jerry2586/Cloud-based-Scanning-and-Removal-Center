@@ -6,8 +6,8 @@ export function createUpdateSettings({state,request,notify},scope=document){
  function paint(data){const v=updateView(data,data.running_version);last=v;
   set('running',v.running_version?'v'+v.running_version:'未读取');set('installed',v.installed_version?'v'+v.installed_version:'安装记录不可用');set('latest',v.check.latest_version?'v'+v.check.latest_version:'正式版本未核验');
   set('time',v.check.checked_at?new Date(v.check.checked_at).toLocaleString():'尚未检查');
-  set('integrity',v.running_version!==v.installed_version?'运行版本与安装记录不一致':({verified:'安装文件摘要一致',mismatch:'文件摘要不一致 · 更新已阻止'})[v.check.installed_integrity]||'等待安装文件核验');
-  set('signature',v.check.state==='verified'?'Ed25519 清单签名已验证':'正式发布签名未通过核验');
+  set('integrity',!v.installed_version?'安装记录不可用 · 暂无法校准':v.running_version!==v.installed_version?'运行版本与安装记录不一致':({verified:'安装文件摘要一致',mismatch:'文件摘要不一致 · 更新已阻止'})[v.check.installed_integrity]||'等待安装文件核验');
+  set('signature',v.check.state==='verified'?'Ed25519 清单签名已验证':v.check.state==='running'?'正在核验正式发布':v.check.state==='failed'?'正式发布核验未完成':'等待正式发布核验');
   set('commit',v.check.source?.commit?.slice(0,12)||'源码提交未读取');
   set('source',v.check.source?.state!=='observed'?'Git 源码状态不可用':v.check.source.has_unreleased_changes===true?'Git 有尚未发布的源码变化':v.check.source.has_unreleased_changes===false?'Git main 与最新正式标签一致':'已读取 main · 正式标签提交待核对');
   active=v.check.state==='running'||v.job.state==='running';

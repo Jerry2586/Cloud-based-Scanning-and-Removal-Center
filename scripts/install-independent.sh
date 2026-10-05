@@ -112,8 +112,9 @@ else
   cp -a "$SOURCE/src" "$SOURCE/scripts" "$SOURCE/docker" "$RELEASE/"
   cp "$SOURCE/package.json" "$SOURCE/release-contract.json" "$SOURCE/release-public.pem" "$SOURCE/.dockerignore" "$SOURCE/install.sh" "$RELEASE/"
   printf '%s\n' "$DIGEST" > "$RELEASE/.payload-sha256"
-  find "$RELEASE" -type d -exec chmod 755 {} +
-  find "$RELEASE" -type f -exec chmod 644 {} +
+  # cp -a preserves archive ownership; executable release inputs must be root-controlled.
+  find "$RELEASE" -type d -exec chown root:root {} + -exec chmod 755 {} +
+  find "$RELEASE" -type f -exec chown root:root {} + -exec chmod 644 {} +
 fi
 IMAGE=ironcurtain-security:$VERSION-$ROLE-$DIGEST
 # Build before active configuration/service changes.

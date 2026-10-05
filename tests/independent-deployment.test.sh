@@ -33,6 +33,11 @@ CLOUD_HOST=$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Ga
 [[ $CLOUD_HOST =~ ^[0-9.]+$ ]] || { echo 'Docker bridge gateway unavailable' >&2; exit 1; }
 bash "$SOURCE/scripts/install-independent.sh" --role cloud --host "$CLOUD_HOST" --bind "$CLOUD_HOST"
 bash "$SOURCE/scripts/install-independent.sh" --role local --antivirus skip --host 127.0.0.1 --bind 127.0.0.1
+# Copied runner-owned source must become root-controlled before trust calibration.
+for role in local cloud; do
+  release=$(readlink -f "/opt/ironcurtain/$role/current")
+  [[ -z $(find "$release" \( ! -user root -o ! -group root -o -perm /022 \) -print -quit) ]]
+done
 # Both role menus must open in a real terminal; the legacy entry still works.
 for entry in tiemu ironcurtain xuanwu; do
   [[ -f /usr/local/bin/$entry && ! -L /usr/local/bin/$entry && $(stat -c '%a:%u:%h' /usr/local/bin/$entry) == 755:0:1 ]]
