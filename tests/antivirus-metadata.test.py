@@ -43,6 +43,7 @@ class DatabaseTests(unittest.TestCase):
             self.assertEqual(av.engine_status()['state'],'unavailable')
 
 
+
 @unittest.skipUnless(os.name=='posix' and os.getuid()==0,'Linux root source metadata checks')
 class SourceTests(unittest.TestCase):
     def setUp(self):
@@ -77,5 +78,43 @@ class SourceTests(unittest.TestCase):
             status=av.engine_status(self.database);self.assertEqual(status['state'],'configured');self.assertEqual(status['source'],'xuanwu-signed');self.assertEqual(status['updater'],'disabled')
         self.marker.write_text('{broken');self.assertEqual(av.database_source(self.database),'unknown')
         self.marker.write_text(json.dumps({'schema':'ironcurtain-virus-db-source/v1','source':'xuanwu-signed','snapshot':'bad'}));self.assertEqual(av.database_source(self.database),'unknown')
+
+
+    def test_cloud_evidence_prevents_official_fallback(self):
+        for evidence in (self.root/"cloud-highwater.json",self.database/"manifest.json",self.database/"manifest.json.sig"):
+            evidence.write_text("retained cloud evidence"); evidence.chmod(0o600)
+            self.assertEqual(av.database_source(self.database),"unknown")
+            evidence.unlink()
+
+class UpdaterTests(unittest.TestCase):
+ def test_service_states_and_fixed_arguments(self):
+  for props,expected in [({'LoadState':'loaded','ActiveState':'active','Result':'success'},'running'),({'LoadState':'loaded','ActiveState':'inactive','Result':'success'},'idle'),({'LoadState':'loaded','ActiveState':'failed','Result':'exit-code'},'failed'),({},'unavailable')]:
+   self.assertEqual(av.update_status(props),expected)
+  with patch.object(av.subprocess,'run') as run:
+   run.return_value.stdout=b'ClamAV 1.4.3/100/date\n'
+   av._version.cache_clear();self.assertEqual(av._version('/fixture/clamscan',1),'1.4.3');self.assertEqual(av._version('/fixture/clamscan',1),'1.4.3')
+   self.assertEqual(run.call_count,1);self.assertEqual(run.call_args.args[0],['/fixture/clamscan','--version']);self.assertLessEqual(run.call_args.kwargs['timeout'],1)
+ @unittest.skipUnless(os.name=='posix' and os.geteuid()==0,'trusted root-installed updater')
+ def test_official_update_trust_source_and_fixed_systemd_service(self):
+  with tempfile.TemporaryDirectory(dir='/root',prefix='ic-updater-') as tmp:
+   unit=pathlib.Path(tmp)/'update.service';unit.write_text('fixture');unit.chmod(0o644)
+   props={'LoadState':'loaded','FragmentPath':str(unit)}
+   with patch.object(av,'UPDATE_UNIT',str(unit)),patch.object(av,'database_source',return_value='official-direct'),patch.object(av.shutil,'which',return_value='/usr/bin/freshclam'),patch.object(av,'_properties',return_value=props),patch.object(av.subprocess,'run') as run:
+    av.request_official_update();self.assertEqual(run.call_args.args[0],['systemctl','start','--no-block','ironcurtain-antivirus-update.service'])
+    for change in ['permissions','owner','link','source','fragment']:
+     if change=='permissions':unit.chmod(0o666)
+     elif change=='owner':os.chown(unit,65534,-1)
+     elif change=='link':unit.unlink();unit.symlink_to('/etc/passwd')
+     elif change=='source':
+      with patch.object(av,'database_source',return_value='xuanwu-signed'):
+       with self.assertRaises(ValueError):av.request_official_update()
+      continue
+     elif change=='fragment':
+      with patch.object(av,'_properties',return_value={'LoadState':'loaded','FragmentPath':'/untrusted'}):
+       with self.assertRaises(ValueError):av.request_official_update()
+      continue
+     with self.assertRaises(ValueError):av.request_official_update()
+     unit.unlink();unit.write_text('fixture');unit.chmod(0o644)
+    self.assertEqual(run.call_count,1)
 
 if __name__=='__main__': unittest.main()

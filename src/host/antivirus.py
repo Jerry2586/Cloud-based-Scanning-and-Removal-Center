@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Bounded metadata inspection; only a real ClamAV scan can confirm database loading."""
-import datetime, hashlib, json, os, pathlib, re, shutil, stat, subprocess, time
+import datetime, functools, hashlib, json, os, pathlib, re, shutil, stat, subprocess, time
 DATABASE_DIR = '/var/lib/ironcurtain-antivirus/database'
 
 def _header(directory, name):
@@ -46,18 +46,54 @@ def database_status(directory=None, clock=None):
     except (OSError, ValueError, UnicodeError, OverflowError):
         return {'state': 'unavailable', 'detail': '官方病毒库缺失、格式异常或目录权限不安全'}
 
-def updater_status():
+def _properties(unit, fields):
+    result = subprocess.run(['systemctl', 'show', '--property='+fields, unit], stdin=subprocess.DEVNULL, capture_output=True, timeout=0.75, check=True)
+    if len(result.stdout)>4096: raise ValueError('updater response too large')
+    return dict(line.split('=',1) for line in result.stdout.decode('ascii').splitlines() if '=' in line)
+
+def updater_status(service=None):
     try:
-        def properties(unit, fields):
-            result = subprocess.run(['systemctl', 'show', '--property='+fields, unit], stdin=subprocess.DEVNULL, capture_output=True, timeout=2, check=True)
-            if len(result.stdout)>4096: raise ValueError('updater response too large')
-            return dict(line.split('=',1) for line in result.stdout.decode('ascii').splitlines() if '=' in line)
-        timer = properties('ironcurtain-antivirus-update.timer', 'ActiveState,UnitFileState')
-        service = properties('ironcurtain-antivirus-update.service', 'Result')
+        timer = _properties('ironcurtain-antivirus-update.timer', 'ActiveState,UnitFileState')
+        service = service if service is not None else _properties('ironcurtain-antivirus-update.service', 'Result')
         if service.get('Result') not in [None,'','success']: return 'failed'
         if timer.get('ActiveState')=='active' and timer.get('UnitFileState')=='enabled': return 'scheduled'
         return 'disabled'
-    except (OSError, ValueError, subprocess.SubprocessError): return 'unknown'
+    except (OSError, ValueError, UnicodeError, subprocess.SubprocessError): return 'unknown'
+
+def update_status(service=None):
+    try:
+        value=service if service is not None else _properties('ironcurtain-antivirus-update.service','LoadState,ActiveState,Result')
+        if value.get('LoadState')!='loaded': return 'unavailable'
+        if value.get('ActiveState') in ('activating','active','reloading','deactivating'): return 'running'
+        if value.get('Result') not in ('','success') or value.get('ActiveState')=='failed': return 'failed'
+        return 'idle'
+    except (OSError, ValueError, UnicodeError, subprocess.SubprocessError): return 'unavailable'
+
+UPDATE_UNIT='/etc/systemd/system/ironcurtain-antivirus-update.service'
+def request_official_update():
+    # The browser can only start the root-installed, unprivileged official updater.
+    if database_source()!='official-direct' or not shutil.which('freshclam'): raise ValueError('official updater unavailable')
+    unit=pathlib.Path(UPDATE_UNIT)
+    for path in [unit,*unit.parents]:
+        info=path.lstat()
+        if info.st_uid!=0 or info.st_mode & 0o022 or not (stat.S_ISREG(info.st_mode) if path==unit else stat.S_ISDIR(info.st_mode)):
+            raise ValueError('untrusted updater unit')
+    properties=_properties('ironcurtain-antivirus-update.service','LoadState,FragmentPath')
+    if properties.get('LoadState')!='loaded' or properties.get('FragmentPath')!=UPDATE_UNIT: raise ValueError('unexpected updater unit')
+    subprocess.run(['systemctl','start','--no-block','ironcurtain-antivirus-update.service'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1, check=True)
+
+@functools.lru_cache(maxsize=2)
+def _version(executable, bucket):
+    try:
+        value=subprocess.run([executable,'--version'],stdin=subprocess.DEVNULL,capture_output=True,timeout=1,check=True).stdout
+        if len(value)>512: return None
+        match=re.match(r'ClamAV ([0-9]+\.[0-9]+\.[0-9]+(?:[.-][A-Za-z0-9.-]{1,32})?)(?:/|\s|$)',value.decode('ascii'))
+        return match[1] if match else None
+    except (OSError, UnicodeError, subprocess.SubprocessError): return None
+
+def engine_version():
+    executable=shutil.which('clamscan')
+    return _version(executable,int(time.monotonic()//60)) if executable else None
 
 def database_source(directory=None):
     data=pathlib.PurePosixPath(directory or DATABASE_DIR).parent
@@ -81,7 +117,13 @@ def database_source(directory=None):
         try:fd=os.open('source.json',os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=parent_fd)
         except FileNotFoundError:
             try:os.stat('source.json',dir_fd=parent_fd,follow_symlinks=False)
-            except FileNotFoundError:return 'official-direct'
+            except FileNotFoundError:
+                # Retained cloud evidence forbids fallback after a lost source marker.
+                for path in ('cloud-highwater.json','database/manifest.json','database/manifest.json.sig'):
+                    try:os.stat(path,dir_fd=parent_fd,follow_symlinks=False)
+                    except FileNotFoundError:continue
+                    return 'unknown'
+                return 'official-direct'
             return 'unknown'
         with os.fdopen(fd,'rb') as handle:
             info=os.fstat(handle.fileno())
@@ -99,7 +141,9 @@ def engine_status(directory=None):
     if not installed: result = {'state':'unavailable', 'detail':'ClamAV 未安装，请在 Linux 菜单安装病毒引擎'}
     source=database_source(directory)
     if source=='unknown':result={'state':'unavailable','detail':'病毒库更新源异常或切换事务待恢复，请检查 Linux 菜单'}
-    return {'engine':'ClamAV', 'installed': installed, 'updater':updater_status(), 'source':source, **result}
+    try: service=_properties('ironcurtain-antivirus-update.service','LoadState,ActiveState,Result')
+    except (OSError,ValueError,UnicodeError,subprocess.SubprocessError): service={}
+    return {'engine':'ClamAV', 'installed': installed, 'version':engine_version(), 'update_state':update_status(service), 'updater':updater_status(service), 'source':source, **result}
 
 if __name__ == '__main__':
     print(json.dumps(engine_status(), ensure_ascii=False))

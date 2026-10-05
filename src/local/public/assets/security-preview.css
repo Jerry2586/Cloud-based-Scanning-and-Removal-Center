@@ -140,3 +140,17 @@ body.ironcurtain.ic-focused .workspace{background:#080d16}
 @keyframes sc-file-indeterminate{from{transform:translateX(0)}to{transform:translateX(310%)}}
 @media(max-width:760px){.sc-file-counters{grid-template-columns:repeat(2,minmax(0,1fr))}.sc-file-scan-card .sc-section-head{flex-wrap:wrap;gap:12px}}
 @media(prefers-reduced-motion:reduce){.sc-file-progress>span{animation:none!important;transition:none}}
+
+/* Determinate bars stay still; only unknown indexing progress moves. */
+.security-console [role="progressbar"][aria-valuenow] .sc-progress-fill{animation:none;transform:none}
+.sc-home-progress{grid-template-columns:minmax(210px,auto) minmax(120px,1fr) auto}
+.sc-home-progress em{font-style:normal;color:#7edce7;font-variant-numeric:tabular-nums}
+.sc-home-progress .sc-checkup-detail{grid-column:1 / -1;grid-row:2;margin:0;color:#9bb3c9;font-size:12px;line-height:1.7;overflow-wrap:anywhere}
+.sc-home-progress>button{grid-column:3;grid-row:1}
+.sc-home-progress [data-checkup-progress]:not([aria-valuenow])[data-active="true"] .sc-progress-fill{animation:sc-file-indeterminate 1.8s ease-in-out infinite alternate}
+.sc-home-progress [data-checkup-progress][data-active="false"] .sc-progress-fill{animation:none;transform:none}
+@media(max-width:800px){.sc-home-progress{grid-template-columns:minmax(0,1fr)}.sc-home-progress .sc-checkup-detail{grid-row:auto}.sc-home-progress>button{grid-column:1;grid-row:auto}}
+
+.sc-engine-hero{display:flex;align-items:center;justify-content:space-between;gap:24px;background:linear-gradient(120deg,rgba(16,185,129,.10),rgba(6,182,212,.05));border-color:rgba(45,212,191,.25)}
+.sc-engine-hero h4{font-size:24px;margin:12px 0}.sc-engine-source{color:#2dd4bf;font-size:13px}.sc-engine-emblem{font-size:90px;line-height:1;color:#2dd4bf;filter:drop-shadow(0 0 18px rgba(45,212,191,.4))}.sc-engine-stats .sc-engine-date{font-size:15px;line-height:1.6}.sc-engine-stats{margin:20px 0}
+@media(max-width:640px){.sc-engine-emblem{display:none}.sc-engine-hero h4{font-size:20px}}

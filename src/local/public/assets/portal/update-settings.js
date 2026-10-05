@@ -18,7 +18,7 @@ export function createUpdateSettings({state,request,notify},scope=document){
   button('check',busy||active||pending);button('install',busy||active||pending||!v.can_install);
  }
  function stop(){generation++;clearTimeout(timer);timer=null;busy=false;active=false;last=null;pendingUntil=0;}
- async function refresh(id=generation){const session=state.csrf;if(!session)return;try{const data=await request('/api/updates');if(id!==generation||session!==state.csrf)return;paint(data);}catch{if(id!==generation||session!==state.csrf)return;set('state','面板连接暂不可用 · 重新连接后核对实际状态');button('install',true);}finally{if(id===generation&&session===state.csrf)timer=setTimeout(()=>refresh(id),(active||pendingUntil>Date.now())?2000:60000);}}
+ async function refresh(id=generation){const session=state.csrf;if(!session)return;try{const data=await request('/api/updates');if(id!==generation||session!==state.csrf)return;paint(data);}catch{if(id!==generation||session!==state.csrf)return;last=null;active=false;pendingUntil=0;set('state','面板连接暂不可用 · 重新连接后核对实际状态');button('check',busy);button('install',true);}finally{if(id===generation&&session===state.csrf)timer=setTimeout(()=>refresh(id),(active||pendingUntil>Date.now())?2000:60000);}}
  function start(){stop();if(state.csrf)void refresh(generation);}
  async function act(action){if(busy||!state.csrf||(action==='install'&&!last?.can_install))return;
   if(action==='install'&&!globalThis.confirm('安装已签名的最新正式版本？更新会备份并可能短暂重启面板。'))return;

@@ -5,11 +5,12 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createLocalServer } from '../src/local/server.js';
+import { createCloudLink } from '../src/local/cloud-client.js';
 import { passwordRecord, loadCredentials, verifyPassword, createSessions } from '../src/local/auth.js';
 const password = 'fixture-independent-password-only';
-async function fixture(t, scanResult, updates) {
+async function fixture(t, scanResult, updates, cloudStatus) {
   let invoked = 0;
-  const server = createLocalServer({ credentials: passwordRecord(password), origin: 'http://127.0.0.1:8791', ...(updates ? {updates} : {}), scan: async action => { invoked++; return scanResult || { state: ['scan','full-scan'].includes(action) ? 'running' : 'idle', checks: [] }; } });
+  const server = createLocalServer({ credentials: passwordRecord(password), origin: 'http://127.0.0.1:8791', ...(updates ? {updates} : {}), ...(cloudStatus ? {cloudStatus} : {}), scan: async action => { invoked++; return scanResult || { state: ['scan','full-scan','checkup','engine-update'].includes(action) ? 'running' : 'idle', checks: [] }; } });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
   const base = 'http://127.0.0.1:' + server.address().port;
@@ -87,7 +88,7 @@ test('scan endpoints preserve busy, cooldown and unavailable responses', async t
     ['missing agent', { state: 'unavailable', reason: '本机检查代理未接入或超时' }, 503],
     ['unexpected status', { state: 'unavailable', response_status: 500, reason: '本机检查代理返回异常' }, 503],
   ];
-  for (const endpoint of ['/api/scan', '/api/full-scan']) {
+  for (const endpoint of ['/api/scan', '/api/full-scan', '/api/checkup', '/api/engine/update']) {
     for (const [name, result, expectedStatus] of cases) {
       await t.test(endpoint + ': ' + name, async t => {
         const f = await fixture(t, result);
@@ -125,4 +126,23 @@ test('real update callbacks preserve accepted, busy, throttled and failed status
    const data=await response.json();assert.ok(data.reason);assert.doesNotMatch(JSON.stringify(data),/PRIVATE_TOKEN|command/);assert.equal(actions.at(-1),action);
   }
  }
+});
+
+test('unpaired cloud does not gate local checkup, scan or official updater', async t => {
+ const dir=await mkdtemp(join(tmpdir(),'ic-unpaired-')); const cloud=createCloudLink({directory:dir});
+ t.after(async()=>{cloud.close();await rm(dir,{recursive:true,force:true});});
+ const f=await fixture(t,undefined,undefined,()=>cloud.status()); const identity=await f.login();
+ const headers={cookie:identity.cookie,'x-csrf-token':identity.csrf};
+ assert.equal((await (await f.request('/api/cloud/status',{headers})).json()).state,'unpaired');
+ for(const route of ['/api/checkup','/api/engine/update']) {
+  assert.equal((await f.post(route,{})).status,401);
+  assert.equal((await f.post(route,{},{cookie:identity.cookie})).status,403);
+  assert.equal((await f.post(route,{}, {...headers,origin:'https://untrusted.invalid'})).status,403);
+  assert.equal((await f.post(route,{command:'sh',url:'https://untrusted.invalid'},headers)).status,400);
+ }
+ assert.equal(f.invoked(),0);
+ for(const route of ['/api/scan','/api/full-scan','/api/checkup','/api/engine/update']) {
+  const response=await f.post(route,{},headers);assert.equal(response.status,202);assert.equal((await response.json()).state,'running');
+ }
+ assert.equal(f.invoked(),4);assert.equal((await f.request('/api/report',{headers})).status,404);
 });

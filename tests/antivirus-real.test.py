@@ -47,4 +47,32 @@ class EngineTests(unittest.TestCase):
             restored=a.Agent(agent.profile,agent.state_dir)
             with patch.object(a.antivirus,'engine_status',return_value=engine):self.assertEqual(restored.status()['findings_total'],1)
             self.assertEqual((scope/'infected.txt').read_bytes(),pattern)
+    def test_real_engine_checkup_runs_without_cloud_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=pathlib.Path(tmp); root.chmod(0o700); scope=root/'scope'; scope.mkdir(); db=root/'fixture-db'; db.mkdir()
+            pattern=b'IRONCURTAIN_OFFLINE_CHECKUP_TEST_ONLY'
+            (db/'fixture.ndb').write_text('IronCurtain.OfflineCheckup:0:*:'+pattern.hex()+'\n')
+            (scope/'clean.txt').write_bytes(b'clean fixture'); (scope/'infected.txt').write_bytes(pattern)
+            agent=a.Agent({'schema':'ironcurtain-profile/v1','program_roots':[str(scope)]},root/'state')
+            engine={'installed':True,'state':'configured','database_version':1,'database_at':a.utc(),'signatures':1,'database_generation':'a'*64}
+            real_runner=a.Runner
+            def runner(args,**kwargs):
+                if args and pathlib.Path(args[0]).name=='clamscan':
+                    args=[x for x in args if x not in ['--official-db-only=yes','--fail-if-cvd-older-than=7']]
+                    args=[('--database='+str(db)) if x.startswith('--database=') else x for x in args]
+                return real_runner()(args,**kwargs)
+            with patch.object(a.threading,'Thread'):
+                self.assertEqual(agent.trigger_checkup()[0],202)
+            # Actual environment commands and actual clamscan; only isolated test
+            # database metadata is substituted. No cloud client or identity exists.
+            with patch.object(a,'Runner',return_value=runner),patch.object(a.antivirus,'engine_status',return_value=engine),patch.object(a.antivirus,'database_status',return_value=engine),patch.object(a.antivirus,'DATABASE_DIR',str(db)):
+                agent.scan_checkup()
+                status=agent.status()
+            self.assertEqual(status['state'],'finished');self.assertEqual(len(status['checks']),25)
+            self.assertIn(status['checkup']['state'],['finished','partial']);self.assertEqual(status['checkup']['stage'],'complete')
+            self.assertEqual(status['checkup']['environment_at'],status['checked_at'])
+            self.assertEqual(status['full_scan']['state'],'finished')
+            self.assertEqual((status['full_scan']['processed'],status['full_scan']['clean'],status['full_scan']['infected']),(2,1,1))
+            self.assertEqual(status['findings_total'],1);self.assertFalse(agent.full_running)
+            self.assertEqual((scope/'infected.txt').read_bytes(),pattern)
 if __name__=='__main__':unittest.main()

@@ -25,7 +25,20 @@ assert.ok(csrf);
 assert.equal((await call('/api/scan',{}, {'X-CSRF-Token':'invalid'})).status,403);
 const initial=await call('/api/scan');
 assert.equal(initial.status,200);assert.notEqual(initial.data.state,'unavailable', 'Local scan unavailable: '+(initial.data.reason || 'no reason'));
-const started=await call('/api/scan',{});
+const offline=process.env.IRONCURTAIN_EXPECT_UNPAIRED==='1';
+if(offline) {
+ const cloud=await call('/api/cloud/status');assert.equal(cloud.status,200);assert.equal(cloud.data.connected,false);assert.equal(cloud.data.state,'unpaired');
+ assert.equal((await call('/api/checkup',{}, {'X-CSRF-Token':'invalid'})).status,403);
+ assert.equal((await call('/api/engine/update',{command:'arbitrary'})).status,400);
+}
+let started;
+for(let attempt=0;attempt<(offline?80:1);attempt++) {
+ started=await call(offline?'/api/checkup':'/api/scan',{});
+ if(!offline || started.status===202) break;
+ assert.ok([409,429].includes(started.status),'Expected cooldown or existing local scan: '+started.status);
+ await new Promise(resolve=>setTimeout(resolve,1000));
+}
+if(offline) assert.equal(started.status,202,'Unpaired checkup must start after prior scan cooldown');
 assert.ok([202,429].includes(started.status), 'Expected scan start or cooldown, got HTTP '+started.status+' state='+started.data.state);
 if(started.status===202) assert.equal(started.data.state,'running');
 if(started.status===429) {
@@ -36,8 +49,8 @@ if(started.status===429) {
 let finished;
 for(let attempt=0;attempt<90;attempt++){
   const value=await call('/api/scan');assert.equal(value.status,200);
-  if(value.data.state==='finished'){finished=value.data;break;}
-  assert.ok(['running','idle'].includes(value.data.state));
+  if(value.data.state==='finished' && (!offline || ['finished','partial'].includes(value.data.checkup?.state))){finished=value.data;break;}
+  assert.ok(['running','idle','finished'].includes(value.data.state));
   await new Promise(resolve=>setTimeout(resolve,1000));
 }
 assert.ok(finished,'Actual host scan must complete');
@@ -52,6 +65,17 @@ assert.ok(environment.os.ID && environment.kernel);
 assert.ok(environment.package_count>0 && environment.service_count>0);
 assert.ok(environment.packages.length<=32 && environment.services.length<=16);
 assert.ok(['first-observation','compared','partial'].includes(environment.change_state));
+if(offline) {
+ assert.equal(finished.checkup.stage,'complete');assert.equal(finished.checkup.environment_at,finished.checked_at);
+ for(const key of ['container_state','listener_state']) assert.ok(['complete','partial'].includes(finished.inventory[key]),'Actual '+key+' discovery unavailable');
+ assert.ok(finished.inventory.container_count>=2,'Both actual installed containers must be discovered');
+ assert.ok(finished.inventory.listener_count>0,'Actual listeners must be observed');
+ assert.ok(finished.antivirus.engine==='ClamAV');
+ assert.ok(['configured','unavailable','stale'].includes(finished.antivirus.state));
+ const cloud=await call('/api/cloud/status');assert.equal(cloud.data.connected,false);assert.equal(cloud.data.state,'unpaired');
+ console.log('Live unpaired HTTPS checkup, Linux/software/service/listener/container discovery passed; file/engine gaps remain explicit.');
+ process.exit(0);
+}
 const installed=JSON.parse(readFileSync('/opt/ironcurtain/local/install.json','utf8'));
 const updateStatus=await call('/api/updates');
 assert.equal(updateStatus.status,200);

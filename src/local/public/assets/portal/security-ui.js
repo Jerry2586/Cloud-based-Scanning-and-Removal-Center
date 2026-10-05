@@ -131,7 +131,7 @@ export function createSecurityUi({ state, can, request, notify }) {
     const history = $('security-local-history');
     const historyState = $('security-local-history-state');
     if (!status || !timestamp || !list) return;
-    localRunning = report.state === 'running' || ['indexing','scanning'].includes(report.full_scan?.state);
+    localRunning = report.checkup?.state === 'running' || report.state === 'running' || ['indexing','scanning'].includes(report.full_scan?.state) || report.antivirus?.update_state==='running';
     const checks = Array.isArray(report.checks) ? report.checks : [];
     const findings = checks.filter(item => item.state === 'finding').length;
     const incomplete = checks.length ? checks.filter(item => item.state !== 'ok').length : 1;
@@ -157,7 +157,7 @@ export function createSecurityUi({ state, can, request, notify }) {
       row.textContent = item.checked_at + ' · ' + item.name + ' · ' + (localStateLabels[item.previous_state] || '首次记录') + ' → ' + (localStateLabels[item.state] || '未知') + ' · ' + item.detail;
       history?.append(row);
     }
-    consoleView.update(report, { busy: scanRequested, trusted: report.state === 'finished' && !coverageIncomplete && !stale && !historyUnavailable, issue: report.state === 'running' ? '本机检查中' : report.state === 'idle' ? '等待首次检查' : report.state === 'unavailable' ? '本机代理不可用' : report.state === 'failed' ? '本机检查失败' : coverageIncomplete ? '等待完整有效报告' : stale ? '报告过期或时间异常' : historyUnavailable ? '告警历史不可用' : '本机检查不可用' });
+    consoleView.update(report, { busy: scanRequested, trusted: report.state === 'finished' && !coverageIncomplete && !stale, issue: report.state === 'running' ? '本机检查中' : report.state === 'idle' ? '等待首次检查' : report.state === 'unavailable' ? '本机代理不可用' : report.state === 'failed' ? '本机检查失败' : coverageIncomplete ? '等待完整有效报告' : stale ? '报告过期或时间异常' : historyUnavailable ? '告警历史不可用' : '本机检查不可用' });
     if (historyState) historyState.textContent = historyUnavailable ? '告警历史不可用；请检查本地代理与状态目录' : report.history_state === 'truncated' ? '仅显示响应容量内的最近记录；完整记录保留在服务器' : report.history?.length ? '显示最近八条状态变化；本机最多保留一百二十八条' : '暂无状态变化记录';
   }
   const localSecurityPoller = createSecurityPoller({
@@ -251,15 +251,16 @@ export function createSecurityUi({ state, can, request, notify }) {
     consoleView.bind();
     updateSettings.bind(); updateSettings.start();
     void renderSecurity(); void renderLocalSecurity();
-    document.querySelectorAll('[data-security-scan], [data-security-full-scan]').forEach(button => button.addEventListener('click', async () => {
+    document.querySelectorAll('[data-security-scan], [data-security-full-scan], [data-security-checkup], [data-security-engine-update]').forEach(button => button.addEventListener('click', async () => {
       if (scanRequested || !state.csrf || !can('system.manage')) return;
       const session = state.csrf;
       const generation = ++scanGeneration;
       const current = () => generation === scanGeneration && state.csrf === session && can('system.manage');
       scanRequested = true;
-      consoleView.setBusy(true);
+      const action=button.hasAttribute('data-security-engine-update')?'engine-update':button.hasAttribute('data-security-checkup')?'checkup':button.hasAttribute('data-security-full-scan')?'full-scan':'scan';
+      consoleView.setBusy(true,action);
       try {
-        await request(button.hasAttribute('data-security-full-scan') ? '/api/full-scan' : '/api/scan', { method: 'POST', body: {} });
+        await request(action==='engine-update' ? '/api/engine/update' : button.hasAttribute('data-security-checkup') ? '/api/checkup' : button.hasAttribute('data-security-full-scan') ? '/api/full-scan' : '/api/scan', { method: 'POST', body: {} });
         if (current()) await localSecurityPoller.refresh();
       } catch (error) { if (current()) notify(error.message, true); }
       finally { if (current()) { scanRequested = false; consoleView.setBusy(false); } }

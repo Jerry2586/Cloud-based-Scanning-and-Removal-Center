@@ -5,8 +5,15 @@ function notify(message, error = false) { const node = $('notice'); node.textCon
 function clearSession() { state.csrf = null; document.dispatchEvent(new Event('ironcurtain-session-cleared')); $('workspace').hidden = true; $('login-view').hidden = false; }
 async function request(url, options = {}) {
   const headers = { ...(options.method === 'POST' ? { 'content-type': 'application/json', 'x-csrf-token': state.csrf || '' } : {}) };
-  const response = await fetch(url, { credentials: 'same-origin', ...options, headers, body: options.body === undefined ? undefined : JSON.stringify(options.body) });
-  const data = await response.json(); if (!response.ok) { if (response.status === 401) clearSession(); throw Error(data.error || data.reason || '请求失败，请稍后重试'); } return data;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(url, { credentials: 'same-origin', ...options, signal: controller.signal, headers, body: options.body === undefined ? undefined : JSON.stringify(options.body) });
+    const data = await response.json(); if (!response.ok) { if (response.status === 401) clearSession(); throw Error(data.error || data.reason || '请求失败，请稍后重试'); } return data;
+  } catch(error) {
+    if (error.name === 'AbortError') throw Error('请求超时，请刷新状态确认任务是否已受理');
+    throw error;
+  } finally { clearTimeout(timer); }
 }
 const ui = createSecurityUi({ state, can: () => Boolean(state.csrf), request, notify });
 function authenticated(value) { state.csrf = value.csrf; $('login-view').hidden = true; $('workspace').hidden = false; ui.bind(); ui.render(); }

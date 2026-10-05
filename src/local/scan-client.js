@@ -1,3 +1,6 @@
+import { sanitizeAntivirus } from '../contracts/antivirus-status.js';
+export { sanitizeAntivirus } from '../contracts/antivirus-status.js';
+import { sanitizeCheckup } from '../contracts/checkup-status.js';
 import { request as unixRequest } from 'node:http';
 import { sanitizeProtection, sanitizeInventory, sanitizeFullScan } from '../contracts/protection-status.js';
 import { sanitizeRules, sanitizeRuleHits } from '../contracts/rule-status.js';
@@ -21,19 +24,6 @@ function sanitizeCheck(item) {
   return result;
 }
 
-export function sanitizeAntivirus(value) {
-  const unavailable = { engine: 'ClamAV', installed: false, state: 'unavailable', updater: 'unknown', detail: '病毒引擎状态不可用' };
-  if (!value || value.engine !== 'ClamAV' || typeof value.installed !== 'boolean' ||
-      !['unavailable','configured','stale'].includes(value.state) || !['scheduled','disabled','failed','unknown'].includes(value.updater) ||
-      typeof value.detail !== 'string' || value.detail.length > 180 ||
-      value.source !== undefined && !['official-direct','xuanwu-signed','unknown'].includes(value.source)) return unavailable;
-  if (value.state !== 'unavailable' && (!value.installed || !safeTimestamp(value.database_at) ||
-      !Number.isSafeInteger(value.database_version) || value.database_version <= 0 ||
-      !Number.isSafeInteger(value.signatures) || value.signatures <= 0)) return unavailable;
-  return {engine:'ClamAV', installed:value.installed, state:value.state, updater:value.updater, detail:value.detail,
-    ...(value.source !== undefined ? {source:value.source} : {}),
-    ...(value.state !== 'unavailable' ? {database_at:value.database_at, database_version:value.database_version, signatures:value.signatures} : {})};
-}
 
 
 export function sanitizeFindings(value) {
@@ -70,7 +60,7 @@ export function sanitizeQuarantine(value) {
 
 // One fixed local action. The browser never chooses a command or path.
 export function localSecurityScan(action, env = process.env) {
-  if (!['status', 'scan', 'full-scan'].includes(action)) throw new TypeError('Unknown security action');
+  if (!['status', 'scan', 'full-scan', 'checkup', 'engine-update'].includes(action)) throw new TypeError('Unknown security action');
   const socketPath = env.IRONCURTAIN_SCAN_SOCKET || env.APPGOG_HOST_SCAN_SOCKET || '/run/ironcurtain/scan.sock';
   return new Promise((resolve) => {
     const req = unixRequest({ socketPath, path: action === 'status' ? '/status' : '/' + action,
@@ -111,10 +101,10 @@ export function localSecurityScan(action, env = process.env) {
           const invalidHistory = !Array.isArray(result.history) || history.length !== Math.min(8, result.history.length);
           const historyState = invalidHistory || result.history_state === 'unavailable' ? 'unavailable' : result.history.length > 8 ? 'truncated'
             : ['ok', 'unavailable', 'truncated'].includes(result.history_state) ? result.history_state : 'unavailable';
-          resolve({ state: result.state, response_status: res.statusCode, inventory: sanitizeInventory(result.inventory), protection: sanitizeProtection(result.protection), full_scan: sanitizeFullScan(result.full_scan), findings_source: ['quick','full'].includes(result.findings_source) ? result.findings_source : 'unknown', ...sanitizeFindings(result), antivirus: sanitizeAntivirus(result.antivirus), rules: sanitizeRules(result.rules), rule_hits: sanitizeRuleHits(result.rule_hits), quarantine: sanitizeQuarantine(result.quarantine), history, progress: hostScanProgress(result),
+          resolve({ state: result.state, profile_digest:/^[a-f0-9]{64}$/.test(result.profile_digest || '')?result.profile_digest:undefined, response_status: res.statusCode, checkup: sanitizeCheckup(result.checkup), inventory: sanitizeInventory(result.inventory), protection: sanitizeProtection(result.protection), full_scan: sanitizeFullScan(result.full_scan), findings_source: ['quick','full'].includes(result.findings_source) ? result.findings_source : 'unknown', ...sanitizeFindings(result), antivirus: sanitizeAntivirus(result.antivirus), rules: sanitizeRules(result.rules), rule_hits: sanitizeRuleHits(result.rule_hits), quarantine: sanitizeQuarantine(result.quarantine), history, progress: hostScanProgress(result),
             coverage: result.state === 'finished' ? hostScanCoverage(result) : undefined,
             history_state: historyState, checked_at: safeTimestamp(result.checked_at),
-            reason: result.state === 'unavailable' ? ({409:'已有扫描正在进行，请等待当前任务',429:'扫描请求过于频繁，请稍后重试',503:'请先在 Linux 菜单配置扫描目录与病毒引擎'}[res.statusCode] || '本机检查代理异常') : undefined, checks });
+            reason: result.state === 'unavailable' ? ({409:'已有扫描正在进行，请等待当前任务',429:'扫描请求过于频繁，请稍后重试',503:action==='engine-update'?'官方更新器不可用；请核对本机引擎安装和病毒库来源':'本机任务无法启动；请核对保护范围、引擎与代理日志'}[res.statusCode] || '本机检查代理异常') : undefined, checks });
         } catch {
           resolve({ state: 'unavailable', reason: '本机检查代理响应无效' });
         }

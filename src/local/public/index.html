@@ -14,9 +14,10 @@
 <span class="sc-nav-label">防护工作台</span>
           <button type="button" id="sc-tab-home" role="tab" aria-selected="true" aria-controls="sc-panel-home" tabindex="0" data-security-tab="home" class="active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6z"/></svg><span>安全首页</span></button>
           <button type="button" id="sc-tab-scan" role="tab" aria-selected="false" aria-controls="sc-panel-scan" tabindex="-1" data-security-tab="scan" class=""><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M7 12h10"/></svg><span>病毒查杀</span></button>
+          <button type="button" id="sc-tab-engine" role="tab" aria-selected="false" aria-controls="sc-panel-engine" tabindex="-1" data-security-tab="engine"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6zM9 12l2 2 4-4"/></svg><span>杀毒引擎</span></button>
           <button type="button" id="sc-tab-realtime" role="tab" aria-selected="false" aria-controls="sc-panel-realtime" tabindex="-1" data-security-tab="realtime" class=""><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg><span>实时防护</span></button>
-          <button type="button" id="sc-tab-environment" role="tab" aria-selected="false" aria-controls="sc-panel-environment" tabindex="-1" data-security-tab="environment" class=""><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3h16v7H4zm0 11h16v7H4M7 6h1m-1 11h1"/></svg><span>环境检查</span></button>
-          <button type="button" id="sc-tab-containers" role="tab" aria-selected="false" aria-controls="sc-panel-containers" tabindex="-1" data-security-tab="containers" class=""><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 9 5v9l-9 5-9-5V8zm-9 5 9 5 9-5m-9 5v9"/></svg><span>网站与容器</span></button>
+          <button type="button" id="sc-tab-environment" role="tab" aria-selected="false" aria-controls="sc-panel-environment" tabindex="-1" data-security-tab="environment" class=""><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3h16v7H4zm0 11h16v7H4M7 6h1m-1 11h1"/></svg><span>体检中心</span></button>
+          <button type="button" id="sc-tab-containers" role="tab" aria-selected="false" aria-controls="sc-panel-containers" tabindex="-1" data-security-tab="containers" class=""><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 9 5v9l-9 5-9-5V8zm-9 5 9 5 9-5m-9 5v9"/></svg><span>容器中心</span></button>
           <span class="sc-nav-label">响应与恢复</span>
 <button type="button" id="sc-tab-quarantine" role="tab" aria-selected="false" aria-controls="sc-panel-quarantine" tabindex="-1" data-security-tab="quarantine" class=""><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 11h14v10H5zm3 0V7a4 4 0 0 1 8 0v4m-4 4v2"/></svg><span>隔离区</span></button>
           <button type="button" id="sc-tab-recovery" role="tab" aria-selected="false" aria-controls="sc-panel-recovery" tabindex="-1" data-security-tab="recovery" class=""><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10a9 9 0 1 1 2 8M3 3v7h7m2-3v6l4 2"/></svg><span>修复与恢复</span></button>
@@ -37,16 +38,16 @@
           <div class="sc-orbit-core"><img src="/assets/ironcurtain-shield.webp" width="260" height="260" alt="">
           </div><span class="sc-orbit-dot"></span>
           </div>
-          <div class="sc-hero-copy"><span class="sc-eyebrow">YOUR SERVER. YOUR DEFENSE.</span><h2>让威胁止步于铁幕。</h2><strong id="security-local-state" data-state="warning" role="status">等待本机检查</strong><p id="security-local-time">接入 Linux 本机代理后显示真实检查结果</p><p id="security-antivirus-state" data-state="unavailable" role="status">病毒引擎状态待检查</p>
+          <div class="sc-hero-copy"><span class="sc-eyebrow">YOUR SERVER. YOUR DEFENSE.</span><h2>一键体检，让威胁止步。</h2><strong id="security-local-state" data-state="warning" role="status">等待本机检查</strong><p id="security-local-time">接入 Linux 本机代理后显示真实检查结果</p><p id="security-antivirus-state" data-state="unavailable" role="status">病毒引擎状态待检查</p>
           <div class="sc-hero-actions">
-          <button id="security-local-run" class="sc-primary" type="button" data-security-scan><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M7 12h10"/></svg><span>开始全面扫描</span></button>
+          <button id="security-local-run" class="sc-primary" type="button" data-security-checkup><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M7 12h10"/></svg><span data-checkup-button>一键全面体检</span></button>
           <button type="button" class="sc-secondary" data-security-open="environment">查看检查报告<span aria-hidden="true">↗</span></button>
-          </div><small>固定范围检查 · 文件与环境核验 · 结果可追溯</small>
+          </div><small>Linux 环境 · 软件服务 · 端口 · 容器 · 已纳管文件</small>
           </div>
-          <div class="sc-hero-meta"><span>LOCAL FIRST</span><b>本机防护</b><p>每五分钟定期检查<br>按需手动扫描</p><span class="sc-outline">真实报告驱动</span>
+          <div class="sc-hero-meta"><span>LOCAL FIRST</span><b>本机防护</b><p>独立本机运行<br>玄武连接可选</p><span class="sc-outline">真实报告驱动</span>
           </div>
           </div>
-          <div class="sc-home-progress"><div><span>环境核验进度</span><b data-scan-status>等待本机扫描</b></div><div class="sc-progress-track" data-scan-progress role="progressbar" aria-label="首页整体扫描进度" aria-valuemin="0" aria-valuemax="100" aria-valuetext="尚未开始"><span class="sc-progress-fill"></span></div><button type="button" data-security-open="scan">进入查杀工作台 <span aria-hidden="true">→</span></button></div>
+          <div class="sc-home-progress"><div><span>全面体检 · <em data-checkup-percent>阶段进度</em></span><b data-checkup-status>等待一键全面体检</b></div><div class="sc-progress-track" data-checkup-progress role="progressbar" aria-label="全面体检当前阶段进度" aria-valuemin="0" aria-valuemax="100" aria-valuetext="尚未开始"><span class="sc-progress-fill"></span></div><p class="sc-checkup-detail" data-checkup-detail>环境检查 → 已纳管文件病毒查杀</p><button type="button" data-security-open="scan">进入查杀工作台 <span aria-hidden="true">→</span></button></div>
           <div class="sc-stat-grid">
           <div><span>检查覆盖</span><strong data-security-stat="coverage">—</strong><small>固定检查范围</small>
           </div>
@@ -60,15 +61,16 @@
           <div class="sc-section-head"><h3>防护工具箱</h3><span>PROTECTION MODULES</span>
           </div>
           <div class="sc-tool-grid">
+          <button type="button" class="sc-tool" data-security-open="engine"><div class="sc-tool-top"><span class="sc-tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" aria-hidden="true"><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6zM9 12l2 2 4-4"/></svg></span><span class="sc-tool-arrow">↗</span></div><h4>本机杀毒引擎</h4><p>ClamAV 引擎 · 本地病毒库 · 独立查杀</p><span class="sc-tool-status" data-engine-summary data-state="unavailable">等待本机引擎状态</span></button>
           <button type="button" class="sc-tool" data-security-open="scan">
           <div class="sc-tool-top"><span class="sc-tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M7 12h10"/></svg></span><span class="sc-tool-arrow">↗</span>
           </div><h4>病毒查杀</h4><p>程序、上传文件与构建成品</p><span class="sc-tool-status" data-security-summary="malware" data-state="unavailable">等待接入</span></button>
           <button type="button" class="sc-tool" data-security-open="environment">
           <div class="sc-tool-top"><span class="sc-tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3h16v7H4zm0 11h16v7H4M7 6h1m-1 11h1"/></svg></span><span class="sc-tool-arrow">↗</span>
-          </div><h4>环境安全</h4><p>系统、SSH、权限与网络监听</p><span class="sc-tool-status" data-security-summary="environment" data-state="unavailable">等待接入</span></button>
+          </div><h4>体检中心</h4><p>系统、SSH、权限与网络监听</p><span class="sc-tool-status" data-security-summary="environment" data-state="unavailable">等待接入</span></button>
           <button type="button" class="sc-tool" data-security-open="containers">
           <div class="sc-tool-top"><span class="sc-tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 9 5v9l-9 5-9-5V8zm-9 5 9 5 9-5m-9 5v9"/></svg></span><span class="sc-tool-arrow">↗</span>
-          </div><h4>网站与容器</h4><p>程序完整性、配置与镜像合同</p><span class="sc-tool-status" data-security-summary="containers" data-state="unavailable">等待接入</span></button>
+          </div><h4>容器中心</h4><p>程序完整性、配置与镜像合同</p><span class="sc-tool-status" data-security-summary="containers" data-state="unavailable">等待接入</span></button>
           <button type="button" class="sc-tool" data-security-open="realtime">
           <div class="sc-tool-top"><span class="sc-tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg></span><span class="sc-tool-arrow">↗</span>
           </div><h4>实时防护</h4><p>定期巡检与状态变化告警</p><span class="sc-tool-status" data-security-summary="realtime" data-state="unavailable">等待接入</span></button>
@@ -148,6 +150,12 @@
                 <p class="sc-scan-engine"><span class="sc-engine-dot"></span>ClamAV 引擎状态以本机报告为准</p>
               </article>
             </div>
+          </section>
+          <section class="sc-page" id="sc-panel-engine" data-security-panel="engine" role="tabpanel" aria-labelledby="sc-tab-engine" hidden>
+            <div class="sc-page-heading"><div><span class="sc-eyebrow">LOCAL ANTIVIRUS ENGINE</span><h3>本机杀毒引擎</h3><p>铁幕独立执行查杀，玄武提供可选的签名分发与集中管理。</p></div></div>
+            <article class="sc-panel sc-engine-hero"><div><span class="sc-eyebrow">CLAMAV · LOCAL FIRST</span><h4 data-engine-title role="status">等待本机引擎状态</h4><p class="sc-muted" data-engine-detail>等待本机代理报告</p><p class="sc-engine-source" data-engine-source>更新来源尚不可核验</p></div><span class="sc-engine-emblem" aria-hidden="true">◈</span></article>
+            <div class="sc-stat-grid sc-engine-stats"><div><span>引擎版本</span><strong data-engine-version>—</strong><small>本机实际执行结果</small></div><div><span>病毒库版本</span><strong data-engine-database-version>—</strong><small>官方 daily 库版本</small></div><div><span>库内特征</span><strong data-engine-signatures>—</strong><small>库文件元数据计数</small></div><div><span>病毒库时间</span><strong class="sc-engine-date" data-engine-database-at>—</strong><small>不是最近扫描时间</small></div></div>
+            <div class="sc-two-col"><article class="sc-panel"><h4>病毒库更新</h4><p data-engine-updater>等待更新器状态</p><p class="sc-muted" data-engine-update-state role="status">等待本机更新器</p><button type="button" class="sc-primary" data-security-engine-update disabled><span data-engine-update-button>更新官方病毒库</span> →</button><p class="sc-muted">官方来源从 ClamAV 下载，不需要玄武。已切换玄武签名库时，使用 Linux 菜单的签名库更新入口。</p></article><article class="sc-panel"><h4>独立防护与文件查杀</h4><p>体检与容器发现由本机代理执行。文件查杀使用本机引擎和已纳管目录，命中记录保留在本机。</p><button type="button" class="sc-secondary" data-security-open="scan">打开病毒查杀 →</button><p class="sc-muted">已有有效病毒库时可断网扫描。引擎缺失、病毒库过期或范围未配置时，界面明确显示未就绪；环境体检仍可执行。</p></article></div>
           </section>
           <section class="sc-page" id="sc-panel-realtime" data-security-panel="realtime" role="tabpanel" aria-labelledby="sc-tab-realtime" hidden>
           <header class="sc-page-heading">
@@ -290,14 +298,14 @@
           <header class="sc-page-heading">
           <div class="sc-heading-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8m0-6v3m0 14v3M2 12h3m14 0h3M5 5l2 2m10 10 2 2M5 19l2-2M17 7l2-2"/></svg>
           </div>
-          <div><span class="sc-eyebrow">LOCAL DEFENSE / SETTINGS</span><h3>设置</h3><p>节点、安全连接与本机代理的接入信息。</p>
+          <div><span class="sc-eyebrow">LOCAL DEFENSE / SETTINGS</span><h3>设置</h3><p>本机防护、版本更新与可选的玄武连接。</p>
           </div>
           </header>
           <article class="sc-panel sc-version-panel"><div class="sc-version-heading"><div><span class="sc-muted">PROGRAM UPDATE</span><h4>程序版本与更新</h4><p data-update-state>等待版本检查</p></div><div class="sc-version-actions"><button type="button" class="sc-outline" data-update-check>检查 Git 与版本</button><button type="button" class="sc-primary" data-update-install disabled>安装正式更新</button></div></div><div class="sc-cloud-grid"><div><span>正在运行</span><strong data-update-running>未读取</strong></div><div><span>本机安装记录</span><strong data-update-installed>未读取</strong></div><div><span>最新正式版本</span><strong data-update-latest>未核验</strong></div><div><span>安装文件校准</span><strong data-update-integrity>等待核验</strong></div><div><span>发布签名</span><strong data-update-signature>等待核验</strong></div><div><span>最后检查时间</span><strong data-update-time>尚未检查</strong></div><div><span>Git main 提交</span><strong data-update-commit>未读取</strong></div><div><span>源码发布状态</span><strong data-update-source>未读取</strong></div></div><p class="sc-muted" data-update-job>尚无面板安装任务</p><div class="sc-notice">每 6 小时自动检查，也可随时手动检查。Git 源码提交与正式安装包分别显示；安装前重新校验签名和摘要，保留配置、节点身份和业务保护范围。</div></article>
           <div class="sc-two-col">
           <article class="sc-panel "><h4>本机检查代理</h4><p>在业务服务器的 Linux 管理菜单配置本机安全检查与病毒扫描引擎。密钥与宿主机访问配置由安装工具管理。</p><span class="sc-outline">Linux 菜单 / 本地安全检查</span>
           </article>
-          <article class="sc-panel "><h4>节点与安全连接</h4><p>受保护项目和节点配对在 Linux 菜单配置。铁幕安全通过证书与独立凭据连接玄武引擎，界面不显示私钥或令牌。</p><span class="sc-outline">连接编辑界面待接入</span>
+          <article class="sc-panel "><h4>节点与安全连接</h4><p>铁幕的环境、容器与文件查杀独立运行。需要集中管理时，在 Linux 菜单配置玄武证书与独立节点凭据；界面不显示私钥或令牌。</p><span class="sc-outline">连接编辑界面待接入</span>
           </article>
           </div>
           <article class="sc-panel "><h4>玄武引擎 · 云端增强防护</h4>
@@ -322,7 +330,7 @@
           <div class="sc-cloud-event"><b id="security-event-title">云端状态未知</b><p id="security-event-message">尚无已核验的云端事件</p>
           </div>
           </article>
-          <article class="sc-panel"><h4>玄武引擎更新服务</h4><p>铁幕程序、官方病毒库与签名哈希规则分别管理版本。Linux 菜单执行验签更新，面板展示实际状态。</p><div class="sc-cloud-grid"><div><span>铁幕程序更新</span><strong id="security-cloud-release">云端发布状态待核验</strong></div><div><span>官方病毒库</span><strong>Linux 菜单独立更新</strong></div><div><span>玄武已发布规则</span><strong id="security-cloud-rules">等待认证连接</strong></div><div><span>本机已启用规则</span><strong id="security-local-rules">等待代理状态</strong></div></div><p id="security-rule-hits-state">等待哈希检测结果</p><ul id="security-rule-hits" class="sc-check-list"></ul></article><div class="sc-notice">哈希规则命中只告警与留证，需人工核查；程序包由固定更新服务独立验签安装；官方病毒库通过认证连接分发与本地验签启用。玄武失联时，本机在规则有效期内继续检测。</div>
+          <article class="sc-panel"><h4>玄武引擎更新服务</h4><p>铁幕程序、官方病毒库与签名哈希规则分别管理版本。Linux 菜单执行验签更新，面板展示实际状态。</p><div class="sc-cloud-grid"><div><span>铁幕程序更新</span><strong id="security-cloud-release">云端发布状态待核验</strong></div><div><span>官方病毒库</span><strong>Linux 菜单独立更新</strong></div><div><span>玄武已发布规则</span><strong id="security-cloud-rules">等待认证连接</strong></div><div><span>本机已启用规则</span><strong id="security-local-rules">等待代理状态</strong></div></div><p id="security-rule-hits-state">等待哈希检测结果</p><ul id="security-rule-hits" class="sc-check-list"></ul></article><div class="sc-notice">哈希规则命中只告警与留证，需人工核查；程序包由固定更新服务独立验签安装；官方直接病毒库可在本机引擎页面更新，无需玄武；选用玄武签名库时经认证分发与本地验签启用。玄武失联时，本机在库和规则有效期内继续检测。</div>
           </section>
           </div>
           </div>

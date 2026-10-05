@@ -51,10 +51,10 @@ export function sanitizeFullScan(value) {
   const keys=['indexed','processed','clean','infected','skipped','errors','bytes_scanned'];
   if (!keys.every(k => count(value[k])) || value.indexed > 200000 || value.processed > value.indexed || value.clean + value.infected + value.errors > value.processed ||
       value.clean + value.infected + value.errors + value.skipped < value.processed || typeof value.index_complete !== 'boolean' ||
-      value.scope !== 'enrolled-directories-only' || !texts(value.reasons) || !safeTimestamp(value.updated_at) ||
-      ['finished','partial','failed'].includes(value.state) && !safeTimestamp(value.finished_at) ||
+      value.scope !== 'enrolled-directories-only' || !texts(value.reasons) || !safeTimestamp(value.updated_at) || Date.parse(value.updated_at)<Date.parse(value.started_at) ||
+      ['finished','partial','failed'].includes(value.state) && (!safeTimestamp(value.finished_at) || Date.parse(value.finished_at)<Date.parse(value.started_at) || Date.parse(value.finished_at)>Date.parse(value.updated_at)) ||
       value.state === 'finished' && (!value.index_complete || !value.indexed || value.processed !== value.indexed || value.skipped || value.errors)) return unavailable();
-  return {schema:value.schema,state:value.state,started_at:value.started_at,updated_at:value.updated_at,finished_at:safeTimestamp(value.finished_at),
+  return {schema:value.schema,state:value.state,profile_digest:/^[a-f0-9]{64}$/.test(value.profile_digest || '')?value.profile_digest:undefined,started_at:value.started_at,updated_at:value.updated_at,finished_at:safeTimestamp(value.finished_at),
     ...Object.fromEntries(keys.map(k => [k,value[k]])),index_complete:value.index_complete,scope:value.scope,reasons:[...value.reasons]};
 }
 export function describeFullScan(value, now = Date.now()) {

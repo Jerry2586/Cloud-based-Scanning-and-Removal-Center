@@ -90,6 +90,7 @@ systemctl is-active --quiet ironcurtain-rules-sync.timer
 systemctl start ironcurtain-rules-sync.service
 # Unpaired service must succeed without inventing installed rules.
 [[ ! -e /etc/ironcurtain/local/rules.json ]]
+IRONCURTAIN_EXPECT_UNPAIRED=1 node "$SOURCE/tests/helpers/independent-deployment-probe.js"
 source "$SOURCE/scripts/lib/independent.sh"
 ic_role cloud; ic_load
 # Register through the real cloud menu without choosing a password, then import
