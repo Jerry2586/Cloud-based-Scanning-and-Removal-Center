@@ -52,3 +52,5 @@ sudo ironcurtain scan-status
 本轮可检查纳管目录文件、宿主固定配置、容器元数据/进程/可写层变化与监听；没有完成内存/内核恶意代码检测、全部镜像 lower layers 扫描、实时 EDR 自动封控、Cloudflare 自动修复或业务异地故障切换。宿主 root 失守仍需要独立证据和干净主机重建。
 
 本地 Windows 测试只证明可运行的合同/接口/发现解析及静态检查。Linux CI 单独验证 root 文件队列故障与恢复、Unix socket、真实 ClamAV 特征库扫描，以及 Docker/systemd 安装升级。真实引擎的隔离测试特征库不冒充官方病毒库公网更新；官方库历史验收另见能力矩阵。用户生产服务器、arm64、RPM 软件源和跨主机规模仍需单独验收。
+
+2026-10-05 源码验收：提交 `abb7daac1ec9491bb676107b479af5c32430cbbd` 的 [Linux CI 37282725180](https://github.com/Jerry2586/Cloud-based-Scanning-and-Removal-Center/actions/runs/37282725180) 中，`verify`、`independent-deployment`、`antivirus-engine` 全部通过。root 队列故障、库 generation 变化、代理重启恢复在 `verify` 检查；真实 Docker 首装、重跑、升级、HTTPS/CSRF 扫描、mTLS 及同机加密恢复在 `independent-deployment` 检查；ClamAV 使用独立测试特征库验证实际命中，不将其记为本批官方病毒库公网验收。开发分支不执行候选签名，正式包仍为 v0.4.1。

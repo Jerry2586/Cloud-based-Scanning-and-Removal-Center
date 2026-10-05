@@ -16,8 +16,8 @@
 | 玄武官方病毒库分发 | v0.4.0：签名缓存、认证流式分发、root 双重验签、真实加载检查、原子切换和中断恢复 | 614acaa 源码 Linux CI 37189710268 三组通过；root 传输 5 项、合成事务 9 项、引擎元数据 7 项；真实官方库工作流 37189710784 完成 CVD 缓存/复用、mTLS 下载、启用及正常/EICAR 扫描 | 单 runner 集成已验，跨机与 Docker 菜单整链待验；自动发布刷新、受控源切换和灰度 |
 | 独立安全灾备 | 安装事务快照；独立认证加密包、保留现行身份与撤销的同机同版本恢复 | Linux CI 37177415696：归档认证、真实 local/cloud Docker 恢复与篡改拒绝通过 | 不可变异地副本、干净重建、跨版本、RPO/RTO |
 | 独立正式版本证据 | v0.4.1：环境补齐、公网 IP 自动识别、摘要固定镜像和备用源 | 候选 37229487030、主 CI 37229698259、正式发布 37229700657 成功；a00acec 六附件回取验签通过；实际备用镜像 pull/build/runtime 和 local/cloud 安装升级通过 | 用户生产升级，arm64/RPM 扩展 |
-| R009 宿主发现与纳管 | 容器权限/挂载/进程/可写层、监听进程、目录候选与事务纳管；不自动批准信任 | 本地发现解析 8 项通过；Linux root/真实部署结果待本批 CI | 不覆盖所有存储驱动、容器镜像 lower layers 或所有网络命名空间 |
-| R009 文件深度查杀 | 真实 ClamAV、SQLite 队列、文件计数、固定描述符、库 generation 绑定与重启恢复 | 本地合同/API 验证；Linux root 故障测试与真实引擎结果待本批 CI | 逐文件加载库较慢；无常驻 clamd、内存/内核查杀或实时 EDR |
+| R009 宿主发现与纳管 | 容器权限/挂载/进程/可写层、监听进程、目录候选与事务纳管；不自动批准信任 | abb7daa 的 Linux CI [37282725180](https://github.com/Jerry2586/Cloud-based-Scanning-and-Removal-Center/actions/runs/37282725180) 三组通过：发现解析与 root 纳管检查、真实 Docker/systemd 首装重跑升级、HTTPS 扫描及 mTLS 对接 | 不覆盖所有存储驱动、容器镜像 lower layers 或所有网络命名空间 |
+| R009 文件深度查杀 | 真实 ClamAV、SQLite 队列、文件计数、固定描述符、库 generation 绑定与重启恢复 | 同批 Linux CI 37282725180：root 文件队列故障、病毒库 generation 变化及代理重启恢复通过；真实 ClamAV 测试库扫描通过；本机 Node 143 项，95 通过、48 Linux 平台跳过 | 逐文件加载库较慢；无常驻 clamd、内存/内核查杀或实时 EDR |
 
 事务测试对真实 Linux 文件归档/移动操作注入故障，Docker/systemd 操作使用显式替身。Docker 部署测试在一次性 runner 使用真实容器、systemd、TLS、扫描和更新，两类证据分开报告。
 
