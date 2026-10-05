@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Bounded host discovery. Observations are never a trusted baseline or an allowlist."""
+import importlib.util
 import argparse, datetime, hashlib, itertools, json, os, pathlib, re, stat, time
+
+_env_spec = importlib.util.spec_from_file_location('ironcurtain_environment', pathlib.Path(__file__).with_name('environment.py'))
+environment = importlib.util.module_from_spec(_env_spec); _env_spec.loader.exec_module(environment)
 
 NAME = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$')
 MAX_CONTAINERS = 32
@@ -53,6 +57,7 @@ def discover(run, roots=('/opt', '/srv', '/var/www'), exists=real_directory, pre
         return execute(args, seconds=min(3, remaining), maximum=maximum)
     def suggest(kind, value, origin):
         if exists(value): suggestions[(kind, value)] = candidate(kind, value, origin)
+    result['environment'] = environment.discover(run, previous=previous.get('environment') if isinstance(previous, dict) else None)
     for root in roots:
         try:
             entries = list(itertools.islice(pathlib.Path(root).iterdir(), 65))
@@ -141,14 +146,15 @@ def discover(run, roots=('/opt', '/srv', '/var/www'), exists=real_directory, pre
                 elif old[name].get('changes_digest') and new[name].get('changes_digest') and old[name]['changes_digest'] != new[name]['changes_digest']:
                     result['drift'].append('容器可写层变化，需复核：' + name)
         if previous.get('listener_state') == result['listener_state'] == 'complete':
-            port_set = lambda rows: {(x['protocol'], x['address']) for x in rows}
-            if port_set(previous.get('listeners', [])) != port_set(result['listeners']): result['drift'].append('监听地址/端口变化')
+            port_set = lambda rows: {(x['protocol'], x['address'], tuple(sorted({p['name'] for p in x['processes']}))) for x in rows}
+            if port_set(previous.get('listeners', [])) != port_set(result['listeners']): result['drift'].append('监听地址、端口或进程归属变化')
         result['drift_state'] = 'compared' if previous.get('container_state') == result['container_state'] == 'complete' and previous.get('listener_state') == result['listener_state'] == 'complete' else 'partial'
     result['drift'] = result['drift'][:64]
     return result
 
 def valid_inventory(value):
     if not isinstance(value,dict) or value.get('schema') != 'ironcurtain-inventory/v1': return False
+    if 'environment' in value and not environment.valid(value['environment']): return False
     try:
         stamp=value['observed_at']
         if not isinstance(stamp,str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z',stamp): return False
@@ -217,6 +223,10 @@ def protection(profile, inventory, engine, checks, checked_at=None):
             age = (datetime.datetime.now(datetime.timezone.utc) - datetime.datetime.fromisoformat(checked_at.replace('Z', '+00:00'))).total_seconds()
             if age < -30 or age > 900: issues.append('核验报告过期或时间异常')
         except (ValueError, TypeError): issues.append('核验报告时间无效')
+    env = inventory.get('environment', {})
+    if not isinstance(env, dict): env = {}
+    if not environment.valid(env) or any(env.get(k) != 'complete' for k in ('system_state','package_state','service_state')): issues.append('系统软件/服务环境清单未完整核验')
+    if env.get('changes'): issues.append('系统软件或服务发生变化，请复核')
     if inventory.get('drift'): issues.append('检测到容器/监听环境变化，请复核')
     if any(x.get('risks') for x in inventory.get('containers', [])): issues.append('发现高权限或敏感挂载容器')
     states = [x.get('state') for x in checks]
@@ -278,7 +288,7 @@ def _public_inventory(value):
             'container_count': len(value['containers']), 'listener_count': len(value['listeners']), 'candidate_count': len(value['candidates']),
             'containers': [{k: x[k] for k in ('name', 'running', 'readonly', 'risks', 'process_count', 'filesystem_state', 'changed_paths')} for x in value['containers'][:8]],
             'listeners': value['listeners'][:8], 'candidates': value['candidates'][:8], 'issues': value['issues'][:8],
-            'drift': value['drift'][:8], 'drift_state': value['drift_state'], 'truncated': len(value['containers']) > 8 or len(value['listeners']) > 8 or len(value['candidates']) > 8}
+            'environment': environment.public(value.get('environment')), 'drift': value['drift'][:8], 'drift_state': value['drift_state'], 'truncated': len(value['containers']) > 8 or len(value['listeners']) > 8 or len(value['candidates']) > 8 or len(value['issues']) > 8 or len(value['drift']) > 8}
 
 
 def public_inventory(value):

@@ -18,6 +18,7 @@ function call(path,body,extra={}) {
   });
 }
 assert.equal((await call('/api/scan')).status,401);
+assert.equal((await call('/api/updates')).status,401);
 const login=await call('/api/login',{username:credentials[0],password:credentials[1]});
 assert.equal(login.status,200);cookie=login.headers['set-cookie'][0].split(';')[0];csrf=login.data.csrf;
 assert.ok(csrf);
@@ -42,6 +43,40 @@ for(let attempt=0;attempt<90;attempt++){
 assert.ok(finished,'Actual host scan must complete');
 assert.equal(finished.progress.completed,finished.progress.total);
 assert.ok(finished.checks.length>=25);
+const environment=finished.inventory.environment;
+assert.equal(environment.schema,'ironcurtain-environment/v1');
+assert.equal(environment.system_state,'complete');
+assert.equal(environment.package_state,'complete');
+assert.equal(environment.service_state,'complete');
+assert.ok(environment.os.ID && environment.kernel);
+assert.ok(environment.package_count>0 && environment.service_count>0);
+assert.ok(environment.packages.length<=32 && environment.services.length<=16);
+assert.ok(['first-observation','compared','partial'].includes(environment.change_state));
+const installed=JSON.parse(readFileSync('/opt/ironcurtain/local/install.json','utf8'));
+const updateStatus=await call('/api/updates');
+assert.equal(updateStatus.status,200);
+assert.equal(updateStatus.data.installed_version,installed.version);
+assert.equal(updateStatus.data.running_version,installed.version);
+assert.equal((await call('/api/updates/check',{}, {'X-CSRF-Token':'invalid'})).status,403);
+assert.equal((await call('/api/updates/check',{command:'arbitrary'})).status,400);
+if(process.env.IRONCURTAIN_CHECK_PANEL_UPDATE==='1'){
+ const trigger=await call('/api/updates/check',{});
+ assert.ok([202,409].includes(trigger.status),'Actual check service must start or be running');
+ let checked;
+ for(let attempt=0;attempt<120;attempt++){
+  const response=await call('/api/updates');assert.equal(response.status,200);
+  if(['verified','failed'].includes(response.data.check.state) && response.data.check.checked_at){checked=response.data.check;break;}
+  await new Promise(resolve=>setTimeout(resolve,1000));
+ }
+ assert.ok(checked,'Actual systemd release check must finish with recorded evidence');
+ assert.equal(checked.installed_integrity,'verified');
+ if(checked.state==='verified'){
+  assert.match(checked.manifest_sha256,/^[a-f0-9]{64}$/);
+  assert.match(checked.package_sha256,/^[a-f0-9]{64}$/);
+ }else assert.equal(checked.update_available,false);
+ console.log('Live HTTPS settings, CSRF and actual systemd version check passed; no unverified update installed.');
+}
+
 // Fresh local installation has a readable, empty quarantine journal.
 // This check confirms the journal, not process blocking or automatic cleanup.
 assert.equal(finished.checks.find(check=>check.id==='response.containment').state,'ok');

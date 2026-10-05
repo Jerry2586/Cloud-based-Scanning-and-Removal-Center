@@ -7,6 +7,8 @@ class InventoryTests(unittest.TestCase):
   self.image='sha256:'+'a'*64;self.diff='C /app/index.js\n';self.failed=False
   self.row={'Name':'/app','Image':self.image,'Config':{'User':'1000','Env':['TOKEN=DO_NOT_EXPOSE']},'State':{'Running':True},'HostConfig':{'Privileged':True,'NetworkMode':'host','ReadonlyRootfs':False},'Mounts':[{'Source':'/srv/data','Destination':'/data','RW':True,'Type':'bind'},{'Source':'/var/run/docker.sock','Destination':'/socket','RW':True,'Type':'bind'}]}
  def runner(self,args,**kw):
+  if args[0]=='dpkg-query': return 0,'ii \tnodejs\t24.0.0\n'
+  if args[0]=='systemctl': return 0,'ssh.service loaded active running SSH\n'
   if args[:2]==['docker','ps']:return 0,'app\n'
   if args[:2]==['docker','inspect']:return 0,json.dumps([self.row])
   if args[:2]==['docker','top']:return (1,'failure') if self.failed else (0,'PID COMMAND\n1 node\n')
@@ -44,4 +46,12 @@ class InventoryTests(unittest.TestCase):
   bad=self.discover();bad['candidates'][0]['origin']='unsafe\n';self.assertFalse(i.valid_inventory(bad))
   self.row['Mounts']=self.row['Mounts']*17;self.assertEqual(self.discover()['container_state'],'partial')
   self.assertFalse(i.safe_path('/var/lib/ironcurtain-antivirus/database'))
+ def test_invalid_environment_blocks_inventory_and_never_crashes_protection(self):
+  value=self.discover();value['environment']=None;self.assertFalse(i.valid_inventory(value));self.assertEqual(i.public_inventory(value),{'state':'unavailable'})
+  self.assertNotEqual(i.protection({},value,{'installed':False},[],i.now())['state'],'ready')
+ def test_pid_restart_is_not_listener_drift_but_owner_change_is(self):
+  old=self.discover();old['listeners'][0]['processes'][0]['pid']=456
+  result=self.discover(previous=old);self.assertFalse(any('监听' in x for x in result['drift']))
+  old['listeners'][0]['processes'][0]['name']='unexpected'
+  result=self.discover(previous=old);self.assertTrue(any('监听' in x for x in result['drift']))
 if __name__=='__main__':unittest.main()

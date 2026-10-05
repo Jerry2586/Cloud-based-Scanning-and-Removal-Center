@@ -1,3 +1,4 @@
+import { createUpdateSettings } from './update-settings.js';
 import { createSecurityPoller } from './security-poller.js';
 const $ = id => document.getElementById(id);
 import { createSecurityConsole } from './security-console.js?v=ironcurtain-login-20261004';
@@ -62,6 +63,7 @@ function completeReport(report, checks) {
 
 export function createSecurityUi({ state, can, request, notify }) {
   const consoleView = createSecurityConsole();
+  const updateSettings = createUpdateSettings({state,request,notify});
   let localRunning = false;
   let scanRequested = false;
   let scanGeneration = 0;
@@ -247,6 +249,7 @@ export function createSecurityUi({ state, can, request, notify }) {
     if (bound) return;
     bound = true;
     consoleView.bind();
+    updateSettings.bind(); updateSettings.start();
     void renderSecurity(); void renderLocalSecurity();
     document.querySelectorAll('[data-security-scan], [data-security-full-scan]').forEach(button => button.addEventListener('click', async () => {
       if (scanRequested || !state.csrf || !can('system.manage')) return;
@@ -262,5 +265,5 @@ export function createSecurityUi({ state, can, request, notify }) {
       finally { if (current()) { scanRequested = false; consoleView.setBusy(false); } }
     }));
   }
-  return Object.freeze({ bind, render() { void renderSecurity(); void renderLocalSecurity(); } });
+  return Object.freeze({ bind, render() { updateSettings.start(); void renderSecurity(); void renderLocalSecurity(); } });
 }

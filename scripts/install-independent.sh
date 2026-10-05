@@ -29,6 +29,9 @@ MENU_EXTRA=
 AGENT_UNIT=/etc/systemd/system/ironcurtain-agent.service
 RULES_SERVICE=/etc/systemd/system/ironcurtain-rules-sync.service
 RULES_TIMER=/etc/systemd/system/ironcurtain-rules-sync.timer
+PANEL_CHECK=/etc/systemd/system/ironcurtain-panel-check.service
+PANEL_UPDATE=/etc/systemd/system/ironcurtain-panel-update.service
+PANEL_TIMER=/etc/systemd/system/ironcurtain-panel-check.timer
 engine_setup() {
   [[ $ROLE == local && $ENGINE_MODE == auto ]] || return 0
   local engine_action=install
@@ -186,6 +189,37 @@ ReadWritePaths=$DATA /run/ironcurtain
 [Install]
 WantedBy=multi-user.target
 EOF
+  install -d -m 700 "$DATA/panel-update"
+  for action in check update; do
+    cat > "/etc/systemd/system/ironcurtain-panel-$action.service" <<EOF
+[Unit]
+Description=IronCurtain fixed signed release $action
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/python3 $BASE/current/src/host/updates.py $action
+TimeoutStartSec=32min
+KillMode=control-group
+UMask=0077
+PrivateTmp=true
+Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin
+EOF
+    chmod 644 "/etc/systemd/system/ironcurtain-panel-$action.service"
+  done
+  cat > "$PANEL_TIMER" <<EOF
+[Unit]
+Description=IronCurtain periodic Git and signed release calibration
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=6h
+RandomizedDelaySec=5min
+Unit=ironcurtain-panel-check.service
+[Install]
+WantedBy=timers.target
+EOF
+  chmod 644 "$PANEL_TIMER"
   cat > "$RULES_SERVICE" <<EOF
 [Unit]
 Description=IronCurtain authenticated signed rule pull
@@ -257,6 +291,13 @@ if [[ $ROLE == local ]]; then
   systemctl daemon-reload
   systemctl enable --now ironcurtain-agent.service
   systemctl restart ironcurtain-agent.service
+  if [[ ! -f $IC_TX/$(basename "$PANEL_TIMER") ]]; then
+    systemctl enable --now ironcurtain-panel-check.timer
+  else
+    if [[ -f $IC_TX/panel-timer-enabled ]]; then systemctl enable ironcurtain-panel-check.timer;
+    else systemctl disable ironcurtain-panel-check.timer; fi
+    if [[ -f $IC_TX/panel-timer-active ]]; then systemctl start ironcurtain-panel-check.timer; fi
+  fi
   if [[ ! -f $IC_TX/$(basename "$RULES_TIMER") ]]; then
     systemctl enable --now ironcurtain-rules-sync.timer
   else

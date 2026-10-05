@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent, bounded, read-only host scanner. No browser/cloud command execution."""
+"""Bounded host scanner and fixed local release-job bridge. No arbitrary commands."""
 import argparse, copy, importlib.util, datetime, hashlib, http.server, json, os, pathlib, re, shutil, socket, socketserver, sqlite3, stat, struct, subprocess, tempfile, threading, time
 
 IDS = ['integrity.program','host.configuration','container.contract','container.approved-image','response.containment','host.os-release','host.systemd-state','ssh.effective','permissions.secret-inventory','permissions.installation','permissions.cron','network.listeners','network.udp-listeners','network.routes','host.kernel-security','network.firewall','malware.program','malware.business','database.sqlite','host.process-executables','host.failed-units','cloudflare.dns','cloudflare.workers','cloudflare.rules','cloudflare.settings']
@@ -17,6 +17,9 @@ _inventory_spec = importlib.util.spec_from_file_location('ironcurtain_inventory'
 inventory = importlib.util.module_from_spec(_inventory_spec); _inventory_spec.loader.exec_module(inventory)
 _fullscan_spec = importlib.util.spec_from_file_location('ironcurtain_fullscan', pathlib.Path(__file__).with_name('fullscan.py'))
 fullscan = importlib.util.module_from_spec(_fullscan_spec); _fullscan_spec.loader.exec_module(fullscan)
+
+_update_spec = importlib.util.spec_from_file_location('ironcurtain_updates', pathlib.Path(__file__).with_name('updates.py'))
+updates = importlib.util.module_from_spec(_update_spec); _update_spec.loader.exec_module(updates)
 
 def utc(): return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00','Z')
 def canonical(value): return json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()
@@ -586,6 +589,7 @@ def serve(profile_file,state_dir,socket_path,allowed_uid,group):
     if os.name!='posix' or not hasattr(socketserver,'UnixStreamServer'): raise SystemExit('Linux Unix socket required')
     if os.geteuid()!=0: raise SystemExit('host agent must be started by root')
     agent=Agent(private_json(profile_file),state_dir,rule_path=pathlib.Path(profile_file).parent/'rules.json')
+    update_bridge=updates.Bridge(private_bytes,atomic_json)
     class Handler(http.server.BaseHTTPRequestHandler):
         def setup(self):
             self.request.settimeout(5)
@@ -600,6 +604,7 @@ def serve(profile_file,state_dir,socket_path,allowed_uid,group):
             except OSError: return False
         def do_GET(self):
             if not self.authorized(): return self.reply(403,{'state':'unavailable'})
+            if self.path=='/update-status': return self.reply(200,update_bridge.status())
             if self.path=='/status': return self.reply(200,agent.status())
             if self.path=='/report':
                 with agent.lock: value=copy.deepcopy(agent.outbound)
@@ -607,7 +612,8 @@ def serve(profile_file,state_dir,socket_path,allowed_uid,group):
             return self.reply(404,{'state':'unavailable'})
         def do_POST(self):
             if not self.authorized(): return self.reply(403,{'state':'unavailable'})
-            if self.path not in ['/scan','/full-scan'] or self.headers.get('Content-Length')!='0' or self.headers.get('Transfer-Encoding'): return self.reply(400,{'state':'unavailable'})
+            if self.path not in ['/scan','/full-scan','/update-check','/update'] or self.headers.get('Content-Length')!='0' or self.headers.get('Transfer-Encoding'): return self.reply(400,{'state':'unavailable'})
+            if self.path in ['/update-check','/update']: return self.reply(*update_bridge.trigger('check' if self.path=='/update-check' else 'update'))
             self.reply(*(agent.trigger_full() if self.path=='/full-scan' else agent.trigger()))
     location=prepare_socket_parent(socket_path)
     if location.exists() or location.is_symlink():

@@ -39,6 +39,11 @@ jobs:
           sudo env "PATH=$PATH" bash tests/independent-transactions.test.sh
           sudo env "PATH=$PATH" IRONCURTAIN_REQUIRE_LINUX_RULES_TESTS=1 python3 tests/rules.test.py
           sudo env "PATH=$PATH" python3 tests/host-agent.test.py
+          sudo env "PATH=$PATH" python3 tests/environment.test.py
+          sudo env "PATH=$PATH" python3 tests/updates.test.py
+          sudo env "PATH=$PATH" python3 tests/host-inventory.test.py
+          sudo env "PATH=$PATH" python3 tests/fullscan.test.py
+          sudo env "PATH=$PATH" python3 tests/host-agent-recovery.test.py
           sudo env "PATH=$PATH" python3 tests/findings.test.py
           sudo env "PATH=$PATH" python3 tests/response.test.py
           sudo bash tests/antivirus-apparmor.test.sh

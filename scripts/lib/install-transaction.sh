@@ -32,12 +32,24 @@ ic_tx_begin() {
       systemctl is-enabled --quiet ironcurtain-rules-sync.timer && touch "$IC_TX/rules-timer-enabled" || true
       systemctl is-active --quiet ironcurtain-rules-sync.timer && touch "$IC_TX/rules-timer-active" || true
     fi
+    if [[ -n ${PANEL_CHECK:-} ]]; then
+      touch "$IC_TX/panel-units-managed"
+      for unit in "$PANEL_CHECK" "$PANEL_UPDATE" "$PANEL_TIMER"; do
+        if [[ -e $unit || -L $unit ]]; then
+          [[ -f $unit && ! -L $unit && $(stat -c %u "$unit") == 0 && $(stat -c %h "$unit") == 1 ]] || ic_fail '版本更新服务定义不受 root 控制'
+          cp -p "$unit" "$IC_TX/$(basename "$unit")"
+        fi
+      done
+      systemctl is-enabled --quiet ironcurtain-panel-check.timer && touch "$IC_TX/panel-timer-enabled" || true
+      systemctl is-active --quiet ironcurtain-panel-check.timer && touch "$IC_TX/panel-timer-active" || true
+    fi
     systemctl is-enabled --quiet ironcurtain-agent.service && touch "$IC_TX/agent-enabled" || true
     systemctl is-active --quiet ironcurtain-agent.service && touch "$IC_TX/agent-active" || true
   fi
   docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null | grep -qx true && touch "$IC_TX/container-running" || true
   jq -n --arg role "$ROLE" --arg snapshot "$IC_TX" '{schema:1,role:$role,snapshot:$snapshot}' > "$BASE/transaction.json.new"
   chmod 600 "$BASE/transaction.json.new"; mv -f "$BASE/transaction.json.new" "$BASE/transaction.json"
+  if [[ $ROLE == local && -n ${PANEL_TIMER:-} && -f $PANEL_TIMER ]]; then systemctl stop ironcurtain-panel-check.timer; fi
   if [[ -s $IC_TX/install.json ]]; then ic_compose stop; fi
   [[ $ROLE != local || ! -f $IC_TX/agent.service ]] || systemctl stop ironcurtain-agent.service
   if [[ $ROLE == local && -n ${RULES_TIMER:-} && -f $RULES_TIMER ]]; then systemctl stop ironcurtain-rules-sync.timer; fi
@@ -51,6 +63,7 @@ ic_tx_mutating() { touch "$IC_TX/mutating"; }
 ic_tx_finish() {
   # If interrupted after this marker, recovery retains the healthy new installation.
   if [[ $ROLE == local && -n ${RULES_TIMER:-} && -f $IC_TX/rules-timer-active ]]; then systemctl start ironcurtain-rules-sync.timer || return 1; fi
+  if [[ $ROLE == local && -n ${PANEL_TIMER:-} && -f $IC_TX/panel-timer-active ]]; then systemctl start ironcurtain-panel-check.timer || return 1; fi
   touch "$IC_TX/committed"
   rm -f -- "$BASE/transaction.json" || return 1
 }
@@ -111,6 +124,12 @@ ic_tx_recover() {
       if [[ -s $snapshot/menu-extra ]]; then cp -p "$snapshot/menu-extra" "$MENU_EXTRA" || return 1; else rm -f -- "$MENU_EXTRA" || return 1; fi
     fi
     if [[ $ROLE == local ]]; then
+      if [[ -f $snapshot/panel-units-managed ]]; then
+        if [[ -f $PANEL_TIMER ]]; then systemctl stop ironcurtain-panel-check.timer || return 1; systemctl disable ironcurtain-panel-check.timer >/dev/null 2>&1 || return 1; fi
+        for unit in "$PANEL_CHECK" "$PANEL_UPDATE" "$PANEL_TIMER"; do
+          if [[ -s $snapshot/$(basename "$unit") ]]; then cp -p "$snapshot/$(basename "$unit")" "$unit" || return 1; else rm -f -- "$unit" || return 1; fi
+        done
+      fi
       if [[ -s $snapshot/agent.service ]]; then cp -p "$snapshot/agent.service" "$AGENT_UNIT" || return 1; else rm -f -- "$AGENT_UNIT" || return 1; fi
       if [[ -n ${RULES_TIMER:-} ]]; then
         for unit in "$RULES_SERVICE" "$RULES_TIMER"; do
@@ -121,6 +140,8 @@ ic_tx_recover() {
   fi
   if [[ $ROLE == local ]]; then
     systemctl daemon-reload || result=1
+    if [[ -f $snapshot/panel-timer-enabled ]]; then systemctl enable ironcurtain-panel-check.timer || result=1; fi
+    if [[ -f $snapshot/panel-timer-active ]]; then systemctl start ironcurtain-panel-check.timer || result=1; fi
     if [[ -f $snapshot/agent-enabled ]]; then systemctl enable ironcurtain-agent.service || result=1;
     elif [[ -f $AGENT_UNIT ]]; then systemctl disable ironcurtain-agent.service >/dev/null 2>&1 || result=1; fi
     if [[ -f $snapshot/agent-active ]]; then systemctl start ironcurtain-agent.service || result=1; ic_agent_wait || result=1; fi

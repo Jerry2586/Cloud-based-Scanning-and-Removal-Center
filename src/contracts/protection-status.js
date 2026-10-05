@@ -1,3 +1,4 @@
+import { sanitizeEnvironment } from './environment-status.js';
 import { safeTimestamp } from './host-scan-contract.js';
 const count = value => Number.isSafeInteger(value) && value >= 0;
 const text = (value, size = 180) => typeof value === 'string' && value.length <= size && !/[\x00-\x1f\x7f]/.test(value);
@@ -40,7 +41,7 @@ export function sanitizeInventory(value) {
   }
   return {schema:value.schema,observed_at:value.observed_at,container_state:value.container_state,listener_state:value.listener_state,directory_state:value.directory_state,
     drift_state:value.drift_state,container_count:value.container_count,listener_count:value.listener_count,candidate_count:value.candidate_count,
-    containers,listeners,candidates,issues:[...value.issues],drift:[...value.drift],truncated:value.truncated};
+    environment:sanitizeEnvironment(value.environment),containers,listeners,candidates,issues:[...value.issues],drift:[...value.drift],truncated:value.truncated};
 }
 export function sanitizeFullScan(value) {
   if (!value || value.schema !== 'ironcurtain-full-scan/v1' || !['idle','indexing','scanning','paused','finished','partial','failed'].includes(value.state)) return unavailable();

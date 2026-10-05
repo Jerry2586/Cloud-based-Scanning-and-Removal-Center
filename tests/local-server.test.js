@@ -7,9 +7,9 @@ import { join } from 'node:path';
 import { createLocalServer } from '../src/local/server.js';
 import { passwordRecord, loadCredentials, verifyPassword, createSessions } from '../src/local/auth.js';
 const password = 'fixture-independent-password-only';
-async function fixture(t, scanResult) {
+async function fixture(t, scanResult, updates) {
   let invoked = 0;
-  const server = createLocalServer({ credentials: passwordRecord(password), origin: 'http://127.0.0.1:8791', scan: async action => { invoked++; return scanResult || { state: ['scan','full-scan'].includes(action) ? 'running' : 'idle', checks: [] }; } });
+  const server = createLocalServer({ credentials: passwordRecord(password), origin: 'http://127.0.0.1:8791', ...(updates ? {updates} : {}), scan: async action => { invoked++; return scanResult || { state: ['scan','full-scan'].includes(action) ? 'running' : 'idle', checks: [] }; } });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
   const base = 'http://127.0.0.1:' + server.address().port;
@@ -99,4 +99,30 @@ test('scan endpoints preserve busy, cooldown and unavailable responses', async t
       });
     }
   }
+});
+
+ test('program update endpoints require session, origin, CSRF and an empty body',async t=>{
+  const f=await fixture(t);
+  assert.equal((await f.request('/api/updates')).status,401);
+  const identity=await f.login(),headers={cookie:identity.cookie,'x-csrf-token':identity.csrf};
+  for(const route of ['/api/updates/check','/api/updates/install']){
+   assert.equal((await f.post(route,{},{})).status,401);
+   assert.equal((await f.post(route,{},{cookie:identity.cookie})).status,403);
+   assert.equal((await f.post(route,{}, {...headers,origin:'https://untrusted.invalid'})).status,403);
+   assert.equal((await f.post(route,{version:'99.0.0',command:'sh'},headers)).status,400);
+  }
+  const value=await (await f.request('/api/updates',{headers})).json();
+  assert.match(value.running_version,/^\d+\.\d+\.\d+$/);
+  assert.equal(value.installed_version,null);assert.equal(value.check.state,'unavailable');
+ });
+
+test('real update callbacks preserve accepted, busy, throttled and failed status without leaking commands',async t=>{
+ for(const status of [202,409,429,503]){
+  const actions=[],f=await fixture(t,null,async action=>{actions.push(action);return {state:status===202||status===409?'running':'unavailable',response_status:status,reason:'PRIVATE_TOKEN',command:'sh'};});
+  const identity=await f.login(),headers={cookie:identity.cookie,'x-csrf-token':identity.csrf};
+  for(const [route,action] of [['/api/updates/check','check'],['/api/updates/install','install']]){
+   const response=await f.post(route,{},headers);assert.equal(response.status,status);
+   const data=await response.json();assert.ok(data.reason);assert.doesNotMatch(JSON.stringify(data),/PRIVATE_TOKEN|command/);assert.equal(actions.at(-1),action);
+  }
+ }
 });

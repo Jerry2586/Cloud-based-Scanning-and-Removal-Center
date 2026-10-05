@@ -1,3 +1,4 @@
+import { createHostWorkspace } from './host-workspace.js';
 import { describeFullScan } from '../../../../contracts/protection-status.js';
 import { hostScanProgress } from '../../../../contracts/host-scan-contract.js';
 
@@ -36,6 +37,7 @@ export function describeScan(report, { trusted = false, busy = false, issue = '�
 export function createSecurityConsole() {
   const scope = document.querySelector('.security-console');
   const set = (selector, value) => scope?.querySelectorAll(selector).forEach(node => { node.textContent = value; });
+  const hostWorkspace = createHostWorkspace(scope);
   let bound = false;
   let latestReport = null;
   let latestContext = { trusted: false, issue: "等待有效报告" };
@@ -56,6 +58,7 @@ export function createSecurityConsole() {
   function bind() {
     if (!scope || bound) return;
     bound = true;
+    hostWorkspace.bind();
     scope.querySelectorAll('[data-security-tab], [data-security-open]').forEach(button => {
       button.addEventListener('click', () => open(button.dataset.securityTab || button.dataset.securityOpen, Boolean(button.dataset.securityOpen)));
     });
@@ -168,6 +171,7 @@ export function createSecurityConsole() {
     latestContext = { trusted, issue };
     setBusy(busy);
     renderProtection();
+    hostWorkspace.update(report);
     set('[data-security-stat="coverage"]', trusted ? checks.filter(item => item.id !== 'host.history').length + ' / 25' : '—');
     set('[data-security-stat="findings"]', trusted ? String(checks.filter(item => item.state === 'finding').length) : '—');
     set('[data-security-stat="attention"]', trusted ? String(checks.filter(item => ['warning', 'unavailable'].includes(item.state)).length) : '—');

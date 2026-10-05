@@ -6,16 +6,21 @@ import { resolve } from 'node:path';
 import { createSessions, equalSecret, loadCredentials, verifyPassword } from './auth.js';
 import { createCloudLink } from './cloud-client.js';
 import { localSecurityScan, localCloudSnapshot } from './scan-client.js';
+import { localUpdate } from './update-client.js';
+import { sanitizeUpdateStatus } from '../contracts/update-status.js';
+const RUNNING_VERSION = JSON.parse(await readFile(new URL('../../package.json', import.meta.url))).version;
 
 const PUBLIC = new URL('./public/', import.meta.url);
 const ASSETS = new Map([
+  ['/contracts/update-status.js', [new URL('../contracts/update-status.js', import.meta.url), 'text/javascript; charset=utf-8']],
   ['/contracts/host-scan-contract.js', [new URL('../contracts/host-scan-contract.js', import.meta.url), 'text/javascript; charset=utf-8']],
+  ['/contracts/environment-status.js', [new URL('../contracts/environment-status.js', import.meta.url), 'text/javascript; charset=utf-8']],
   ['/contracts/protection-status.js', [new URL('../contracts/protection-status.js', import.meta.url), 'text/javascript; charset=utf-8']],
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/assets/local.css', ['assets/local.css', 'text/css; charset=utf-8']],
   ['/assets/security-preview.css', ['assets/security-preview.css', 'text/css; charset=utf-8']],
   ['/assets/ironcurtain-shield.webp', ['assets/ironcurtain-shield.webp', 'image/webp']],
-  ...['app', 'security-ui', 'security-console', 'security-poller'].map(name => ['/assets/portal/' + name + '.js', ['assets/portal/' + name + '.js', 'text/javascript; charset=utf-8']]),
+  ...['app', 'security-ui', 'security-console', 'security-poller','host-workspace','update-settings'].map(name => ['/assets/portal/' + name + '.js', ['assets/portal/' + name + '.js', 'text/javascript; charset=utf-8']]),
 ]);
 function json(res, code, data) { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(data)); }
 async function body(req) {
@@ -25,7 +30,7 @@ async function body(req) {
   try { const value = JSON.parse(Buffer.concat(chunks)); if (!value || Array.isArray(value) || typeof value !== 'object') throw Error(); return value; }
   catch { throw Object.assign(Error('请求格式无效'), { status: 400 }); }
 }
-export function createLocalServer({ credentials, origin, tls, scan = localSecurityScan,
+export function createLocalServer({ credentials, origin, tls, scan = localSecurityScan, updates = localUpdate,
   cloudStatus = async () => ({ connected: false, reason: '玄武引擎尚未配对' }), now = Date.now } = {}) {
   const target = new URL(origin);
   if (!['http:', 'https:'].includes(target.protocol) || target.pathname !== '/' || target.search || target.hash || target.username || target.password) throw Error('面板来源配置无效');
@@ -68,8 +73,10 @@ export function createLocalServer({ credentials, origin, tls, scan = localSecuri
         const value = await body(req);
         if (Object.keys(value).length !== 0) return json(res, 400, { error: '此操作不接受路径或命令参数' });
         if (url.pathname === '/api/logout') { sessions.remove(sessionId); res.setHeader('Set-Cookie', 'ironcurtain_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0' + (secure ? '; Secure' : '')); return json(res, 200, { authenticated: false }); }
+        if (['/api/updates/check','/api/updates/install'].includes(url.pathname)) { const result = await updates(url.pathname.endsWith('/check') ? 'check' : 'install'); return json(res, [202,409,429,503].includes(result.response_status) ? result.response_status : 503, { state: result.state === 'running' ? 'running' : 'unavailable', reason: result.response_status === 409 ? '已有版本任务正在执行，请等待完成。' : result.response_status === 429 ? '请求过于频繁，请稍后再试。' : result.response_status === 202 ? '版本任务已受理。' : '版本任务无法启动，请在 Linux 菜单检查服务。' }); }
         if (['/api/scan','/api/full-scan'].includes(url.pathname)) { const result = await scan(url.pathname === '/api/full-scan' ? 'full-scan' : 'scan'); return json(res, result.state === 'running' ? 202 : [409,429,503].includes(result.response_status) ? result.response_status : 503, result); }
       }
+      if (req.method === 'GET' && url.pathname === '/api/updates') return json(res, 200, { ...sanitizeUpdateStatus(await updates('status')), running_version: RUNNING_VERSION });
       if (req.method === 'GET' && url.pathname === '/api/scan') return json(res, 200, await scan('status'));
       if (req.method === 'GET' && url.pathname === '/api/cloud/status') return json(res, 200, await cloudStatus());
       return json(res, 404, { error: '接口不存在' });
@@ -87,7 +94,7 @@ export async function startLocal(env = process.env) {
   if (!tls && !['127.0.0.1', '::1'].includes(host)) throw Error('公网监听必须配置独立面板 TLS 证书');
   const credentials = await loadCredentials(env.IRONCURTAIN_CONFIG_DIR || '/etc/ironcurtain', env.IRONCURTAIN_INITIAL_PASSWORD);
   const cloud = createCloudLink({ directory: env.IRONCURTAIN_CLOUD_DIR || '/etc/ironcurtain/cloud', snapshot: () => localCloudSnapshot(env) });
-  const server = createLocalServer({ credentials, origin, tls, scan: action => localSecurityScan(action, env), cloudStatus: () => cloud.status() });
+  const server = createLocalServer({ credentials, origin, tls, scan: action => localSecurityScan(action, env), updates: action => localUpdate(action, env), cloudStatus: () => cloud.status() });
   server.once('close', () => cloud.close());
   await new Promise((resolveStart, reject) => { server.once('error', reject); server.listen(port, host, resolveStart); });
   console.log('铁幕安全独立面板已启动：' + origin);

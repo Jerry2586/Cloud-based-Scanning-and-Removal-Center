@@ -433,8 +433,8 @@ virus_database_action() {
 dispatch() {
   case "$1" in
     status) status ;; logs) ic_compose logs --tail 100 ;;
-    start) lock; [[ $ROLE != local ]] || systemctl start ironcurtain-agent.service ironcurtain-rules-sync.timer; ic_compose up -d --wait --wait-timeout 90 ;;
-    stop) lock; ic_compose stop; [[ $ROLE != local ]] || systemctl stop ironcurtain-agent.service ironcurtain-rules-sync.timer ;;
+    start) lock; [[ $ROLE != local ]] || systemctl start ironcurtain-agent.service ironcurtain-rules-sync.timer ironcurtain-panel-check.timer; ic_compose up -d --wait --wait-timeout 90 ;;
+    stop) lock; ic_compose stop; [[ $ROLE != local ]] || systemctl stop ironcurtain-agent.service ironcurtain-rules-sync.timer ironcurtain-panel-check.timer ;;
     restart) lock; [[ $ROLE != local ]] || systemctl restart ironcurtain-agent.service; ic_compose restart; ic_wait ;;
     engine-install|engine-update|engine-status) [[ $ROLE == local ]] || ic_fail '病毒引擎仅用于铁幕'; lock; bash "$SOURCE/scripts/antivirus-engine.sh" "${1#engine-}" ;;
     findings|quarantine-list) response "$([[ $1 == findings ]] && echo findings || echo list)" ;;

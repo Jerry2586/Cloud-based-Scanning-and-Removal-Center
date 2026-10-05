@@ -178,7 +178,7 @@
           </div>
           <div><span class="sc-eyebrow">LOCAL DEFENSE / ENVIRONMENT</span><h3>服务器环境检查</h3><p>核对 Linux 系统、SSH、敏感权限、监听端口、路由与防火墙。</p>
           </div>
-          </header>
+          </header><div class="sc-host-banner"><strong data-host-status>等待主机检查</strong><span data-host-time>尚无观测时间</span><button type="button" class="sc-secondary" data-host-export disabled>导出检查报告</button></div><div class="sc-two-col"><article class="sc-panel sc-host-card"><h4>操作系统与内核</h4><p data-host-os>等待检查</p><p class="sc-muted" data-host-kernel>等待检查</p></article><article class="sc-panel sc-host-card"><h4>软件与服务</h4><p data-host-packages>等待检查</p><p data-host-services>等待检查</p><p data-host-failed>—</p></article></div><article class="sc-panel sc-host-card"><h4>环境变化与覆盖缺口</h4><p data-host-comparison>首次观测未批准为基线</p><ul class="sc-check-list" data-host-changes></ul></article><article class="sc-panel sc-host-card"><h4>系统服务 · 失败项优先</h4><div class="sc-table-scroll"><table class="sc-host-table"><thead><tr><th scope="col">服务</th><th scope="col">加载</th><th scope="col">状态</th><th scope="col">运行子状态</th></tr></thead><tbody data-host-table="services"></tbody></table></div></article><article class="sc-panel sc-host-card"><h4>已安装软件</h4><div class="sc-table-scroll"><table class="sc-host-table"><thead><tr><th scope="col">软件包</th><th scope="col">版本</th></tr></thead><tbody data-host-table="packages"></tbody></table></div></article><p class="sc-notice" data-host-limits></p>
           <div class="sc-toolbar"><p>固定检查范围，未知状态需要人工复核。</p>
           <button type="button" class="sc-secondary" data-security-scan><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M7 12h10"/></svg><span>重新检查</span></button>
           </div>
@@ -199,7 +199,7 @@
           </div>
           <div><span class="sc-eyebrow">LOCAL DEFENSE / CONTAINERS</span><h3>网站与容器防护</h3><p>检查程序摘要、固定配置、容器限制、获准镜像与数据库结构。</p>
           </div>
-          </header>
+          </header><div class="sc-two-col"><article class="sc-panel sc-host-card"><h4>容器发现</h4><p data-host-containers>等待检查</p></article><article class="sc-panel sc-host-card"><h4>端口与进程</h4><p data-host-listeners>等待检查</p></article></div><article class="sc-panel sc-host-card"><h4>容器安全资产</h4><div class="sc-table-scroll"><table class="sc-host-table"><thead><tr><th scope="col">容器</th><th scope="col">运行状态</th><th scope="col">文件系统</th><th scope="col">进程数</th><th scope="col">风险</th></tr></thead><tbody data-host-table="containers"></tbody></table></div></article><article class="sc-panel sc-host-card"><h4>监听端口与进程归属</h4><div class="sc-table-scroll"><table class="sc-host-table"><thead><tr><th scope="col">协议</th><th scope="col">监听地址</th><th scope="col">进程 (PID)</th></tr></thead><tbody data-host-table="listeners"></tbody></table></div></article><p class="sc-notice">容器清单显示运行元数据和风险；文件深度查杀只覆盖已纳管目录，未纳管容器需在 tiemu 菜单配置。</p>
           <div class="sc-toolbar"><p>可信基线与当前运行状态共同决定结果。</p>
           <button type="button" class="sc-secondary" data-security-scan><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M7 12h10"/></svg><span>检查网站与容器</span></button>
           </div>
@@ -293,10 +293,11 @@
           <div><span class="sc-eyebrow">LOCAL DEFENSE / SETTINGS</span><h3>设置</h3><p>节点、安全连接与本机代理的接入信息。</p>
           </div>
           </header>
+          <article class="sc-panel sc-version-panel"><div class="sc-version-heading"><div><span class="sc-muted">PROGRAM UPDATE</span><h4>程序版本与更新</h4><p data-update-state>等待版本检查</p></div><div class="sc-version-actions"><button type="button" class="sc-outline" data-update-check>检查 Git 与版本</button><button type="button" class="sc-primary" data-update-install disabled>安装正式更新</button></div></div><div class="sc-cloud-grid"><div><span>正在运行</span><strong data-update-running>未读取</strong></div><div><span>本机安装记录</span><strong data-update-installed>未读取</strong></div><div><span>最新正式版本</span><strong data-update-latest>未核验</strong></div><div><span>安装文件校准</span><strong data-update-integrity>等待核验</strong></div><div><span>发布签名</span><strong data-update-signature>等待核验</strong></div><div><span>最后检查时间</span><strong data-update-time>尚未检查</strong></div><div><span>Git main 提交</span><strong data-update-commit>未读取</strong></div><div><span>源码发布状态</span><strong data-update-source>未读取</strong></div></div><p class="sc-muted" data-update-job>尚无面板安装任务</p><div class="sc-notice">每 6 小时自动检查，也可随时手动检查。Git 源码提交与正式安装包分别显示；安装前重新校验签名和摘要，保留配置、节点身份和业务保护范围。</div></article>
           <div class="sc-two-col">
           <article class="sc-panel "><h4>本机检查代理</h4><p>在业务服务器的 Linux 管理菜单配置本机安全检查与病毒扫描引擎。密钥与宿主机访问配置由安装工具管理。</p><span class="sc-outline">Linux 菜单 / 本地安全检查</span>
           </article>
-          <article class="sc-panel "><h4>节点与安全连接</h4><p>授权与打包的独立部署对接在 Linux 菜单配置。铁幕安全通过证书与独立凭据连接玄武引擎，界面不显示私钥或令牌。</p><span class="sc-outline">连接编辑界面待接入</span>
+          <article class="sc-panel "><h4>节点与安全连接</h4><p>受保护项目和节点配对在 Linux 菜单配置。铁幕安全通过证书与独立凭据连接玄武引擎，界面不显示私钥或令牌。</p><span class="sc-outline">连接编辑界面待接入</span>
           </article>
           </div>
           <article class="sc-panel "><h4>玄武引擎 · 云端增强防护</h4>
@@ -321,7 +322,7 @@
           <div class="sc-cloud-event"><b id="security-event-title">云端状态未知</b><p id="security-event-message">尚无已核验的云端事件</p>
           </div>
           </article>
-          <article class="sc-panel"><h4>玄武引擎更新服务</h4><p>铁幕程序、官方病毒库与签名哈希规则分别管理版本。Linux 菜单执行验签更新，面板展示实际状态。</p><div class="sc-cloud-grid"><div><span>铁幕程序更新</span><strong id="security-cloud-release">云端发布状态待核验</strong></div><div><span>官方病毒库</span><strong>Linux 菜单独立更新</strong></div><div><span>玄武已发布规则</span><strong id="security-cloud-rules">等待认证连接</strong></div><div><span>本机已启用规则</span><strong id="security-local-rules">等待代理状态</strong></div></div><p id="security-rule-hits-state">等待哈希检测结果</p><ul id="security-rule-hits" class="sc-check-list"></ul></article><div class="sc-notice">哈希规则命中只告警与留证，需人工核查；程序包由 Linux 菜单独立验签安装；官方病毒库的云端分发仍待接入。玄武失联时，本机在规则有效期内继续检测。</div>
+          <article class="sc-panel"><h4>玄武引擎更新服务</h4><p>铁幕程序、官方病毒库与签名哈希规则分别管理版本。Linux 菜单执行验签更新，面板展示实际状态。</p><div class="sc-cloud-grid"><div><span>铁幕程序更新</span><strong id="security-cloud-release">云端发布状态待核验</strong></div><div><span>官方病毒库</span><strong>Linux 菜单独立更新</strong></div><div><span>玄武已发布规则</span><strong id="security-cloud-rules">等待认证连接</strong></div><div><span>本机已启用规则</span><strong id="security-local-rules">等待代理状态</strong></div></div><p id="security-rule-hits-state">等待哈希检测结果</p><ul id="security-rule-hits" class="sc-check-list"></ul></article><div class="sc-notice">哈希规则命中只告警与留证，需人工核查；程序包由固定更新服务独立验签安装；官方病毒库通过认证连接分发与本地验签启用。玄武失联时，本机在规则有效期内继续检测。</div>
           </section>
           </div>
           </div>

@@ -91,7 +91,11 @@ ic_role cloud; ic_load
 # the generated encrypted pack through the real local menu and verify live mTLS.
 python3 "$SOURCE/tests/helpers/pairing-auto-password.py"
 ic_role local; ic_load
-node "$SOURCE/tests/helpers/independent-deployment-probe.js"
+systemctl is-enabled --quiet ironcurtain-panel-check.timer
+systemctl is-active --quiet ironcurtain-panel-check.timer
+[[ $(systemctl show ironcurtain-panel-update.service -p KillMode --value) == control-group ]]
+[[ $(systemctl show ironcurtain-panel-update.service -p TimeoutStartUSec --value) == 32min ]]
+IRONCURTAIN_CHECK_PANEL_UPDATE=1 node "$SOURCE/tests/helpers/independent-deployment-probe.js"
 # Exercise real cloud publication, authenticated native pull and real file-byte hits.
 python3 /opt/ironcurtain/cloud/current/scripts/rules-client.py cloud import "$WORK/signed-rules-1.json"
 # An installation lock must postpone the fixed service without activating rules.
@@ -126,6 +130,7 @@ node "$SOURCE/tests/helpers/independent-deployment-probe.js"
 bash "$SOURCE/scripts/install-independent.sh" --role local --antivirus skip
 bash "$SOURCE/scripts/install-independent.sh" --role cloud
 systemctl disable --now ironcurtain-rules-sync.timer
+systemctl disable --now ironcurtain-panel-check.timer
 before=$(sha256sum /etc/ironcurtain/local/runtime/panel-auth.json /etc/ironcurtain/cloud/ca.key)
 node -e 'const fs=require("fs"),p=process.argv[1],v=JSON.parse(fs.readFileSync(p));v.version=v.version.split(".").map((n,i)=>i===2?String(Number(n)+1):n).join(".");fs.writeFileSync(p,JSON.stringify(v,null,2)+"\n");' "$SOURCE/package.json"
 # Build the actual six-asset signed package with the isolated CI publisher.
@@ -165,7 +170,10 @@ after=$(sha256sum /etc/ironcurtain/local/runtime/panel-auth.json /etc/ironcurtai
 [[ $before == "$after" ]] || { echo 'Upgrade replaced existing identity.' >&2; exit 1; }
 ! systemctl is-enabled --quiet ironcurtain-rules-sync.timer
 ! systemctl is-active --quiet ironcurtain-rules-sync.timer
+! systemctl is-enabled --quiet ironcurtain-panel-check.timer
+! systemctl is-active --quiet ironcurtain-panel-check.timer
 systemctl enable --now ironcurtain-rules-sync.timer
+systemctl enable --now ironcurtain-panel-check.timer
 /usr/local/bin/tiemu doctor
 /usr/local/bin/xuanwu doctor
 node "$SOURCE/tests/helpers/independent-deployment-probe.js"
@@ -204,6 +212,8 @@ for recovery_role in local cloud; do
   if [[ $ROLE == local ]]; then
     systemctl is-enabled --quiet ironcurtain-rules-sync.timer
     systemctl is-active --quiet ironcurtain-rules-sync.timer
+    systemctl is-enabled --quiet ironcurtain-panel-check.timer
+    systemctl is-active --quiet ironcurtain-panel-check.timer
     ic_scan_wait
     IRONCURTAIN_EXPECT_RULE_SEQUENCE=2 node "$SOURCE/tests/helpers/independent-deployment-probe.js"
   fi

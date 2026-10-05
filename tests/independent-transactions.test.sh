@@ -17,6 +17,18 @@ source "$ROOT/scripts/lib/management-transaction.sh"
 # No actual service, container or production path is changed by these doubles.
 docker() { [[ $1 == inspect ]] || return 1; echo "$CONTAINER_RUNNING"; }
 systemctl() {
+  if [[ ${!#} == ironcurtain-panel-check.timer ]]; then
+    case "${1}" in
+      is-active) [[ $PANEL_RUNNING == true ]] ;;
+      is-enabled) [[ $PANEL_ENABLED == true ]] ;;
+      stop) PANEL_RUNNING=false ;;
+      start) PANEL_RUNNING=true ;;
+      enable) PANEL_ENABLED=true ;;
+      disable) [[ -f $PANEL_TIMER ]] || return 1; PANEL_ENABLED=false ;;
+      *) return 1 ;;
+    esac
+    return
+  fi
   if [[ ${!#} == ironcurtain-rules-sync.timer ]]; then
     case "$1" in
       is-active) [[ $TIMER_RUNNING == true ]] ;;
@@ -60,6 +72,10 @@ fixture() {
   MENU=$WORK/case-$number/menu; AGENT_UNIT=$WORK/case-$number/agent.service
   RULES_SERVICE=$WORK/case-$number/ironcurtain-rules-sync.service
   RULES_TIMER=$WORK/case-$number/ironcurtain-rules-sync.timer
+  PANEL_CHECK=$WORK/case-$number/ironcurtain-panel-check.service
+  PANEL_UPDATE=$WORK/case-$number/ironcurtain-panel-update.service
+  PANEL_TIMER=$WORK/case-$number/ironcurtain-panel-check.timer
+  PANEL_RUNNING=true; PANEL_ENABLED=true
   TIMER_RUNNING=true; TIMER_ENABLED=true
   CONTAINER=fixture; CONTAINER_RUNNING=true; AGENT_RUNNING=true; AGENT_ENABLED=true
   FAIL_DOWN=false; FAIL_HEALTH=false; FAIL_SCAN=false; IC_ADMIN_TX=''; IC_TX=''
@@ -70,6 +86,7 @@ fixture() {
   printf old-extra > "$MENU_EXTRA"
   printf old-menu > "$MENU"; printf old-agent > "$AGENT_UNIT"
   printf old-rules-service > "$RULES_SERVICE"; printf old-rules-timer > "$RULES_TIMER"
+  printf old-panel-check > "$PANEL_CHECK"; printf old-panel-update > "$PANEL_UPDATE"; printf old-panel-timer > "$PANEL_TIMER"
 }
 assert_old() { [[ $(cat "$CONF/value") == old-config ]]; }
 pass() { echo "PASS $1"; }
@@ -230,4 +247,38 @@ ic_menu_write "$MENU_EXTRA"
 bash -n "$MENU_EXTRA"
 grep -q 'exec bash /opt/ironcurtain/local/current/scripts/ironcurtain.sh --role local' "$MENU_EXTRA"
 pass 'atomic tiemu wrapper retains fixed local role and root ownership'
-echo '20 Linux filesystem transaction checks passed; no real Docker/systemd acceptance claimed.'
+fixture
+ic_tx_begin
+[[ $PANEL_RUNNING == false && $PANEL_ENABLED == true ]]
+ic_tx_finish
+[[ $PANEL_RUNNING == true && $PANEL_ENABLED == true && ! -e $BASE/transaction.json ]]
+pass 'successful snapshot resumes previously active version check timer'
+fixture
+PANEL_RUNNING=false; PANEL_ENABLED=false
+ic_tx_begin; ic_tx_finish
+[[ $PANEL_RUNNING == false && $PANEL_ENABLED == false ]]
+pass 'snapshot preserves stopped disabled version check timer'
+fixture
+ic_tx_begin; ic_tx_mutating
+printf candidate > "$PANEL_CHECK"; printf candidate > "$PANEL_UPDATE"; printf candidate > "$PANEL_TIMER"
+ic_tx_recover
+[[ $(cat "$PANEL_CHECK") == old-panel-check && $(cat "$PANEL_UPDATE") == old-panel-update && $(cat "$PANEL_TIMER") == old-panel-timer ]]
+[[ $PANEL_RUNNING == true && $PANEL_ENABLED == true ]]
+pass 'upgrade rollback restores version check units and timer state'
+fixture
+rm -f -- "$PANEL_CHECK" "$PANEL_UPDATE" "$PANEL_TIMER"
+PANEL_RUNNING=false; PANEL_ENABLED=false
+ic_tx_begin; ic_tx_mutating
+printf candidate > "$PANEL_CHECK"; printf candidate > "$PANEL_UPDATE"; printf candidate > "$PANEL_TIMER"
+PANEL_RUNNING=true; PANEL_ENABLED=true
+ic_tx_recover
+[[ ! -e $PANEL_CHECK && ! -e $PANEL_UPDATE && ! -e $PANEL_TIMER && $PANEL_RUNNING == false && $PANEL_ENABLED == false ]]
+pass 'failed introduction removes version check units and enable state'
+fixture
+ic_tx_begin; ic_tx_mutating
+rm -f -- "$IC_TX/panel-units-managed" "$IC_TX/panel-timer-active" "$IC_TX/panel-timer-enabled"
+printf independent-check > "$PANEL_CHECK"; printf independent-update > "$PANEL_UPDATE"; printf independent-timer > "$PANEL_TIMER"
+ic_tx_recover
+[[ $(cat "$PANEL_CHECK") == independent-check && $(cat "$PANEL_UPDATE") == independent-update && $(cat "$PANEL_TIMER") == independent-timer ]]
+pass 'legacy snapshot does not alter unknown version check units'
+echo '25 Linux filesystem transaction checks passed; no real Docker/systemd acceptance claimed.'
