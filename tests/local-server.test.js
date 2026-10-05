@@ -133,7 +133,8 @@ test('unpaired cloud does not gate local checkup, scan or official updater', asy
  t.after(async()=>{cloud.close();await rm(dir,{recursive:true,force:true});});
  const f=await fixture(t,undefined,undefined,()=>cloud.status()); const identity=await f.login();
  const headers={cookie:identity.cookie,'x-csrf-token':identity.csrf};
- assert.equal((await (await f.request('/api/cloud/status',{headers})).json()).state,'unpaired');
+ const status=await (await f.request('/api/cloud/status',{headers})).json();
+ assert.equal(status.state,'unpaired');assert.equal(status.connected,false);
  for(const route of ['/api/checkup','/api/engine/update']) {
   assert.equal((await f.post(route,{})).status,401);
   assert.equal((await f.post(route,{},{cookie:identity.cookie})).status,403);

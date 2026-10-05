@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createServer } from 'node:https';
 import { createHash, X509Certificate } from 'node:crypto';
-import { CloudClient, loadCloudClient } from '../src/local/cloud-client.js';
+import { CloudClient, loadCloudClient, createCloudLink } from '../src/local/cloud-client.js';
 import { createMonitor, validateConfiguration } from '../src/monitor.js';
 import { HOST_SCAN_IDS } from '../src/contracts/host-scan-contract.js';
 const binary=process.platform==='win32' ? 'C:/Program Files/Git/usr/bin/openssl.exe' : 'openssl';
@@ -53,4 +53,16 @@ test('cloud configuration cannot broaden the endpoint into credentials, paths or
  const base={endpoint:'https://security.example',nodeId:'node-a'};
  for(const endpoint of ['http://security.example','https://u:p@security.example','https://security.example/command','https://security.example/?secret=x'])assert.throws(()=>new CloudClient({...base,endpoint}),/INVALID/);
  assert.throws(()=>new CloudClient({...base,nodeId:'arbitrary-project'}),/INVALID/);
+});
+
+test('unpaired and invalid cloud identity expose disconnected state without stopping the local link',async()=>{
+ const directory=mkdtempSync(join(tmpdir(),'ic-cloud-offline-'));
+ const link=createCloudLink({directory,interval:60000});
+ try {
+  const unpaired=await link.status();assert.equal(unpaired.state,'unpaired');assert.equal(unpaired.connected,false);
+  writeFileSync(join(directory,'cloud.json'),'{}');
+  const invalid=await link.refresh();assert.equal(invalid.state,'unavailable');assert.equal(invalid.connected,false);
+  rmSync(join(directory,'cloud.json'));
+  const restored=await link.refresh();assert.equal(restored.state,'unpaired');assert.equal(restored.connected,false);
+ } finally {link.close();rmSync(directory,{recursive:true,force:true});}
 });

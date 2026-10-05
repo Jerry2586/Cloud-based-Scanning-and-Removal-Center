@@ -33,7 +33,7 @@ async function body(req) {
   catch { throw Object.assign(Error('请求格式无效'), { status: 400 }); }
 }
 export function createLocalServer({ credentials, origin, tls, scan = localSecurityScan, updates = localUpdate,
-  cloudStatus = async () => ({ connected: false, reason: '玄武引擎尚未配对' }), now = Date.now } = {}) {
+  cloudStatus = async () => ({ state: 'unpaired', connected: false, reason: '玄武引擎尚未配对' }), now = Date.now } = {}) {
   const target = new URL(origin);
   if (!['http:', 'https:'].includes(target.protocol) || target.pathname !== '/' || target.search || target.hash || target.username || target.password) throw Error('面板来源配置无效');
   const secure = target.protocol === 'https:';

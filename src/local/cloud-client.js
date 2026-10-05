@@ -83,7 +83,7 @@ export class CloudClient {
 }
 export function createCloudLink({directory, snapshot, interval=30000}) {
   let client, busy=false, stopped=false, checked=0;
-  let status={state:'unpaired',reason:'尚未导入玄武节点身份包'};
+  let status={state:'unpaired',connected:false,reason:'尚未导入玄武节点身份包'};
   async function refresh() {
     if(busy || stopped) return status; busy=true;
     try {
@@ -91,7 +91,7 @@ export function createCloudLink({directory, snapshot, interval=30000}) {
       if(snapshot) { const report=await snapshot(); if(report?.scan && freshHostScan(report.scan)) await client.report(report); }
       status=await client.status();
     } catch(error) {
-      status={state:error.code==='ENOENT' ? 'unpaired' : 'unavailable',reason:error.code==='ENOENT' ? '尚未导入玄武节点身份包' : '云端证书、身份或连接验证失败；本机扫描继续运行'};
+      status={state:error.code==='ENOENT' ? 'unpaired' : 'unavailable',connected:false,reason:error.code==='ENOENT' ? '尚未导入玄武节点身份包' : '云端证书、身份或连接验证失败；本机扫描继续运行'};
     } finally {busy=false;checked=Date.now();} return status;
   }
   const timer=setInterval(()=>void refresh(),interval); timer.unref();
