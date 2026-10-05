@@ -76,6 +76,8 @@ else:
     assert '登记节点：0 个' in text
 PY
 done
+# Do not send acknowledgement until the real PTY proves results stay on screen.
+python3 "$SOURCE/tests/helpers/menu-result-input.py"
 systemctl is-enabled --quiet ironcurtain-rules-sync.timer
 systemctl is-active --quiet ironcurtain-rules-sync.timer
 [[ $(systemctl show ironcurtain-rules-sync.service -p CapabilityBoundingSet --value) == '' ]]

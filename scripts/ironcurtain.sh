@@ -497,34 +497,51 @@ while true; do
   echo
   echo '身份变更、隔离与恢复请核对提示；更新仅接受已验签的正式包。'
   echo
-  ask "$PRODUCT_NAME · 请输入菜单编号（0 退出）：" choice
-  case "$choice" in
-    0) exit 0 ;; 1) action=status ;; 2) action=logs ;; 3) action=start ;; 4) action=stop ;; 5) action=restart ;; 6) action=update ;; 7) action=doctor ;;
-    8) [[ $ROLE == local ]] && action=scan || action=register ;;
-    9) [[ $ROLE == local ]] && action=profile || action=revoke ;;
-    10) [[ $ROLE == local ]] && action=pair || action=nodes ;;
-    11) [[ $ROLE == local ]] && action=cloud-status || action=reader ;;
-    12) [[ $ROLE == local ]] || continue; action=unpair ;;
-    13) [[ $ROLE == local ]] || continue; action=credentials ;;
-    14) [[ $ROLE == local ]] || continue; action=reset-password ;;
-    15) [[ $ROLE == local ]] || continue; action=engine-install ;;
-    16) [[ $ROLE == local ]] || continue; action=engine-update ;;
-    17) [[ $ROLE == local ]] || continue; action=engine-status ;;
-    18) [[ $ROLE == local ]] || continue; action=findings ;;
-    19) [[ $ROLE == local ]] || continue; action=quarantine ;;
-    20) [[ $ROLE == local ]] || continue; action=quarantine-list ;;
-    21) [[ $ROLE == local ]] || continue; action=restore-file ;;
-    22) action=backup ;; 23) action=verify-backup ;; 24) action=restore-backup ;;
-    25) action=rules-sync ;; 26) action=rules-status ;;
-    27) [[ $ROLE == local ]] && action=release-update || action=release-import ;;
-    28) [[ $ROLE == cloud ]] || continue; action=release-status ;;
-    29) if [[ $ROLE == cloud ]]; then action=virus-db-import; else action=virus-db-update; fi ;;
-    30) [[ $ROLE == cloud ]] || continue; action=virus-db-status ;;
-    31) [[ $ROLE == local ]] || continue; action=discover ;;
-    32) [[ $ROLE == local ]] || continue; action=enroll ;;
-    33) [[ $ROLE == local ]] || continue; action=full-scan ;;
-    34) [[ $ROLE == local ]] || continue; action=scan-status ;;
-    *) echo '请选择有效菜单项'; continue ;;
-  esac
+  # Read only the menu number here; business inputs and passwords keep their own rules.
+  while true; do
+    if ! IFS= read -r -p "$PRODUCT_NAME · 请输入菜单编号（0 退出）：" choice </dev/tty; then
+      echo
+      exit 0
+    fi
+    choice=${choice#"${choice%%[![:space:]]*}"}
+    choice=${choice%"${choice##*[![:space:]]}"}
+    [[ -n $choice ]] || continue
+    case "$choice" in
+      0) exit 0 ;; 1) action=status ;; 2) action=logs ;; 3) action=start ;; 4) action=stop ;; 5) action=restart ;; 6) action=update ;; 7) action=doctor ;;
+      8) [[ $ROLE == local ]] && action=scan || action=register ;;
+      9) [[ $ROLE == local ]] && action=profile || action=revoke ;;
+      10) [[ $ROLE == local ]] && action=pair || action=nodes ;;
+      11) [[ $ROLE == local ]] && action=cloud-status || action=reader ;;
+      12) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=unpair ;;
+      13) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=credentials ;;
+      14) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=reset-password ;;
+      15) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=engine-install ;;
+      16) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=engine-update ;;
+      17) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=engine-status ;;
+      18) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=findings ;;
+      19) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=quarantine ;;
+      20) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=quarantine-list ;;
+      21) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=restore-file ;;
+      22) action=backup ;; 23) action=verify-backup ;; 24) action=restore-backup ;;
+      25) action=rules-sync ;; 26) action=rules-status ;;
+      27) [[ $ROLE == local ]] && action=release-update || action=release-import ;;
+      28) [[ $ROLE == cloud ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=release-status ;;
+      29) if [[ $ROLE == cloud ]]; then action=virus-db-import; else action=virus-db-update; fi ;;
+      30) [[ $ROLE == cloud ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=virus-db-status ;;
+      31) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=discover ;;
+      32) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=enroll ;;
+      33) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=full-scan ;;
+      34) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=scan-status ;;
+      *) echo '请选择有效菜单项'; continue ;;
+    esac
+    break
+  done
+  echo
   bash "$SOURCE/scripts/ironcurtain.sh" --role "$ROLE" "$action" || echo '操作未完成；现有状态请运行诊断核对。'
+  echo
+  # Keep success and failure output visible until the operator acknowledges it.
+  if ! IFS= read -r -p '按回车返回管理菜单（Ctrl+C 退出）：' menu_ack </dev/tty; then
+    echo
+    exit 0
+  fi
 done
