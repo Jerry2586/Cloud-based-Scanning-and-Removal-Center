@@ -25,8 +25,13 @@ assert.equal((await call('/api/scan',{}, {'X-CSRF-Token':'invalid'})).status,403
 const initial=await call('/api/scan');
 assert.equal(initial.status,200);assert.notEqual(initial.data.state,'unavailable', 'Local scan unavailable: '+(initial.data.reason || 'no reason'));
 const started=await call('/api/scan',{});
-assert.ok([202,503].includes(started.status));
-if(started.status===503) assert.match(started.data.reason,/频率/);
+assert.ok([202,429].includes(started.status), 'Expected scan start or cooldown, got HTTP '+started.status+' state='+started.data.state);
+if(started.status===202) assert.equal(started.data.state,'running');
+if(started.status===429) {
+  assert.equal(started.data.state,'unavailable');
+  assert.equal(started.data.response_status,429);
+  assert.match(started.data.reason,/频繁/);
+}
 let finished;
 for(let attempt=0;attempt<90;attempt++){
   const value=await call('/api/scan');assert.equal(value.status,200);

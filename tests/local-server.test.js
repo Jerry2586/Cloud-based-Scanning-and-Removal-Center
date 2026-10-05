@@ -7,9 +7,9 @@ import { join } from 'node:path';
 import { createLocalServer } from '../src/local/server.js';
 import { passwordRecord, loadCredentials, verifyPassword, createSessions } from '../src/local/auth.js';
 const password = 'fixture-independent-password-only';
-async function fixture(t) {
+async function fixture(t, scanResult) {
   let invoked = 0;
-  const server = createLocalServer({ credentials: passwordRecord(password), origin: 'http://127.0.0.1:8791', scan: async action => { invoked++; return { state: ['scan','full-scan'].includes(action) ? 'running' : 'idle', checks: [] }; } });
+  const server = createLocalServer({ credentials: passwordRecord(password), origin: 'http://127.0.0.1:8791', scan: async action => { invoked++; return scanResult || { state: ['scan','full-scan'].includes(action) ? 'running' : 'idle', checks: [] }; } });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
   const base = 'http://127.0.0.1:' + server.address().port;
@@ -75,4 +75,28 @@ test('full scan is a fixed session/CSRF action without supplied paths or command
  assert.equal((await f.post('/api/full-scan',{path:'/etc',command:'sh'},headers)).status,400);
  assert.equal(f.invoked(),0);
  const result=await f.post('/api/full-scan',{},headers);assert.equal(result.status,202);assert.equal((await result.json()).state,'running');assert.equal(f.invoked(),1);
+});
+
+test('scan endpoints preserve busy, cooldown and unavailable responses', async t => {
+  const cases = [
+    ['accepted', { state: 'running', response_status: 202 }, 202],
+    ['existing quick scan', { state: 'running', response_status: 409 }, 202],
+    ['busy with another scan', { state: 'unavailable', response_status: 409, reason: '已有扫描正在进行，请等待当前任务' }, 409],
+    ['cooldown', { state: 'unavailable', response_status: 429, reason: '扫描请求过于频繁，请稍后重试' }, 429],
+    ['not ready', { state: 'unavailable', response_status: 503, reason: '请先在 Linux 菜单配置扫描目录与病毒引擎' }, 503],
+    ['missing agent', { state: 'unavailable', reason: '本机检查代理未接入或超时' }, 503],
+    ['unexpected status', { state: 'unavailable', response_status: 500, reason: '本机检查代理返回异常' }, 503],
+  ];
+  for (const endpoint of ['/api/scan', '/api/full-scan']) {
+    for (const [name, result, expectedStatus] of cases) {
+      await t.test(endpoint + ': ' + name, async t => {
+        const f = await fixture(t, result);
+        const identity = await f.login();
+        const response = await f.post(endpoint, {}, { cookie: identity.cookie, 'x-csrf-token': identity.csrf });
+        assert.equal(response.status, expectedStatus);
+        assert.deepEqual(await response.json(), result);
+        assert.equal(f.invoked(), 1);
+      });
+    }
+  }
 });
