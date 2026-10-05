@@ -75,7 +75,9 @@ fingerprint = subprocess.run(['openssl', 'x509', '-in', str(cloud / 'ca.crt'), '
 for current_pack, current_password, other_password, node_id in (
         (pack, password, second_password, 'node-ci'),
         (second_pack, second_password, password, 'node-ci-second')):
-    with tempfile.TemporaryDirectory(prefix='ironcurtain-generated-password-') as work:
+    # The client rejects writable ancestors such as /tmp, even with a 0700 leaf.
+    # Match production's root-controlled identity ancestry instead.
+    with tempfile.TemporaryDirectory(prefix='.test-generated-password-', dir=cloud) as work:
         staged = Path(work)
         staged.chmod(0o700)
         (staged / 'pairing.icpair').write_bytes(current_pack.read_bytes())
