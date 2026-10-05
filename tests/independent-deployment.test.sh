@@ -87,26 +87,10 @@ systemctl start ironcurtain-rules-sync.service
 [[ ! -e /etc/ironcurtain/local/rules.json ]]
 source "$SOURCE/scripts/lib/independent.sh"
 ic_role cloud; ic_load
-install -d -m 700 "$WORK/pair"
-PAIR=$WORK/pair
-ic_certificate "$PAIR" client node-ci clientAuth
-install -m 600 "$CONF/ca.crt" "$PAIR/ca.crt"
-openssl rand -hex 32 > "$PAIR/token"
-jq -n --arg endpoint "https://$CLOUD_HOST:9443/" '{schema:"ironcurtain-cloud/v1",node_id:"node-ci",endpoint:$endpoint}' > "$PAIR/cloud.json"
-cp "$CONF/runtime/config.json" "$PAIR/config.json"
-IRONCURTAIN_CONTROL_WORK=$PAIR node "$SOURCE/scripts/control.js" register-node
-install -m 640 -o root -g 10001 "$PAIR/config.next.json" "$CONF/runtime/config.json"
-ic_compose restart; ic_wait
-# Use real pairing pack seal/unseal and independent CA fingerprint, no printed secrets.
-openssl rand -hex 24 > "$PAIR/password"
-IRONCURTAIN_CONTROL_WORK=$PAIR node "$SOURCE/scripts/control.js" seal < "$PAIR/password"
-node -e 'const fs=require("fs"),crypto=require("crypto");const p=process.argv[1];process.stdout.write(JSON.stringify({password:fs.readFileSync(p+"/password","utf8").trim(),fingerprint:new crypto.X509Certificate(fs.readFileSync(p+"/ca.crt")).fingerprint256}));' "$PAIR" |
-  IRONCURTAIN_CONTROL_WORK=$PAIR node "$SOURCE/scripts/control.js" unseal
-# Default Docker bridge nodes reach the cloud through the host bridge gateway.
-# The certificate SAN and pairing endpoint match that address; TLS stays verified.
+# Register through the real cloud menu without choosing a password, then import
+# the generated encrypted pack through the real local menu and verify live mTLS.
+python3 "$SOURCE/tests/helpers/pairing-auto-password.py"
 ic_role local; ic_load
-mv "$PAIR/identity" "$CONF/runtime/cloud"
-chown root:10001 "$CONF/runtime/cloud" "$CONF/runtime/cloud/"*; chmod 750 "$CONF/runtime/cloud"; chmod 640 "$CONF/runtime/cloud/"*
 node "$SOURCE/tests/helpers/independent-deployment-probe.js"
 # Exercise real cloud publication, authenticated native pull and real file-byte hits.
 python3 /opt/ironcurtain/cloud/current/scripts/rules-client.py cloud import "$WORK/signed-rules-1.json"

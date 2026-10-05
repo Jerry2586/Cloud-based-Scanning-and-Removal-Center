@@ -245,25 +245,36 @@ register() {
   ask '节点名称（如 node-server1）：' node
   [[ $node =~ ^node-[a-z0-9][a-z0-9-]{0,63}$ ]] || ic_fail '节点名称格式错误'
   jq -e --arg name "$node" '.nodes | has($name) | not' "$CONF/runtime/config.json" >/dev/null || ic_fail '节点名称已登记'
-  password
+  # Generate a separate 256-bit unlock secret for each node; never trace it or
+  # put it in command arguments, the encrypted pack, audit logs or the runtime mount.
+  set +x
+  openssl rand -hex 32 > "$STAGE/pairing-password"
+  chmod 600 "$STAGE/pairing-password"
   install -m 600 "$CONF/ca.crt" "$STAGE/ca.crt"
   ic_certificate "$STAGE" client "$node" clientAuth
   openssl rand -hex 32 > "$STAGE/token"
   jq -n --arg node "$node" --arg endpoint "https://$HOST:$PORT/" '{schema:"ironcurtain-cloud/v1",node_id:$node,endpoint:$endpoint}' > "$STAGE/cloud.json"
   cp "$CONF/runtime/config.json" "$STAGE/config.json"
   ic_helper "$STAGE" register-node
-  printf '%s' "$PAIR_PASSWORD" | ic_helper "$STAGE" seal
-  unset PAIR_PASSWORD
+  ic_helper "$STAGE" seal < "$STAGE/pairing-password"
   mv "$STAGE/config.next.json" "$STAGE/config.json"
   ic_admin_begin register
   ic_trusted_dir "$CONF/exports"; chmod 700 "$CONF/exports"
   export_path=$CONF/exports/$node-$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM.icpair
-  install -m 600 "$STAGE/pairing.icpair" "$export_path.pending"
+  install -m 600 -o root -g root "$STAGE/pairing.icpair" "$export_path.pending"
+  install -m 600 -o root -g root "$STAGE/pairing-password" "$export_path.unlock.pending"
   commit_cloud
   audit node-registered "$node"
   ic_admin_finish
+  # Publish the separate root-only secret before making the pack available.
+  mv -- "$export_path.unlock.pending" "$export_path.unlock"
   mv -- "$export_path.pending" "$export_path"
   echo "节点已登记。将加密包传到本地节点：$export_path"
+  echo "解锁密码已自动生成，root 专属备份：$export_path.unlock"
+  IFS= read -r PAIR_PASSWORD < "$export_path.unlock"
+  printf '系统生成的身份包解锁密码：%s\n' "$PAIR_PASSWORD" > /dev/tty
+  unset PAIR_PASSWORD
+  echo '铁幕导入时粘贴上述密码；请将密码与加密身份包分开保管和传递。'
   ic_fingerprint
 }
 revoke() {

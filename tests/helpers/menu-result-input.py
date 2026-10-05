@@ -97,41 +97,46 @@ def result_case(entry, number, expected, eof=False):
         menu.close()
 
 
-for entry in ('tiemu', 'xuanwu'):
-    # status includes a fresh header; allow leading/trailing menu-only whitespace.
-    result_case(entry, b' \t1 \r', '运行状态：'.encode())
-    menu = Menu(entry)
-    try:
-        menu.until(PROMPT)
-        hidden = b'28\n' if entry == 'tiemu' else b'12\n'
-        for count, invalid in enumerate((b'\n', b'999\n', b'1junk\n', hidden), 2):
-            menu.send(invalid)
-            menu.until(PROMPT, count)
-            assert menu.output.count(HEADER) == 1, 'Invalid input refreshed the home page'
-            assert PAUSE not in menu.output, 'Invalid input executed an action'
-        assert '请选择有效菜单项'.encode() in menu.output
-        assert '请选择当前角色显示的有效菜单项'.encode() in menu.output
-        menu.send(b'0\n')
-        menu.finish()
-    finally:
-        menu.close()
-    # EOF at the initial prompt and at result acknowledgement must exit cleanly.
-    menu = Menu(entry)
-    try:
-        menu.until(PROMPT)
-        menu.send(b'\x04')
-        menu.finish()
-    finally:
-        menu.close()
-    result_case(entry, b'1\n', '运行状态：'.encode(), eof=True)
-    command = subprocess.run(['/usr/local/bin/' + entry, 'status'], capture_output=True, timeout=60)
-    assert command.returncode == 0 and PAUSE not in command.stdout + command.stderr
-    print(entry + ': status stays, acknowledgement returns once, invalid input and EOF pass')
+def main():
+    for entry in ('tiemu', 'xuanwu'):
+        # status includes a fresh header; allow leading/trailing menu-only whitespace.
+        result_case(entry, b' \t1 \r', '运行状态：'.encode())
+        menu = Menu(entry)
+        try:
+            menu.until(PROMPT)
+            hidden = b'28\n' if entry == 'tiemu' else b'12\n'
+            for count, invalid in enumerate((b'\n', b'999\n', b'1junk\n', hidden), 2):
+                menu.send(invalid)
+                menu.until(PROMPT, count)
+                assert menu.output.count(HEADER) == 1, 'Invalid input refreshed the home page'
+                assert PAUSE not in menu.output, 'Invalid input executed an action'
+            assert '请选择有效菜单项'.encode() in menu.output
+            assert '请选择当前角色显示的有效菜单项'.encode() in menu.output
+            menu.send(b'0\n')
+            menu.finish()
+        finally:
+            menu.close()
+        # EOF at the initial prompt and at result acknowledgement must exit cleanly.
+        menu = Menu(entry)
+        try:
+            menu.until(PROMPT)
+            menu.send(b'\x04')
+            menu.finish()
+        finally:
+            menu.close()
+        result_case(entry, b'1\n', '运行状态：'.encode(), eof=True)
+        command = subprocess.run(['/usr/local/bin/' + entry, 'status'], capture_output=True, timeout=60)
+        assert command.returncode == 0 and PAUSE not in command.stdout + command.stderr
+        print(entry + ': status stays, acknowledgement returns once, invalid input and EOF pass')
 
-result_case('xuanwu', b'11\n', b'/etc/ironcurtain/cloud/credentials/reader.p12')
-# Installed here without pairing: exercise a real failed operation as well as success.
-result_case('tiemu', b'11\n', '操作未完成；现有状态请运行诊断核对。'.encode())
-command = subprocess.run(['/usr/local/bin/xuanwu', 'reader'], capture_output=True, timeout=60)
-assert command.returncode == 0 and PAUSE not in command.stdout + command.stderr
-assert b'/etc/ironcurtain/cloud/credentials/reader.p12' in command.stdout
-print('Certificate guidance and failed handshake stay; direct CLI remains noninteractive')
+    result_case('xuanwu', b'11\n', b'/etc/ironcurtain/cloud/credentials/reader.p12')
+    # Installed here without pairing: exercise a real failed operation as well as success.
+    result_case('tiemu', b'11\n', '操作未完成；现有状态请运行诊断核对。'.encode())
+    command = subprocess.run(['/usr/local/bin/xuanwu', 'reader'], capture_output=True, timeout=60)
+    assert command.returncode == 0 and PAUSE not in command.stdout + command.stderr
+    assert b'/etc/ironcurtain/cloud/credentials/reader.p12' in command.stdout
+    print('Certificate guidance and failed handshake stay; direct CLI remains noninteractive')
+
+
+if __name__ == '__main__':
+    main()
