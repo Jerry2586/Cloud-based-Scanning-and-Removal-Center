@@ -294,7 +294,7 @@ class Bridge:
                     return 503, {'state': 'unavailable'}
                 self.last = time.monotonic()
                 return 202, {'state': 'running'}
-    
+
             except (OSError, subprocess.SubprocessError):
                 return 503, {'state': 'unavailable'}
 
