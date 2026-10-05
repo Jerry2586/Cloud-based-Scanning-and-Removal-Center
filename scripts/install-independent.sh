@@ -279,5 +279,5 @@ echo "网页面板：https://$HOST:$PORT"
 echo "打开 Linux 管理菜单：sudo $MENU_COMMAND"
 echo "检查并更新程序：sudo $MENU_COMMAND update"
 echo '请在防火墙限制管理来源，确认服务器证书指纹后导入信任；脚本不会关闭 TLS 校验。'
-[[ $ROLE != local ]] || echo '在铁幕菜单配置保护范围和玄武连接；旧命令 ironcurtain 继续可用。'
-[[ $ROLE != cloud ]] || { echo '在玄武菜单登记铁幕节点、导出加密身份包。'; ic_fingerprint; }
+[[ $ROLE != local ]] || echo '输入 tiemu 打开管理菜单并配置受保护项目和玄武连接；旧命令 ironcurtain 继续可用。'
+[[ $ROLE != cloud ]] || { echo '输入 xuanwu 打开管理菜单，登记铁幕节点并导出加密身份包。'; ic_fingerprint; }

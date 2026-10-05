@@ -8,6 +8,7 @@ case "${ROLE:-$(basename "$0")}" in local|tiemu|ironcurtain) ROLE=local ;; cloud
 SOURCE=/opt/ironcurtain/$ROLE/current
 source "$SOURCE/scripts/lib/independent.sh"
 source "$SOURCE/scripts/lib/management-transaction.sh"
+source "$SOURCE/scripts/lib/menu-display.sh"
 [[ $EUID == 0 ]] || ic_fail '请用 sudo 运行管理菜单'
 ic_role "$ROLE"
 ic_load
@@ -63,19 +64,44 @@ audit() {
   chmod 600 "$CONF/management-audit.jsonl"
 }
 status() {
-  echo "════════════════════════════════════════════════════"
-  echo "  $PRODUCT_NAME · Linux 管理菜单 · v$(jq -r .version "$BASE/install.json")"
-  echo "════════════════════════════════════════════════════"
-  echo "网页面板：https://$HOST:$PORT"
-  echo "打开菜单：sudo $MENU_COMMAND    更新程序：sudo $MENU_COMMAND update"
-  if ic_healthy; then echo '容器：健康'; else echo '容器：未通过健康检查'; fi
+  local version installed_release agent_state sync_state engine_json engine_state engine_detail engine_source engine_color
+  version=$(jq -r .version "$BASE/install.json")
+  installed_release=$(basename "$(readlink -f "$SOURCE")")
+  ic_menu_header "$version" "$installed_release"
+  ic_menu_row '部署角色' "$PRODUCT_NAME"
+  if ic_healthy; then ic_menu_row '运行状态' '正常（容器健康）' "$IC_MENU_GREEN";
+  else ic_menu_row '运行状态' '容器未通过健康检查，请运行环境诊断' "$IC_MENU_RED"; fi
+  ic_menu_row '网页面板' "https://$HOST:$PORT" "$IC_MENU_GREEN"
+  ic_menu_row '更新状态' "本地 v$version（选 6 检查并更新最新签名正式版）"
+  ic_menu_row '打开菜单' "sudo $MENU_COMMAND"
+  ic_menu_row '更新程序' "sudo $MENU_COMMAND update"
   if [[ $ROLE == local ]]; then
-    echo "扫描代理：$(systemctl is-active ironcurtain-agent.service || true)"
-    echo "规则同步：$(systemctl is-active ironcurtain-rules-sync.timer || true)（配对后每 15 分钟）"
-    python3 "$SOURCE/src/host/antivirus.py"
-    [[ ! -d $CONF/runtime/cloud ]] || echo '云端：已配置身份，实时握手请选择连接检查'
-    [[ -d $CONF/runtime/cloud ]] || echo '云端：未配对'
-  else jq -r '"登记节点："+(.nodes|keys|join(", "))' "$CONF/runtime/config.json"; fi
+    agent_state=$(systemctl is-active ironcurtain-agent.service || true)
+    sync_state=$(systemctl is-active ironcurtain-rules-sync.timer || true)
+    if [[ $agent_state == active ]]; then ic_menu_row '扫描代理' '运行中' "$IC_MENU_GREEN";
+    else ic_menu_row '扫描代理' "未运行（$agent_state）" "$IC_MENU_RED"; fi
+    if [[ $sync_state == active ]]; then ic_menu_row '规则同步' '定时器运行中（配对后每 15 分钟尝试同步）' "$IC_MENU_GREEN";
+    else ic_menu_row '规则同步' "定时器未运行（$sync_state）" "$IC_MENU_YELLOW"; fi
+    if engine_json=$(python3 "$SOURCE/src/host/antivirus.py") &&
+       jq -e 'type == "object" and (.state | type == "string")' <<< "$engine_json" >/dev/null; then
+      engine_state=$(jq -r '.state' <<< "$engine_json")
+      engine_detail=$(jq -r '.detail // "详情请选 17 查看"' <<< "$engine_json")
+      engine_source=$(jq -r '.source // "unknown"' <<< "$engine_json")
+      engine_color=$IC_MENU_YELLOW
+      case "$engine_state" in
+        configured) ic_menu_row '病毒引擎' 'ClamAV · 病毒库已配置，实际加载由扫描确认' "$engine_color" ;;
+        stale) ic_menu_row '病毒引擎' "ClamAV · 病毒库需要更新：$engine_detail" "$engine_color" ;;
+        *) ic_menu_row '病毒引擎' "未就绪：$engine_detail" "$IC_MENU_RED" ;;
+      esac
+      case "$engine_source" in official-direct) engine_source='官方直接更新' ;; xuanwu-signed) engine_source='玄武签名病毒库' ;; *) engine_source='尚未确认（选 17 检查）' ;; esac
+      ic_menu_row '病毒库源' "$engine_source"
+    else ic_menu_row '病毒引擎' '状态读取失败（选 17 检查）' "$IC_MENU_RED"; fi
+    if [[ -d $CONF/runtime/cloud ]]; then ic_menu_row '玄武连接' '身份已配置（选 11 检查实时握手）' "$IC_MENU_YELLOW";
+    else ic_menu_row '玄武连接' '尚未配对（选 10 导入身份包）' "$IC_MENU_YELLOW"; fi
+  else
+    ic_menu_row '登记节点' "$(jq -r '.nodes | length' "$CONF/runtime/config.json") 个（选 10 查看）"
+    ic_menu_row '安全连接' '节点证书与独立令牌认证；连接状态以实际检查为准'
+  fi
 }
 scan() {
   [[ $ROLE == local ]] || ic_fail '此操作仅用于铁幕本地节点'
@@ -418,24 +444,59 @@ if (($#)); then [[ $# == 1 ]] || ic_fail '此管理接口不接受其他参数';
 while true; do
   echo
   status
-  echo ' 1. 状态   2. 日志   3. 启动   4. 停止   5. 重启'
-  echo ' 6. 签名安全更新   7. 环境诊断'
+  echo
+  ic_menu_item 1 '查看系统状态'
+  ic_menu_item 2 '查看服务日志'
+  ic_menu_item 3 '启动服务'
+  ic_menu_item 4 '停止服务'
+  ic_menu_item 5 '重启服务'
+  ic_menu_item 6 '签名安全更新'
+  ic_menu_item 7 '环境诊断'
   if [[ $ROLE == local ]]; then
-    echo ' 8. 环境与范围核验   9. 配置保护范围   10. 导入玄武身份包'
-    echo '11. 检查加密连接   12. 解绑玄武   13. 查看面板凭据   14. 重置面板密码'
-    echo '15. 安装病毒引擎   16. 更新官方病毒库   17. 病毒引擎状态'
-    echo '29. 从玄武下载并启用签名病毒库'
-    echo '31. 发现保护对象   32. 选择对象纳管   33. 文件深度查杀/继续   34. 保护覆盖与扫描进度'
-    echo '18. 命中文件证据   19. 隔离命中文件   20. 隔离记录   21. 恢复隔离文件'
+    ic_menu_item 8 '环境与范围核验'
+    ic_menu_item 9 '配置保护范围'
+    ic_menu_item 10 '导入玄武身份包'
+    ic_menu_item 11 '检查加密连接'
+    ic_menu_item 12 '解绑玄武'
+    ic_menu_item 13 '查看面板凭据'
+    ic_menu_item 14 '重置面板密码'
+    ic_menu_item 15 '安装病毒引擎'
+    ic_menu_item 16 '更新官方病毒库'
+    ic_menu_item 17 '病毒引擎状态'
+    ic_menu_item 18 '命中文件证据'
+    ic_menu_item 19 '隔离命中文件'
+    ic_menu_item 20 '隔离记录'
+    ic_menu_item 21 '恢复隔离文件'
   else
-    echo ' 8. 登记节点与加密导出   9. 撤销节点   10. 查看节点'
-    echo '29. 导入签名官方病毒库   30. 云端病毒库状态'
-    echo '11. 浏览器面板证书'
+    ic_menu_item 8 '登记节点与加密导出'
+    ic_menu_item 9 '撤销节点'
+    ic_menu_item 10 '查看节点'
+    ic_menu_item 11 '浏览器面板证书'
   fi
-  echo '22. 创建加密恢复包   23. 验证恢复包   24. 同机恢复（保留当前身份）'
-  [[ $ROLE == local ]] && echo '25. 从玄武验签更新哈希规则   26. 本机规则状态' || echo '25. 导入已签名哈希规则   26. 云端规则状态'
-  [[ $ROLE == local ]] && echo '27. 从玄武验签下载并更新铁幕程序' || echo '27. 导入正式签名程序包   28. 云端程序发布状态'
-  echo ' 0. 退出'
+  ic_menu_item 22 '创建加密恢复包'
+  ic_menu_item 23 '验证恢复包'
+  ic_menu_item 24 '同机恢复（保留当前身份）'
+  if [[ $ROLE == local ]]; then
+    ic_menu_item 25 '从玄武验签更新哈希规则'
+    ic_menu_item 26 '本机规则状态'
+    ic_menu_item 27 '从玄武验签下载并更新铁幕程序'
+    ic_menu_item 29 '从玄武下载并启用签名病毒库'
+    ic_menu_item 31 '发现保护对象'
+    ic_menu_item 32 '选择对象纳管'
+    ic_menu_item 33 '文件深度查杀/继续'
+    ic_menu_item 34 '保护覆盖与扫描进度'
+  else
+    ic_menu_item 25 '导入已签名哈希规则'
+    ic_menu_item 26 '云端规则状态'
+    ic_menu_item 27 '导入正式签名程序包'
+    ic_menu_item 28 '云端程序发布状态'
+    ic_menu_item 29 '导入签名官方病毒库'
+    ic_menu_item 30 '云端病毒库状态'
+  fi
+  ic_menu_item 0 '退出'
+  echo
+  echo '身份变更、隔离与恢复请核对提示；更新仅接受已验签的正式包。'
+  echo
   ask "$PRODUCT_NAME · 请输入菜单编号（0 退出）：" choice
   case "$choice" in
     0) exit 0 ;; 1) action=status ;; 2) action=logs ;; 3) action=start ;; 4) action=stop ;; 5) action=restart ;; 6) action=update ;; 7) action=doctor ;;

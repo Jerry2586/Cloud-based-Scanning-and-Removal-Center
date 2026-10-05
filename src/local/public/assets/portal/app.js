@@ -16,5 +16,5 @@ $('login-form').addEventListener('submit', async event => {
   catch (error) { $('login-error').textContent = error.message; } finally { button.disabled = false; }
 });
 document.querySelectorAll('[data-iron-logout]').forEach(button => button.addEventListener('click', async () => { try { await request('/api/logout', { method: 'POST', body: {} }); clearSession(); } catch(error) { notify(error.message, true); } }));
-document.querySelectorAll('[data-iron-account]').forEach(button => button.addEventListener('click', () => notify('本机独立管理账号：admin；密码通过 ironcurtain 管理菜单维护。')));
+document.querySelectorAll('[data-iron-account]').forEach(button => button.addEventListener('click', () => notify('本机独立管理账号：admin；密码通过 tiemu 管理菜单维护。')));
 try { const data = await request('/api/session'); if (data.authenticated) authenticated(data); } catch(error) { notify(error.message, true); }
