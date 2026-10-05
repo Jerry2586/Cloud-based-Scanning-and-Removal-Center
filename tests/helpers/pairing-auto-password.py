@@ -21,7 +21,9 @@ spec.loader.exec_module(menus)
 Menu, PROMPT, PAUSE = menus.Menu, menus.PROMPT, menus.PAUSE
 cloud = Path('/etc/ironcurtain/cloud')
 exports = cloud / 'exports'
-source = Path('/opt/ironcurtain/cloud/current')
+# Node resolves module URLs through current's symlink; use the real path so
+# control.js's CLI entry guard actually runs, including wrong-password rejection.
+source = Path('/opt/ironcurtain/cloud/current').resolve(strict=True)
 
 
 def finish_action(menu):
