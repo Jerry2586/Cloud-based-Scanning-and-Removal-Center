@@ -118,8 +118,9 @@ assert '\x1b[' not in plain
 assert text[text.index('╔'):text.index('请输入菜单编号（0 退出）')] == plain[plain.index('╔'):plain.index('请输入菜单编号（0 退出）')]
 lines = text.splitlines()
 items = [line for line in lines if re.match(r'^ *\d+\. ', line)]
-expected = list(range(1, 28)) + [29, 31, 32, 33, 34, 35, 36, 0] if sys.argv[2] == 'tiemu' else list(range(1, 12)) + [13, 14] + list(range(22, 31)) + [35, 36] + [0]
-assert [int(re.match(r'^ *(\d+)\.', line)[1]) for line in items] == expected
+expected = list(range(1, 28)) + [29, 31, 32, 33, 34, 35, 36, 37, 0] if sys.argv[2] == 'tiemu' else list(range(1, 12)) + [13, 14] + list(range(22, 31)) + [35, 36] + [0]
+actual = [int(re.match(r'^ *(\d+)\.', line)[1]) for line in items]
+assert actual == expected, (actual, expected)
 assert all(len(re.findall(r'\d+\. ', line)) == 1 for line in items)
 assert '╔' in text and '╠' in text and '╚' in text
 assert '安装目录：' in text

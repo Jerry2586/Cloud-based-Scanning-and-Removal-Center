@@ -60,7 +60,11 @@ class AgentRecoveryTests(unittest.TestCase):
   checks=a.Scanner(self.agent.profile,lambda *args,**kw:(None,'missing')).run_checks()
   for check in checks: check['state']='unavailable' if check['id'].startswith('cloudflare.') else 'ok'
   observed={k:'complete' for k in ('container_state','listener_state','directory_state')};observed['environment']={k:'complete' for k in ('system_state','package_state','service_state')}
-  return patch.object(a.inventory,'discover',return_value=observed),patch.object(a.Scanner,'run_checks',return_value=checks)
+  def fresh_checks(*args,**kw):
+   current=copy.deepcopy(checks)
+   for check in current:check['checked_at']=a.utc()
+   return current
+  return patch.object(a.inventory,'discover',return_value=observed),patch.object(a.Scanner,'run_checks',side_effect=fresh_checks)
  def test_checkup_reserves_both_phases_and_local_updater(self):
   with patch.object(a.threading,'Thread'):
    self.assertEqual(self.agent.trigger_checkup()[0],202)
@@ -129,6 +133,11 @@ class AgentRecoveryTests(unittest.TestCase):
     a.atomic_json(path,changed)
     self.assertEqual(a.Agent(self.agent.profile,self.state).checkup['state'],'idle')
    a.atomic_json(path,original)
+  # A legacy combined report cannot borrow new task-bound environment/file results.
+  path=self.state/'checkup-report.json';original=json.loads(path.read_text())
+  changed=copy.deepcopy(original);changed.pop('task_id');a.atomic_json(path,changed)
+  self.assertEqual(a.Agent(self.agent.profile,self.state).checkup['state'],'idle')
+  a.atomic_json(path,original)
   # Pre-identity reports remain compatible only when the combined task is legacy too.
   for name in ('last-report.json','full-scan-report.json','checkup-report.json'):
    path=self.state/name;value=json.loads(path.read_text());value.pop('task_id');a.atomic_json(path,value)

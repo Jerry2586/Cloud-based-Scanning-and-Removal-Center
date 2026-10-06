@@ -418,7 +418,7 @@ def valid_saved_check(item):
 
 def valid_checkup(value,profile):
     if not isinstance(value,dict) or value.get('schema')!='ironcurtain-checkup/v1' or value.get('profile_digest')!=fullscan.profile_digest(profile): return False
-    if value.get('task_id') is not None and (not isinstance(value['task_id'],str) or not re.fullmatch(r'[a-f0-9]{32}',value['task_id'])): return False
+    if 'task_id' in value and (not isinstance(value['task_id'],str) or not re.fullmatch(r'[a-f0-9]{32}',value['task_id'])): return False
     if value.get('state')=='idle': return True
     if (value.get('state') not in ('running','finished','partial','failed','paused') or value.get('stage') not in ('environment','files','complete')
         or not valid_timestamp(value.get('started_at')) or not valid_timestamp(value.get('updated_at')) or value['updated_at']<value['started_at']
@@ -485,7 +485,7 @@ class Agent:
             if not valid_checkup(saved_checkup,self.profile): raise ValueError('invalid checkup')
             if saved_checkup['state']=='finished':
                 env=self.result; files=self.full_result
-                if (saved_checkup.get('task_id') is not None and (env.get('task_id')!=saved_checkup['task_id'] or files.get('task_id')!=saved_checkup['task_id'])
+                if (env.get('task_id')!=saved_checkup.get('task_id') or files.get('task_id')!=saved_checkup.get('task_id')
                     or env.get('state')!='finished' or env.get('checked_at')!=saved_checkup.get('environment_at')
                     or any(x['checked_at']<saved_checkup['started_at'] for x in env['checks'])
                     or files.get('state')!='finished' or files.get('started_at','')<saved_checkup['environment_at']
