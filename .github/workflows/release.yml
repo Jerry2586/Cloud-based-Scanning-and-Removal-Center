@@ -1,6 +1,7 @@
 name: Publish signed cloud security center release
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - 'v*.*.*'
@@ -30,9 +31,11 @@ jobs:
           sudo env "PATH=$PATH" python3 tests/engine-readiness.test.py
       - name: Enforce exact release tag and package version
         run: |
-          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           version=$(node -p "JSON.parse(require('fs').readFileSync('package.json')).version")
-          [[ "$GITHUB_REF_NAME" == "v$version" ]]
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          if [[ "$GITHUB_EVENT_NAME" != workflow_dispatch ]]; then
+            [[ "$GITHUB_REF_NAME" == "v$version" ]]
+          fi
       - name: Repeat release quality gates
         run: |
           while IFS= read -r file; do bash -n "$file"; done < <(find . -type f -name '*.sh' -not -path './.git/*' -print | sort)
@@ -76,6 +79,7 @@ jobs:
       - name: Real ClamAV engine and pinned rescan gate
         run: sudo env "PATH=$PATH" GITHUB_ACTIONS=true bash tests/antivirus-engine.test.sh
       - name: Materialize signing key only in runner temporary storage
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         env:
           SIGNING_KEY: ${{ secrets.APPGOG_SECURITY_RELEASE_PRIVATE_KEY }}
         run: |
@@ -84,6 +88,7 @@ jobs:
           printf '%s\n' "$SIGNING_KEY" > "$RUNNER_TEMP/appgog-release-private.pem"
           unset SIGNING_KEY
       - name: Build and independently verify six release assets
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         run: |
           bash scripts/package-release.sh --signing-key "$RUNNER_TEMP/appgog-release-private.pem" --output-dir dist
           node scripts/verify-release.js --dir dist --public-key release-public.pem --version "${GITHUB_REF_NAME#v}"
@@ -99,6 +104,7 @@ jobs:
             'release-manifest.json' 'release-manifest.json.sig') -
           rm -f "$RUNNER_TEMP/appgog-release-private.pem"
       - name: Publish immutable GitHub Release assets
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -111,10 +117,12 @@ jobs:
             dist/release-manifest.json.sig \
             --verify-tag --generate-notes --title "IronCurtain / Xuanwu $GITHUB_REF_NAME"
       - name: Re-download published assets and verify accepted commit and Latest
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/verify-published-release.js --tag "$GITHUB_REF_NAME" --expected-commit "$GITHUB_SHA" --output-dir "$RUNNER_TEMP/published-verified"
       - uses: actions/upload-artifact@v4
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         with:
           name: published-verification
           path: |
@@ -123,5 +131,5 @@ jobs:
           retention-days: 7
 
       - name: Remove temporary signing key on every outcome
-        if: always()
+        if: always() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         run: rm -f -- "$RUNNER_TEMP/appgog-release-private.pem"

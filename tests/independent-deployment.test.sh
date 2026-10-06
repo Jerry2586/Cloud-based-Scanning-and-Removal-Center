@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Runs REAL installation and Docker/systemd services only on a disposable CI VM.
 set -euo pipefail
+# Report only the failing line, never trace requests, tokens or identity files.
+trap 'status=$?; if [[ $- == *e* ]]; then printf "Deployment gate failed at line %s (status %s)\n" "$LINENO" "$status" >&2; fi' ERR
 umask 077
 [[ $EUID == 0 && $(uname -s) == Linux && ${IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER:-} == 1 ]] || { echo 'Requires an explicitly disposable Linux root runner.' >&2; exit 1; }
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -36,12 +38,14 @@ bash "$SOURCE/scripts/install-independent.sh" --role local --antivirus skip --ho
 # Copied runner-owned source must become root-controlled before trust calibration.
 for role in local cloud; do
   release=$(readlink -f "/opt/ironcurtain/$role/current")
-  [[ -z $(find "$release" \( ! -user root -o ! -group root -o -perm /022 \) -print -quit) ]]
+  unsafe=$(find "$release" \( ! -user root -o ! -group root -o -perm /022 \) -print -quit)
+  [[ -z $unsafe ]] || { stat -c 'Untrusted installed code: %u:%g:%a %n' "$unsafe" >&2; exit 1; }
 done
 # Signed manager executables survive root-owned install normalization and are runnable.
 manager_dir=$(readlink -f /opt/ironcurtain/local/current)/src/manager/bin
 for arch in amd64 arm64; do
-  [[ $(stat -c '%u:%g:%a' "$manager_dir/ironcurtain-manager-linux-$arch") == 0:0:755 ]]
+  mode=$(stat -c '%u:%g:%a' "$manager_dir/ironcurtain-manager-linux-$arch")
+  [[ $mode == 0:0:755 ]] || { printf 'Manager mode mismatch for %s: %s\n' "$arch" "$mode" >&2; exit 1; }
 done
 case "$(uname -m)" in x86_64) manager_arch=amd64 ;; aarch64) manager_arch=arm64 ;; *) exit 1 ;; esac
 set +e

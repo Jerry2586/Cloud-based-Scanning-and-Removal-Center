@@ -21,3 +21,5 @@ node scripts/verify-published-release.js --tag v0.4.0 --expected-commit <已验�
 官方病毒库公网获取有独立的人工触发工作流 Accept official antivirus database retrieval。它在一次性 Linux runner 调用真实 systemd 更新器、验证官方 CVD/CLD、加载并扫描正常与 EICAR 测试样本。新分发链另要求三份原始 CVD，独立临时发布签名后删除私钥，走生产缓存、监测处理器、真实 mTLS 下载和 root 原子启用，再做官方验签和正常/EICAR 扫描；CLD 不用于云端分发。CDN、限流或超时直接失败，不能改用测试库冒充联网成功。它与常规真实引擎的确定性测试分别报告。
 
 能力与未验环境以 capability-status.md 为准。正式签名程序交付不等于生产已部署、跨机验收、云端程序灰度或异地灾难恢复全部完成。
+
+正式工作流的人工触发只执行发布预演：按相同顺序在同一一次性 runner 重复质量、镜像、Docker/systemd 与真实病毒引擎闸门；不会读取发布私钥、打包或创建 Release。这样可在生成不可覆盖标签前发现组合环境下的失败。部署检查失败只输出断言行号及代码目录权限，不开启包含身份或令牌的全量追踪。
