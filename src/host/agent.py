@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Bounded host scanner and fixed local release-job bridge. No arbitrary commands."""
-import argparse, copy, importlib.util, datetime, hashlib, http.server, json, os, pathlib, re, shutil, socket, socketserver, sqlite3, stat, struct, subprocess, tempfile, threading, time
+import argparse, copy, importlib.util, datetime, hashlib, http.server, json, os, pathlib, re, shutil, socket, socketserver, sqlite3, stat, struct, subprocess, tempfile, threading, time, uuid
 
 IDS = ['integrity.program','host.configuration','container.contract','container.approved-image','response.containment','host.os-release','host.systemd-state','ssh.effective','permissions.secret-inventory','permissions.installation','permissions.cron','network.listeners','network.udp-listeners','network.routes','host.kernel-security','network.firewall','malware.program','malware.business','database.sqlite','host.process-executables','host.failed-units','cloudflare.dns','cloudflare.workers','cloudflare.rules','cloudflare.settings']
 LABELS = ['程序完整性','关键配置完整性','容器隔离配置','容器镜像身份','处置与隔离状态','Linux 系统版本','持续监测服务','SSH 有效配置','凭据文件权限','程序目录权限','定时任务权限','TCP 监听端口','UDP 监听端口','路由环境','内核安全配置','主机防火墙','程序病毒扫描','数据目录病毒扫描','SQLite 一致性','进程执行文件','异常系统服务','Cloudflare DNS','Cloudflare Workers','Cloudflare 规则','Cloudflare 设置']
@@ -20,6 +20,12 @@ fullscan = importlib.util.module_from_spec(_fullscan_spec); _fullscan_spec.loade
 
 _update_spec = importlib.util.spec_from_file_location('ironcurtain_updates', pathlib.Path(__file__).with_name('updates.py'))
 updates = importlib.util.module_from_spec(_update_spec); _update_spec.loader.exec_module(updates)
+
+_multi_spec = importlib.util.spec_from_file_location('ironcurtain_multi_engine', pathlib.Path(__file__).with_name('multi_engine.py'))
+multi_engine = importlib.util.module_from_spec(_multi_spec); _multi_spec.loader.exec_module(multi_engine)
+
+_readiness_spec = importlib.util.spec_from_file_location('ironcurtain_engine_readiness', pathlib.Path(__file__).with_name('engine_readiness.py'))
+engine_readiness = importlib.util.module_from_spec(_readiness_spec); _readiness_spec.loader.exec_module(engine_readiness)
 
 def utc(): return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00','Z')
 def canonical(value): return json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()
@@ -412,6 +418,7 @@ def valid_saved_check(item):
 
 def valid_checkup(value,profile):
     if not isinstance(value,dict) or value.get('schema')!='ironcurtain-checkup/v1' or value.get('profile_digest')!=fullscan.profile_digest(profile): return False
+    if value.get('task_id') is not None and (not isinstance(value['task_id'],str) or not re.fullmatch(r'[a-f0-9]{32}',value['task_id'])): return False
     if value.get('state')=='idle': return True
     if (value.get('state') not in ('running','finished','partial','failed','paused') or value.get('stage') not in ('environment','files','complete')
         or not valid_timestamp(value.get('started_at')) or not valid_timestamp(value.get('updated_at')) or value['updated_at']<value['started_at']
@@ -445,6 +452,7 @@ class Agent:
         try:
             saved=private_json(self.state_dir/'last-report.json',256*1024)
             if not isinstance(saved.get('profile_digest'),str) or not DIGEST.fullmatch(saved['profile_digest']) or saved.get('state')!='finished' or len(saved.get('checks',[]))!=len(IDS) or [item.get('id') for item in saved['checks']]!=IDS: raise ValueError('invalid previous report')
+            if 'task_id' in saved and (not isinstance(saved['task_id'],str) or not re.fullmatch(r'[a-f0-9]{32}',saved['task_id'])): raise ValueError('invalid task identity')
             if not isinstance(saved.get('history'),list) or not valid_timestamp(saved.get('checked_at')): raise ValueError('invalid history metadata')
             for item in saved['checks']+saved['history']:
                 if not valid_saved_check(item) or item['checked_at']>saved['checked_at']: raise ValueError('invalid history evidence')
@@ -477,7 +485,8 @@ class Agent:
             if not valid_checkup(saved_checkup,self.profile): raise ValueError('invalid checkup')
             if saved_checkup['state']=='finished':
                 env=self.result; files=self.full_result
-                if (env.get('state')!='finished' or env.get('checked_at')!=saved_checkup.get('environment_at')
+                if (saved_checkup.get('task_id') is not None and (env.get('task_id')!=saved_checkup['task_id'] or files.get('task_id')!=saved_checkup['task_id'])
+                    or env.get('state')!='finished' or env.get('checked_at')!=saved_checkup.get('environment_at')
                     or any(x['checked_at']<saved_checkup['started_at'] for x in env['checks'])
                     or files.get('state')!='finished' or files.get('started_at','')<saved_checkup['environment_at']
                     or files.get('finished_at','')>saved_checkup['updated_at']): raise ValueError('unbound completed checkup')
@@ -510,7 +519,7 @@ class Agent:
             return result
     def trigger_engine_update(self):
         with self.lock:
-            if self.full_running or self.result['state']=='running' or antivirus.update_status()=='running':
+            if (getattr(self,'multi',None) and self.multi.running) or self.full_running or self.result['state']=='running' or antivirus.update_status()=='running':
                 return 409,{'state':'unavailable','reason':'local task already active'}
             if self.engine_update_last and time.monotonic()-self.engine_update_last<300:
                 return 429,{'state':'unavailable','reason':'updater cooldown'}
@@ -527,11 +536,11 @@ class Agent:
         self.checkup=value; return True
     def trigger(self):
         with self.lock:
-            if self.full_running: return 409,{'state':'unavailable','reason':'file scan in progress'}
+            if (getattr(self,'multi',None) and self.multi.running) or self.full_running: return 409,{'state':'unavailable','reason':'file scan in progress'}
             if self.result['state']=='running': return 409,{**copy.deepcopy(self.result),'history':copy.deepcopy(self.history[-8:]),'history_state':'unavailable' if not self.history_available else 'truncated' if len(self.history)>8 else 'ok'}
             if self.last and time.monotonic()-self.last<60: return 429,{'state':'unavailable','reason':'scan cooldown'}
             if not self.clear_checkup(): return 503,{'state':'unavailable','reason':'task persistence unavailable'}
-            self.last=time.monotonic(); self.result={'state':'running','started_at':utc(),'checks':[],'progress':{'completed':0,'total':len(IDS),'current':IDS[0]},'history':copy.deepcopy(self.history),'history_state':'ok' if self.history_available else 'unavailable'}
+            self.last=time.monotonic(); self.result={'state':'running','task_id':uuid.uuid4().hex,'started_at':utc(),'checks':[],'progress':{'completed':0,'total':len(IDS),'current':IDS[0]},'history':copy.deepcopy(self.history),'history_state':'ok' if self.history_available else 'unavailable'}
             result={**copy.deepcopy(self.result),'history':copy.deepcopy(self.history[-8:]),'history_state':'unavailable' if not self.history_available else 'truncated' if len(self.history)>8 else 'ok'}
         try: threading.Thread(target=self.scan,daemon=True).start()
         except RuntimeError:
@@ -539,6 +548,7 @@ class Agent:
             return 503,{'state':'unavailable','reason':'task start unavailable'}
         return 202,result
     def scan(self):
+        with self.lock: identity={k:self.result[k] for k in ('task_id','started_at') if k in self.result}
         def update(checks,current):
             with self.lock:
                 self.result['checks']=checks; self.result['progress']={'completed':len(checks),'total':len(IDS),'current':current}
@@ -553,7 +563,7 @@ class Agent:
                     old=self.previous.get(item['id'])
                     if (old and (old['state']!=item['state'] or old['evidence_digest']!=item['evidence_digest'])) or (not old and item['state']!='ok'):
                         events.append({**item,'previous_state':old['state'] if old else None})
-            report={'state':'finished','profile_digest':fullscan.profile_digest(self.profile),'checked_at':utc(),'checks':checks,'history':events[-128:],'history_state':'truncated' if len(events)>8 else 'ok','progress':{'completed':len(IDS),'total':len(IDS),'current':None}}
+            report={**identity,'state':'finished','profile_digest':fullscan.profile_digest(self.profile),'checked_at':utc(),'checks':checks,'history':events[-128:],'history_state':'truncated' if len(events)>8 else 'ok','progress':{'completed':len(IDS),'total':len(IDS),'current':None}}
             if not self.history_available: report['history_state']='unavailable'
             bundle={'schema':'ironcurtain-findings/v1','checked_at':report['checked_at'],'profile_digest':hashlib.sha256(canonical(self.profile)).hexdigest(),
                     'items':scanner.findings,'total':scanner.malware_count,'state':'complete' if scanner.findings_complete and all(item['state'] in ['ok','finding'] for item in checks if item['category']=='malware') else 'partial'}
@@ -571,10 +581,10 @@ class Agent:
                 if len(canonical(digest_snapshot))>250000: digest_snapshot.update(files={},files_state='unavailable')
                 self.outbound=digest_snapshot
         except Exception:
-            with self.lock: self.result={'state':'failed','checked_at':utc(),'checks':[],'history':copy.deepcopy(self.history),'history_state':'unavailable'}
+            with self.lock: self.result={**identity,'state':'failed','checked_at':utc(),'checks':[],'history':copy.deepcopy(self.history),'history_state':'unavailable'}
     def trigger_full(self):
         with self.lock:
-            if self.full_running or self.result['state']=='running': return 409,{'state':'unavailable','reason':'scan already active'}
+            if (getattr(self,'multi',None) and self.multi.running) or self.full_running or self.result['state']=='running': return 409,{'state':'unavailable','reason':'scan already active'}
             engine=antivirus.engine_status()
             if engine.get('update_state')=='running': return 409,{'state':'unavailable','reason':'database update in progress'}
             if not (self.profile['program_roots'] or self.profile['business_roots']) or not engine.get('installed') or engine.get('state')!='configured':
@@ -582,12 +592,12 @@ class Agent:
             if self.last and time.monotonic()-self.last<60: return 429,{'state':'unavailable','reason':'scan cooldown'}
             if not self.clear_checkup(): return 503,{'state':'unavailable','reason':'task persistence unavailable'}
             self.last=time.monotonic(); self.full_running=True
-            self.full_result={'schema':'ironcurtain-full-scan/v1','state':'indexing','started_at':utc()}
+            self.full_result={'schema':'ironcurtain-full-scan/v1','state':'indexing','started_at':utc(),'task_id':uuid.uuid4().hex}
         try: threading.Thread(target=self.scan_full,args=(engine,),daemon=True).start()
         except RuntimeError:
             with self.lock: self.full_running=False; self.full_result={'schema':'ironcurtain-full-scan/v1','state':'idle'}
             return 503,{'state':'unavailable','reason':'task start unavailable'}
-        return 202,{'state':'running'}
+        return 202,{'state':'running','task_id':self.full_result['task_id']}
     def scan_full(self,engine,release=True):
         def publish(value):
             atomic_json(self.state_dir/'full-scan-report.json',value)
@@ -600,12 +610,13 @@ class Agent:
                 self.full_result=copy.deepcopy(value)
                 if bundle: self.findings_bundle=bundle; self.findings_source='full'
         try:
-            task=fullscan.FullScan(self.profile,self.state_dir,Runner(),secure_fd,engine,antivirus.DATABASE_DIR,publish,self.stop,database_status=antivirus.database_status)
+            with self.lock: identity={k:self.full_result[k] for k in ('task_id','started_at') if k in self.full_result}
+            task=fullscan.FullScan(self.profile,self.state_dir,Runner(),secure_fd,engine,antivirus.DATABASE_DIR,publish,self.stop,database_status=antivirus.database_status,**identity)
             task.run()
         except Exception:
             with self.lock:
                 prior=self.full_result
-                self.full_result={'schema':'ironcurtain-full-scan/v1','state':'failed','started_at':prior.get('started_at',utc()),'updated_at':utc(),'finished_at':utc(),
+                self.full_result={'schema':'ironcurtain-full-scan/v1','state':'failed','task_id':prior.get('task_id',uuid.uuid4().hex),'started_at':prior.get('started_at',utc()),'updated_at':utc(),'finished_at':utc(),
                                   **{k:prior.get(k,0) for k in ('indexed','processed','clean','infected','skipped','errors','bytes_scanned')},
                                   'profile_digest':fullscan.profile_digest(self.profile),'findings':prior.get('findings',[]),'index_complete':False,'scope':'enrolled-directories-only','reasons':['扫描任务持久化失败，请核对代理日志与受保护状态目录']}
         finally:
@@ -613,22 +624,22 @@ class Agent:
                 if release: self.full_running=False
     def trigger_checkup(self):
         with self.lock:
-            if self.full_running or self.result['state']=='running' or antivirus.update_status()=='running': return 409,{'state':'unavailable','reason':'scan already active'}
+            if (getattr(self,'multi',None) and self.multi.running) or self.full_running or self.result['state']=='running' or antivirus.update_status()=='running': return 409,{'state':'unavailable','reason':'scan already active'}
             if self.last and time.monotonic()-self.last<60: return 429,{'state':'unavailable','reason':'scan cooldown'}
-            started=utc()
-            task={'schema':'ironcurtain-checkup/v1','state':'running','stage':'environment','profile_digest':fullscan.profile_digest(self.profile),'started_at':started,'updated_at':started,'reasons':[]}
+            started=utc(); task_id=uuid.uuid4().hex
+            task={'schema':'ironcurtain-checkup/v1','state':'running','task_id':task_id,'stage':'environment','profile_digest':fullscan.profile_digest(self.profile),'started_at':started,'updated_at':started,'reasons':[]}
             try: atomic_json(self.state_dir/'checkup-report.json',task)
             except (OSError,ValueError): return 503,{'state':'unavailable','reason':'task persistence unavailable'}
             self.last=time.monotonic(); self.full_running=True; self.checkup=task
             self.full_result={'schema':'ironcurtain-full-scan/v1','state':'idle'}
-            self.result={'state':'running','started_at':started,'checks':[],'progress':{'completed':0,'total':len(IDS),'current':IDS[0]},'history':copy.deepcopy(self.history),'history_state':'ok' if self.history_available else 'unavailable'}
+            self.result={'state':'running','task_id':task_id,'started_at':started,'checks':[],'progress':{'completed':0,'total':len(IDS),'current':IDS[0]},'history':copy.deepcopy(self.history),'history_state':'ok' if self.history_available else 'unavailable'}
         try: threading.Thread(target=self.scan_checkup,daemon=True).start()
         except RuntimeError:
             self.fail_checkup('体检任务无法启动，请检查代理日志')
             with self.lock:
                 self.full_running=False; self.result={'state':'failed','checks':[],'history':copy.deepcopy(self.history),'history_state':'unavailable'}
             return 503,{'state':'unavailable','reason':'task start unavailable'}
-        return 202,{'state':'running'}
+        return 202,{'state':'running','task_id':task_id}
     def fail_checkup(self,reason):
         with self.lock: value={**self.checkup,'state':'failed','updated_at':utc(),'reasons':[reason]}
         try: atomic_json(self.state_dir/'checkup-report.json',value)
@@ -655,7 +666,7 @@ class Agent:
             if not (self.profile['program_roots'] or self.profile['business_roots']) or not engine.get('installed') or engine.get('state')!='configured' or engine.get('update_state')=='running':
                 publish('partial','complete',reasons,report['checked_at']); return
             publish('running','files',reasons,report['checked_at'])
-            with self.lock: self.full_result={'schema':'ironcurtain-full-scan/v1','state':'indexing','started_at':utc()}
+            with self.lock: self.full_result={'schema':'ironcurtain-full-scan/v1','state':'indexing','started_at':utc(),'task_id':self.checkup['task_id']}
             self.scan_full(engine,release=False)
             with self.lock: files=copy.deepcopy(self.full_result)
             if files['state']!='finished': reasons.append('文件查杀未完整完成，请查看跳过、错误与中断原因')
@@ -701,6 +712,9 @@ def serve(profile_file,state_dir,socket_path,allowed_uid,group):
     if os.geteuid()!=0: raise SystemExit('host agent must be started by root')
     agent=Agent(private_json(profile_file),state_dir,rule_path=pathlib.Path(profile_file).parent/'rules.json')
     update_bridge=updates.Bridge(private_bytes,atomic_json)
+    agent.multi=multi_engine.Bridge(agent,profile_file,{'open':secure_fd,'read':private_json,'write':atomic_json,'digest':fullscan.profile_digest,'updating':antivirus.update_status,'discover':inventory.discover,'runner':Runner})
+    engine_bridge=engine_readiness.Bridge(engine_readiness.NativeProbe(secure_fd),antivirus.engine_status,
+        busy=lambda:update_bridge.status().get('state')=='running' or antivirus.update_status()=='running')
     class Handler(http.server.BaseHTTPRequestHandler):
         def setup(self):
             self.request.settimeout(5)
@@ -715,6 +729,8 @@ def serve(profile_file,state_dir,socket_path,allowed_uid,group):
             except OSError: return False
         def do_GET(self):
             if not self.authorized(): return self.reply(403,{'state':'unavailable'})
+            if self.path=='/engines': return self.reply(200,engine_bridge.status())
+            if self.path=='/multi-engine': return self.reply(200,agent.multi.status())
             if self.path=='/update-status': return self.reply(200,update_bridge.status())
             if self.path=='/status': return self.reply(200,agent.status())
             if self.path=='/report':
@@ -723,7 +739,9 @@ def serve(profile_file,state_dir,socket_path,allowed_uid,group):
             return self.reply(404,{'state':'unavailable'})
         def do_POST(self):
             if not self.authorized(): return self.reply(403,{'state':'unavailable'})
-            if self.path not in ['/scan','/full-scan','/checkup','/engine-update','/update-check','/update'] or self.headers.get('Content-Length')!='0' or self.headers.get('Transfer-Encoding'): return self.reply(400,{'state':'unavailable'})
+            if self.path not in ['/scan','/full-scan','/checkup','/engine-update','/update-check','/update','/multi-engine','/engines'] or self.headers.get('Content-Length')!='0' or self.headers.get('Transfer-Encoding'): return self.reply(400,{'state':'unavailable'})
+            if self.path=='/engines': return self.reply(*engine_bridge.trigger())
+            if self.path=='/multi-engine': return self.reply(*agent.multi.trigger())
             if self.path=='/engine-update': return self.reply(*agent.trigger_engine_update())
             if self.path in ['/update-check','/update']: return self.reply(*update_bridge.trigger('check' if self.path=='/update-check' else 'update'))
             self.reply(*(agent.trigger_checkup() if self.path=='/checkup' else agent.trigger_full() if self.path=='/full-scan' else agent.trigger()))
@@ -739,7 +757,7 @@ def serve(profile_file,state_dir,socket_path,allowed_uid,group):
     server=UnixServer(str(location),Handler); os.chown(location,0,group); os.chmod(location,0o660)
     threading.Thread(target=agent.schedule,daemon=True).start()
     try: server.serve_forever()
-    finally: agent.stop.set(); server.server_close(); location.unlink(missing_ok=True)
+    finally: agent.stop.set(); engine_bridge.close(); agent.multi.close(); server.server_close(); location.unlink(missing_ok=True)
 
 def main():
     parser=argparse.ArgumentParser(); parser.add_argument('--profile',default='/etc/ironcurtain/profile.json'); parser.add_argument('--state',default='/var/lib/ironcurtain'); parser.add_argument('--socket',default='/run/ironcurtain/scan.sock'); parser.add_argument('--allowed-uid',type=int,default=10001); parser.add_argument('--group',type=int,default=10001); parser.add_argument('--validate-profile',action='store_true'); parser.add_argument('--once',action='store_true'); args=parser.parse_args()

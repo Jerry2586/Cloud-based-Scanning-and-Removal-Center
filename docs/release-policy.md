@@ -4,6 +4,8 @@
 
 候选分支 candidate/** 先运行三个质量闸门：接口与签名安装/事务测试、真实 Docker/systemd 部署、真实 ClamAV 的隔离测试库扫描。全部通过后使用 GitHub 保存的发布私钥生成六份候选附件并上传工作流制品。候选签名步骤不创建正式 Release。
 
+R023 工作区增加 Go 检测主控：候选与正式闸门包含 Go portable/Linux root/race 测试、vet 和 Linux amd64/arm64 构建。打包脚本在载荷中生成两个二进制，继续由整个载荷的签名与 SHA-256 保护；不增加第七个 Release 附件，生产服务器无需 Go 工具链。这些工作流修改本批尚未在远端执行，不能引用旧 CI 结果来证明新增闸门通过。
+
 六附件固定为版本化 .run、.run.sha256、.tar.gz、.tar.gz.sha256、release-manifest.json、release-manifest.json.sig。验签使用仓库固定 release-public.pem；检查清单身份、环境合同、两个真实摘要、两份校验附件、自解压头部及其载荷与 TAR 完全相同、归档路径无越界/重复/链接/特殊文件、包内版本匹配。签名私钥只在 runner 临时目录使用并清理，不进入程序或服务器。
 
 候选附件回下载验证后，正式标签指向已验收的提交。正式发布工作流重复 Linux 质量闸门、生成签名包并发布；随后通过 GitHub API 解析真实标签提交，确认它与已验收提交一致，核对 Latest、正式状态和恰好六个附件，再从 Release 回下载并重复验证。验证报告和回取附件保存为工作流制品。附件下载支持 GitHub CLI 当前认证身份，也适用于私有仓库。

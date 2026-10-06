@@ -13,7 +13,8 @@ test('same-task real completion requires environment, asset coverage and file ev
 });
 test('running progress counts stage evidence; stale, malformed and historical tasks never claim completion',()=>{
  const r=report();r.state='running';r.started_at=at(-30);r.checks=r.checks.slice(0,3);r.checkup={...r.checkup,state:'running',stage:'environment'};r.progress={completed:3,total:25,current:HOST_SCAN_IDS[3]};
- assert.equal(describeCheckup(r,{now}).percent,12);
+ assert.equal(describeCheckup(r,{now}).percent,null);assert.match(describeCheckup(r,{now}).detail,/3 \/ 25/);
+ const all={...r,checks:report().checks,progress:{completed:25,total:25,current:null}};assert.equal(describeCheckup(all,{now}).percent,null);assert.equal(describeCheckup(all,{now}).active,true);
  r.checks[2].checked_at=at(-200);assert.equal(describeCheckup(r,{now}).percent,null);
  r.checks={};assert.doesNotThrow(()=>describeCheckup(r,{now}));
  const historical=report();historical.checkup.updated_at=at(-1000);historical.checkup.started_at=at(-2000);historical.checkup.environment_at=at(-1500);assert.equal(describeCheckup(historical,{now}).percent,null);
@@ -30,3 +31,11 @@ test('local antivirus has independent official updates and honest readiness stat
 });
 
 test('missing agent evidence does not claim the engine is uninstalled',()=>{const status=describeAntivirus(undefined);assert.equal(status.installed,null);assert.equal(status.title,'本机病毒引擎尚不可核验');assert.equal(status.update_label,'官方更新器状态尚不可核验');assert.equal(status.can_update,false);const missing=describeAntivirus({engine:'ClamAV',installed:false,state:'unavailable',updater:'unknown',detail:'引擎缺失'});assert.equal(missing.title,'本机病毒引擎未安装');});
+
+test('new checkup identities bind both phases and retain legacy evidence compatibility',()=>{
+ const id='a'.repeat(32),r=report();r.task_id=id;r.checkup.task_id=id;r.full_scan.task_id=id;
+ assert.equal(describeCheckup(r,{now}).percent,100);
+ for(const mutate of [x=>x.task_id='b'.repeat(32),x=>delete x.task_id,x=>x.full_scan.task_id='b'.repeat(32),x=>delete x.full_scan.task_id]){const copy=structuredClone(r);mutate(copy);assert.equal(describeCheckup(copy,{now}).percent,null);assert.equal(describeCheckup(copy,{now}).state,'unavailable');}
+ assert.equal(describeCheckup(report(),{now}).percent,100);
+ assert.equal(sanitizeCheckup({...r.checkup,task_id:123}).state,'unavailable');
+});

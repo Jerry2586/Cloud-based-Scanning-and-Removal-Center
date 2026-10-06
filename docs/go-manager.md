@@ -1,0 +1,75 @@
+# Go 检测主控：本地主机四引擎联合检测
+
+更新日期：2026-10-07。R023、R024 为本地开发批次，尚未提交、发布或部署到生产。包版本仍为 0.5.7；本文不把当前工作区内容描述为正式安装包已具备的能力。
+
+## 执行架构
+
+网页容器 → 已认证的固定 API → Unix socket 宿主代理 → Go 主控 → 固定检测适配器。
+
+Node 网页负责登录、会话、Origin/CSRF 校验和有界报告展示；Python systemd 代理负责 root 管理的 profile、容器发现、任务互斥和报告持久化；Go 负责最多两个并发引擎、期限、串行发布不可变快照及分类证据。网页容器不获得 Docker socket 或整机根目录挂载。Go 不提供任意命令、插件上传或文件删除接口。
+
+POST /api/multi-engine 的请求体只允许空对象；GET 同一路径读取最新任务。网页不能传入扫描路径、镜像名、SQL、命令、超时或规则。宿主代理从 profile 取得文件范围，从本机容器发现取得不可变 sha256 镜像 ID；Go 请求严格拒绝未知字段、多段 JSON、非法路径、重复镜像或超过 32 个镜像的请求。总任务期限为 32 分钟，输出按 JSONL 流式传回，单引擎展示预算 12,000 字节、单次快照预算 60,000 字节。
+
+## 四个适配器及就绪条件
+
+| 适配器 | 当前执行范围 | 固定来源与前提 | 明确限制 |
+|---|---|---|---|
+| ClamAV | 已纳管目录的文件队列，复用固定文件描述符、病毒库 generation 和断点恢复 | root 管理的 profile、Python worker、可用 ClamAV 与已验证官方库 | 30 分钟预算；未纳管目录不扫描；没有新增内存查杀能力 |
+| Trivy | 已发现容器所用的本机不可变镜像，逐镜像输出漏洞证据 | /usr/local/bin/trivy；本地 Docker socket；/var/lib/ironcurtain/local/trivy-cache 中已有兼容漏洞库 | 离线、不拉镜像、不下载漏洞库；单镜像 90 秒、引擎 5 分钟；R024 核验漏洞库格式、可信目录及有效期；CVE 不作病毒命中 |
+| Osquery | 当前监听端口及所属进程，固定 SQL | /usr/bin/osqueryi；禁用扩展及外部配置 | 20 秒预算、512 项覆盖阈值；输出资产信息，不据此认定后门，不封禁端口 |
+| Falco | 最近 15 分钟的本机行为事件 | /var/log/falco/ironcurtain-events.jsonl，root 管理的普通文件及可信祖先目录 | 1 MiB 读取预算；不启动或配置探针，不证明持续监测健康；有事件也保持 partial，无有效近期事件保持 unavailable |
+
+R024 新增只读就绪与维护说明界面；仍未添加 Trivy、Osquery、Falco 自动安装器、自动缓存更新或规则配置界面。不要仅因卡片出现就认为这些引擎已经安装。依赖、数据库或事件源缺失时返回未就绪；ClamAV 继续使用原项目已有的安装与病毒库管理路径。
+
+Trivy 参数显式禁用遥测、版本检查及数据库更新，忽略宿主外部配置和默认 ignore 文件。参数已对照官方仓库核对，但本批没有执行真实 Trivy 二进制兼容性验收。Falco 原始 output 不进入网页，避免命令参数或环境内容外泄。
+
+## R024：就绪检查与维护入口
+
+设置页增加 ClamAV、Trivy、Osquery、Falco 四项就绪矩阵，显示程序版本、可核验的数据库时间/有效期、失败原因及维护步骤。就绪仅表示依赖可用；它与扫描任务的完成、覆盖和风险分别计算。未接 Linux 代理或报告过期时显示未就绪，不用缓存成功冒充当前保护状态。
+
+网页 GET /api/engines 读取状态，空请求 POST /api/engines/check 重新检查；仅 local 角色可用，沿用登录会话、Origin、CSRF 及固定 Unix socket。宿主不接受网页指定二进制、路径、下载源或命令，使用固定 Go --readiness 入口和既有 ClamAV 状态。结果缓存 60 秒，手动检查间隔 30 秒，最多一个在途任务；程序/病毒库更新期间拒绝新检查，无法刷新且超过 120 秒的旧结果失效。报告预算 16 KiB；关闭代理会结束检查进程。
+
+Trivy 在开始、逐镜像及完成前核验固定缓存中的 metadata.json 和 trivy.db。目录祖先和文件必须由 root 管理、禁止组/其他用户写入及符号链接；元数据上限 4096 字节、兼容版本 2，要求发布时间、下载时间和更新期限，数据库须有 SQLite 头。超过上游元数据更新期限或本地 48 小时上限时阻止继续扫描；任务中途过期时保留已完成证据并降为部分覆盖。48 小时是本项目策略，目录信任和新鲜度不证明数据库发布者身份；当前没有数据库 generation 固定，也不宣称消除替换竞态。
+
+ClamAV 就绪需引擎已安装、合法版本、正数库版本/特征数量、可解析库日期及已识别来源（official-direct 或 xuanwu-signed）；沿用原官方库/玄武签名库验证与过期判断。Osquery 执行固定版本查询；Falco 只复核近期可信事件，最多 partial，不显示持续探针已健康。
+
+Linux 菜单 37 为“四引擎就绪检查”，命令 sudo tiemu engines。ClamAV 维护继续使用 sudo tiemu engine-install 和 sudo tiemu engine-update；其余三项显示真实依赖与终端维护要求，尚无自动安装/更新能力。
+
+## 状态、进度和证据
+
+引擎状态为 queued、running、complete、partial、unavailable、failed 或 cancelled。任务的 completed 计数表示已经结束的引擎数；coverage 只计算 complete 引擎。四项都结束可以达到任务进度 100%，仍然可能只有部分覆盖；完成不等于没有风险。当前 Falco 适配器始终保留探针健康未知，联合任务不能宣称四引擎完整持续防护。
+
+证据分为 malware、vulnerability、asset、behavior，分别对应恶意文件、镜像漏洞、端口资产及行为事件。每引擎最多显示 16 条摘要，完整计数和证据摘要单独保留；大报告还会按字节预算缩减展示条数。后续字段损坏、超时、取消或输出流中断会保留此前有效证据，并把剩余覆盖标为未核验。
+
+Go 联合报告不进入隔离处置通道。现有 root 菜单的隔离与恢复仍独立复核文件身份、完整证据和允许范围，不能把 CVE、端口资产或 Falco 事件当成删除文件的依据。
+
+## 构建与安装
+
+开发/发布机运行 bash scripts/build-manager.sh，生成 Linux amd64/arm64 两个无 CGO 二进制。生产服务器不需要安装 Go。package-release.sh 在签名载荷构建时生成这两个文件，沿用既有六附件签名及哈希合同；安装器为 local 角色检查两个文件为普通非链接文件并固定 root:root、755 权限。cloud 角色不启动宿主检测主控。
+
+网页镜像构建排除 Go 源码、二进制与开发缓存；宿主代理执行安装载荷中的固定原生二进制。systemd 使用 KillMode=control-group，以便停止代理时清理该服务的检测子进程。新工作流加入 Go 测试、Linux root/race 检查和双架构构建；本批没有运行远端 CI。
+
+## 本批验收证据
+
+| 验收 | 已执行结果 | 证据边界 |
+|---|---|---|
+| Node 全套 | 190 项：141 通过、49 平台跳过、0 失败 | Windows 执行；Linux socket/root 等跳过项不是通过 |
+| Python 联合桥 | 7 项通过；代理、worker、桥接模块编译通过 | 包含确定性故障注入；不等同实机病毒扫描 |
+| Go | Windows portable go test 与 go vet 通过 | Linux 权限与真实引擎测试未在本机运行 |
+| 双架构构建 | build-manager.sh 实际生成 Linux amd64/arm64 二进制 | 成功构建不等同 Linux 执行验收 |
+| 脚本 | 构建、打包、安装和独立部署验收脚本语法通过 | 未执行完整签名包构建和 Linux Docker/systemd 整链 |
+| 网页 | 本地真实登录、四引擎卡片、失败后按钮恢复、日夜切换与刷新保持、390 宽响应式通过；重复 ID 与 error/warn 均为空 | Windows 无 Linux 代理，页面准确显示未就绪，没有模拟扫描结果 |
+
+本地日志和截图保存在忽略的 .codex 目录：r023-node-tests.log、r023-multi-engine-dark.png、r023-multi-engine-light.png。发布前须在 Linux 验证真实 ClamAV 文件扫描、Trivy 漏洞库与镜像、Osquery 进程端口、Falco 权限/事件源、代理停止与重启，以及签名首装/升级/回滚。
+
+## R024 本地验收
+
+- 全套 Node：195 项，145 通过、50 平台跳过、0 失败（.codex/r024-node-tests.log）。其中固定 Unix socket 用例在 Windows 跳过；不算 Linux 已验。
+- Python：就绪桥 6 项、联合检测桥 7 项通过；已用事件门消除就绪缓存测试的线程时序不确定性。宿主模块语法编译通过。
+- Go：portable test/vet 通过；build-manager.sh 实际生成 Linux amd64/arm64 静态二进制。Linux root 权限测试已编写，未在本机执行。
+- 网页：本地登录、设置页四项未就绪、重新检查失败后按钮可重用、日夜切换及刷新保持、390 宽度无整页横向溢出、扫描页四引擎回归通过。2026-10-07 修复设置卡片与首页状态行的样式类冲突；实际截图核验卡片内部纵向排版，首页状态行保持原布局。浏览器 error/warn 与重复 ID 均为空。截图保存在 .codex/r024-readiness-dark.png、light.png、mobile.png。
+- 最终前端回归：就绪与本机工作台定向 Node 12 项，11 通过、1 Windows 平台跳过、0 失败；引擎就绪模块语法通过。Linux 菜单/构建脚本语法、git diff --check 通过。未运行远端 CI、真实引擎扫描或签名安装/更新整链；未推送、发布或改生产。
+
+## Master PRD 后续缺口
+
+本批完成检测调度和报告链的第一片实现。YARA、Tetragon、CrowdSec、持续 eBPF 探针健康、端口白名单裁决、引擎自动安装/更新、云端 SPA、插件商店、多引擎云端并发裁决、业务文件快照自动恢复及异地灾备尚未实现。玄武本批没有新增远程命令或远程处置能力；后续扩展需独立设计授权、签名、审计、资源预算和恢复边界。

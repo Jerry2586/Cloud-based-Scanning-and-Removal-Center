@@ -110,6 +110,29 @@ class AgentRecoveryTests(unittest.TestCase):
   restored.last=0
   with patch.object(a.threading,'Thread'):self.assertEqual(restored.trigger()[0],202)
   self.assertEqual(a.Agent(self.agent.profile,self.state).checkup['state'],'idle')
+ def test_finished_checkup_restart_requires_shared_task_identity(self):
+  (self.scope/'clean.txt').write_bytes(b'clean')
+  patches=self.environment()
+  def clean(args,**kw):
+   os.read(kw['input_fd'],65536);return 0,'Scanned files: 1\nInfected files: 0\n'
+  with patch.object(a.threading,'Thread'):self.assertEqual(self.agent.trigger_checkup()[0],202)
+  with patches[0],patches[1],patch.object(a.antivirus,'engine_status',return_value=self.engine),patch.object(a.antivirus,'DATABASE_DIR','/fixture/db'),patch.object(a.antivirus,'database_status',return_value=self.engine),patch.object(a,'Runner',return_value=clean):self.agent.scan_checkup()
+  self.assertEqual(self.agent.checkup['state'],'finished')
+  restored=a.Agent(self.agent.profile,self.state);self.assertEqual(restored.checkup['state'],'finished')
+  task_id=restored.checkup['task_id'];self.assertEqual(restored.result['task_id'],task_id);self.assertEqual(restored.full_result['task_id'],task_id)
+  for name in ('last-report.json','full-scan-report.json'):
+   path=self.state/name;original=json.loads(path.read_text())
+   for identity in ('b'*32,None,123):
+    changed=copy.deepcopy(original)
+    if identity is None:changed.pop('task_id')
+    else:changed['task_id']=identity
+    a.atomic_json(path,changed)
+    self.assertEqual(a.Agent(self.agent.profile,self.state).checkup['state'],'idle')
+   a.atomic_json(path,original)
+  # Pre-identity reports remain compatible only when the combined task is legacy too.
+  for name in ('last-report.json','full-scan-report.json','checkup-report.json'):
+   path=self.state/name;value=json.loads(path.read_text());value.pop('task_id');a.atomic_json(path,value)
+  self.assertEqual(a.Agent(self.agent.profile,self.state).checkup['state'],'finished')
  def test_unbound_finished_checkup_not_restored(self):
   stamp=a.utc();value={'schema':'ironcurtain-checkup/v1','profile_digest':a.fullscan.profile_digest(self.agent.profile),'state':'finished','stage':'complete','started_at':stamp,'environment_at':stamp,'updated_at':stamp,'reasons':[]}
   a.atomic_json(self.state/'checkup-report.json',value)

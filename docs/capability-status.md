@@ -18,9 +18,13 @@
 | 独立正式版本证据 | v0.4.1：环境补齐、公网 IP 自动识别、摘要固定镜像和备用源 | 候选 37229487030、主 CI 37229698259、正式发布 37229700657 成功；a00acec 六附件回取验签通过；实际备用镜像 pull/build/runtime 和 local/cloud 安装升级通过 | 用户生产升级，arm64/RPM 扩展 |
 | R009 宿主发现与纳管 | 容器权限/挂载/进程/可写层、监听进程、目录候选与事务纳管；不自动批准信任 | abb7daa 的 Linux CI [37282725180](https://github.com/Jerry2586/Cloud-based-Scanning-and-Removal-Center/actions/runs/37282725180) 三组通过：发现解析与 root 纳管检查、真实 Docker/systemd 首装重跑升级、HTTPS 扫描及 mTLS 对接 | 不覆盖所有存储驱动、容器镜像 lower layers 或所有网络命名空间 |
 | R009 文件深度查杀 | 真实 ClamAV、SQLite 队列、文件计数、固定描述符、库 generation 绑定与重启恢复 | 同批 Linux CI 37282725180：root 文件队列故障、病毒库 generation 变化及代理重启恢复通过；真实 ClamAV 测试库扫描通过；本机 Node 143 项，95 通过、48 Linux 平台跳过 | 逐文件加载库较慢；无常驻 clamd、内存/内核查杀或实时 EDR |
-
 | R015 软件与服务环境监测 | dpkg/RPM、systemd、OS/内核有界采集与历史变化，首次观测不批准信任 | 本机环境 5 项、库存 10 项通过；真实 Linux 部署闸门检查软件/服务及 API 过滤 | arm64/RPM 实机扩展、持续事件 EDR |
 | R016 设置与签名更新 | 运行/安装版本校准、Git main 与正式标签、固定 root 检查/升级、6 小时定时器 | 本机 Node 147 项：99 通过、48 平台跳过；Linux 签名、CSRF、systemd、安装恢复由发布闸门执行 | 生产服务器升级验收；未自动安装 Git 源码 |
+| R022 本地工作台（工作区） | 六入口、日夜主题、统一任务进度及风险/覆盖分离 | 定向 Node 64 项通过；本地浏览六页、错误释放、390/1440 响应式与无重复 ID 通过 | 未随本批提交/发布；Windows 无 Linux 代理 |
+| R023 Go 联合检测（工作区） | 四引擎固定调度、Python 宿主桥、认证 API、真实阶段进度和分类证据；双架构签名载荷集成 | 全套 Node 190 项：141 通过、49 平台跳过、0 失败；Python 7 项通过；Go portable test/vet、双架构实际构建、脚本语法和本地浏览通过 | Linux root/race、真实四引擎与签名安装/升级待验；未运行远端 CI；Trivy/Osquery/Falco 自动安装和持续探针健康待补；缓存新鲜度由 R024 增补 |
+| R024 引擎就绪与维护（工作区） | 四项就绪/维护矩阵、认证只读检查、缓存/冷却/维护互锁、Trivy 库准入及 Linux 菜单 37 | 全套 Node 195 项：145 通过、50 平台跳过、0 失败；Python 就绪 6 项/联合桥 7 项通过；Go portable test/vet、双架构实际构建、菜单语法及本地浏览通过 | Linux root、真实引擎、签名安装/升级与远端 CI 待验；三引擎自动安装更新、持续探针健康、数据库来源认证与 generation 固定未补；未发布 |
+
+R023、R024 的范围、依赖和未实施蓝图见 [Go 检测主控](go-manager.md)。联合任务完成百分比不能替代完整覆盖或无风险判断；当前 Falco 仅核验事件，保持探针健康未知。
 
 事务测试对真实 Linux 文件归档/移动操作注入故障，Docker/systemd 操作使用显式替身。Docker 部署测试在一次性 runner 使用真实容器、systemd、TLS、扫描和更新，两类证据分开报告。
 

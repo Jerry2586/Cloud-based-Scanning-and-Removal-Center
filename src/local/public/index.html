@@ -1,124 +1,30 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>铁幕安全 · 本地终端防护</title><link rel="icon" href="/assets/ironcurtain-shield.webp"><script src="/assets/theme.js"></script><link rel="stylesheet" href="/assets/security-preview.css"><link rel="stylesheet" href="/assets/local.css"><link rel="stylesheet" href="/assets/theme.css"><script type="module" src="/assets/portal/app.js"></script></head><body>
-<section id="login-view" class="ic-login"><div class="ic-login-card"><img src="/assets/ironcurtain-shield.webp" alt="铁幕安全盾牌" width="96" height="96"><p class="ic-eyebrow">IRONCURTAIN ENDPOINT SECURITY</p><h1>铁幕安全</h1><p>独立本地终端防护中心</p><form id="login-form"><label>管理账号<input name="username" autocomplete="username" value="admin" required></label><label>管理密码<input name="password" type="password" autocomplete="current-password" minlength="12" maxlength="256" required></label><button type="submit">安全登录</button><p id="login-error" role="alert"></p></form><small>凭据由本机安装器生成，与授权打包系统独立。</small></div></section>
-<section id="workspace" hidden>
-          <div class="security-console">
-          <div class="sc-topbar">
-          <div class="sc-brand"><img class="sc-brand-shield" src="/assets/ironcurtain-shield.webp" width="52" height="52" alt="铁幕安全科技盾牌">
-          <div><b>铁幕安全 <em>IRONCURTAIN</em></b><span>本地终端防护中心</span>
-          </div>
-          </div><div class="sc-top-actions"><button type="button" class="sc-top-action sc-theme-toggle" data-theme-toggle aria-label="切换为日间主题" title="切换为日间主题"><span data-theme-icon="light"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg></span><span data-theme-icon="dark" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.8 13a8.8 8.8 0 0 1-9.8-9.8A8.8 8.8 0 1 0 20.8 13Z"/></svg></span><span data-theme-label>日间</span></button><span class="sc-version">LOCAL ENDPOINT</span><button type="button" class="sc-top-action" data-security-open="settings" aria-label="打开安全设置">设置</button><button type="button" class="sc-top-action ic-account" data-iron-account>账户</button><button type="button" class="sc-top-action ic-account" data-iron-logout>退出</button></div>
-          </div>
-          <div class="sc-layout">
-          <nav class="sc-nav" role="tablist" aria-label="安全中心功能" aria-orientation="vertical">
-<span class="sc-nav-label">防护工作台</span>
-          <button type="button" id="sc-tab-home" role="tab" aria-selected="true" aria-controls="sc-panel-home" tabindex="0" data-security-tab="home" class="active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6z"/></svg><span>安全首页</span></button>
-          <button type="button" id="sc-tab-scan" role="tab" aria-selected="false" aria-controls="sc-panel-scan" tabindex="-1" data-security-tab="scan" class=""><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M7 12h10"/></svg><span>病毒查杀</span></button>
-          <button type="button" id="sc-tab-realtime" role="tab" aria-selected="false" aria-controls="sc-panel-realtime" tabindex="-1" data-security-tab="realtime" class=""><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg><span>实时防护</span></button>
-          <button type="button" id="sc-tab-environment" role="tab" aria-selected="false" aria-controls="sc-panel-environment" tabindex="-1" data-security-tab="environment" class=""><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3h16v7H4zm0 11h16v7H4M7 6h1m-1 11h1"/></svg><span>体检中心</span></button>
-          <button type="button" id="sc-tab-containers" role="tab" aria-selected="false" aria-controls="sc-panel-containers" tabindex="-1" data-security-tab="containers" class=""><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 9 5v9l-9 5-9-5V8zm-9 5 9 5 9-5m-9 5v9"/></svg><span>容器中心</span></button>
-          <span class="sc-nav-label">响应与恢复</span>
-<button type="button" id="sc-tab-quarantine" role="tab" aria-selected="false" aria-controls="sc-panel-quarantine" tabindex="-1" data-security-tab="quarantine" class=""><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 11h14v10H5zm3 0V7a4 4 0 0 1 8 0v4m-4 4v2"/></svg><span>隔离区</span></button>
-          <button type="button" id="sc-tab-recovery" role="tab" aria-selected="false" aria-controls="sc-panel-recovery" tabindex="-1" data-security-tab="recovery" class=""><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10a9 9 0 1 1 2 8M3 3v7h7m2-3v6l4 2"/></svg><span>修复与恢复</span></button>
-          <button type="button" id="sc-tab-backup" role="tab" aria-selected="false" aria-controls="sc-panel-backup" tabindex="-1" data-security-tab="backup" class=""><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16v5H4zm2 5v12h12V9m-9 5h6"/></svg><span>备份容灾</span></button>
-          <span class="sc-nav-label">管理</span>
-<button type="button" id="sc-tab-logs" role="tab" aria-selected="false" aria-controls="sc-panel-logs" tabindex="-1" data-security-tab="logs" class=""><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3h14v18H5zm4 5h6m-6 4h6m-6 4h4"/></svg><span>防护日志</span></button>
-          <button type="button" id="sc-tab-settings" role="tab" aria-selected="false" aria-controls="sc-panel-settings" tabindex="-1" data-security-tab="settings" class=""><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8m0-6v3m0 14v3M2 12h3m14 0h3M5 5l2 2m10 10 2 2M5 19l2-2M17 7l2-2"/></svg><span>设置</span></button>
-          <div class="sc-nav-foot"><span class="sc-node-mark">IC</span><b>本地防护节点</b><span>检查 → 核验 → 受控处置</span>
-          </div>
-          </nav>
-          <div class="sc-content">
-<div class="sc-workspace-head"><div><span class="sc-eyebrow">IRONCURTAIN / ENDPOINT SECURITY</span><h2 data-iron-page-title>安全总览</h2></div><span class="sc-workspace-tag">本机工作台</span></div>
-          <section class="sc-page" id="sc-panel-home" data-security-panel="home" role="tabpanel" aria-labelledby="sc-tab-home" >
-          <div class="sc-hero">
-          <div class="sc-orbit" aria-hidden="true"><span class="sc-orbit-axis sc-axis-x"></span><span class="sc-orbit-axis sc-axis-y"></span><span class="sc-orbit-caption">IRONCURTAIN · LOCAL GUARD</span>
-          <div class="sc-orbit-ring">
-          </div>
-          <div class="sc-orbit-core"><img src="/assets/ironcurtain-shield.webp" width="260" height="260" alt="">
-          </div><span class="sc-orbit-dot"></span>
-          </div>
-          <div class="sc-hero-copy"><span class="sc-eyebrow">YOUR SERVER. YOUR DEFENSE.</span><h2>一键体检，让威胁止步。</h2><strong id="security-local-state" data-state="warning" role="status">等待本机检查</strong><p id="security-local-time">接入 Linux 本机代理后显示真实检查结果</p><p id="security-antivirus-state" data-state="unavailable" role="status">病毒引擎状态待检查</p>
-          <div class="sc-hero-actions">
-          <button id="security-local-run" class="sc-primary" type="button" data-security-checkup><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M7 12h10"/></svg><span data-checkup-button>一键全面体检</span></button>
-          <button type="button" class="sc-secondary" data-security-open="environment">查看检查报告<span aria-hidden="true">↗</span></button>
-          </div><small>Linux 环境 · 软件服务 · 端口 · 容器 · 已纳管文件</small>
-          </div>
-          <div class="sc-hero-meta"><span>LOCAL FIRST</span><b>本机防护</b><p>独立本机运行<br>玄武连接可选</p><span class="sc-outline">真实报告驱动</span>
-          </div>
-          </div>
-          <div class="sc-home-progress"><div><span>全面体检 · <em data-checkup-percent>阶段进度</em></span><b data-checkup-status>等待一键全面体检</b></div><div class="sc-progress-track" data-checkup-progress role="progressbar" aria-label="全面体检当前阶段进度" aria-valuemin="0" aria-valuemax="100" aria-valuetext="尚未开始"><span class="sc-progress-fill"></span></div><p class="sc-checkup-detail" data-checkup-detail>环境检查 → 已纳管文件病毒查杀</p><button type="button" data-security-open="scan">进入查杀工作台 <span aria-hidden="true">→</span></button></div>
-          <div class="sc-stat-grid">
-          <div><span>检查覆盖</span><strong data-security-stat="coverage">—</strong><small>固定检查范围</small>
-          </div>
-          <div><span>发现问题</span><strong data-security-stat="findings">—</strong><small>以有效报告为准</small>
-          </div>
-          <div><span>需要关注</span><strong data-security-stat="attention">—</strong><small>复核 / 不可用</small>
-          </div>
-          <div><span>最近检查</span><strong data-security-stat="time">尚无记录</strong><small data-security-stat="freshness">等待真实数据</small>
-          </div>
-          </div>
-          <div class="sc-section-head"><h3>防护工具箱</h3><span>PROTECTION MODULES</span>
-          </div>
-          <div class="sc-tool-grid">
-          <button type="button" class="sc-tool" data-security-open="scan">
-          <div class="sc-tool-top"><span class="sc-tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M7 12h10"/></svg></span><span class="sc-tool-arrow">↗</span>
-          </div><h4>病毒查杀</h4><p>本机引擎 · 病毒库 · 文件深度扫描</p><span class="sc-tool-status" data-security-summary="malware" data-state="unavailable">等待接入</span></button>
-          <button type="button" class="sc-tool" data-security-open="environment">
-          <div class="sc-tool-top"><span class="sc-tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3h16v7H4zm0 11h16v7H4M7 6h1m-1 11h1"/></svg></span><span class="sc-tool-arrow">↗</span>
-          </div><h4>体检中心</h4><p>系统、SSH、权限与网络监听</p><span class="sc-tool-status" data-security-summary="environment" data-state="unavailable">等待接入</span></button>
-          <button type="button" class="sc-tool" data-security-open="containers">
-          <div class="sc-tool-top"><span class="sc-tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 9 5v9l-9 5-9-5V8zm-9 5 9 5 9-5m-9 5v9"/></svg></span><span class="sc-tool-arrow">↗</span>
-          </div><h4>容器中心</h4><p>程序完整性、配置与镜像合同</p><span class="sc-tool-status" data-security-summary="containers" data-state="unavailable">等待接入</span></button>
-          <button type="button" class="sc-tool" data-security-open="realtime">
-          <div class="sc-tool-top"><span class="sc-tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg></span><span class="sc-tool-arrow">↗</span>
-          </div><h4>实时防护</h4><p>定期巡检与状态变化告警</p><span class="sc-tool-status" data-security-summary="realtime" data-state="unavailable">等待接入</span></button>
-          <button type="button" class="sc-tool" data-security-open="recovery">
-          <div class="sc-tool-top"><span class="sc-tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10a9 9 0 1 1 2 8M3 3v7h7m2-3v6l4 2"/></svg></span><span class="sc-tool-arrow">↗</span>
-          </div><h4>修复与恢复</h4><p>先保留证据，再可信恢复</p><span class="sc-tool-status" data-security-summary="recovery" data-state="unavailable">等待接入</span></button>
-          <button type="button" class="sc-tool" data-security-open="backup">
-          <div class="sc-tool-top"><span class="sc-tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16v5H4zm2 5v12h12V9m-9 5h6"/></svg></span><span class="sc-tool-arrow">↗</span>
-          </div><h4>备份容灾</h4><p>备份、还原与恢复准备</p><span class="sc-tool-status" data-security-summary="backup" data-state="unavailable">等待接入</span></button>
-          </div>
-          <article class="sc-panel sc-coverage-panel">
-            <div class="sc-section-head"><div><span class="sc-eyebrow">PROTECTION COVERAGE</span><h4 data-protection-state>防护范围尚不可核验</h4></div><button class="sc-secondary" type="button" data-security-scan>环境与范围核验 ↗</button></div>
-            <div class="sc-coverage-counts"><span data-protection-roots>等待纳管目录</span><span data-protection-containers>等待容器发现</span></div>
-            <ul class="sc-check-list" data-protection-gaps><li>等待主机代理报告</li></ul>
-            <details class="sc-inventory"><summary>服务器、容器与监听发现记录</summary><p class="sc-muted" data-inventory-time>尚无主机发现记录</p><p class="sc-muted" data-inventory-counts>容器与监听状态不可用</p><ul class="sc-check-list" data-host-inventory></ul></details>
-            <p class="sc-muted">使用 Linux 菜单“发现保护范围”和“选择并纳管范围”登记目录。发现记录仅作观察；镜像、端口与文件基线须独立批准。</p>
-          </article>
-          <div class="sc-two-col">
-          <article class="sc-panel "><h4><span class="sc-panel-index">01 /</span> 最近防护动态</h4><p class="sc-muted" data-security-recent>暂无可核验的状态变化</p>
-          <button type="button" class="sc-secondary" data-security-open="logs">打开防护日志<span aria-hidden="true">↗</span></button>
-          </article>
-          <article class="sc-panel "><h4><span class="sc-panel-index">02 /</span> 响应与处置</h4><p class="sc-muted">检查异常后先核对范围与证据。程序修复、备份还原和解封由系统运维按明确步骤执行。</p>
-          <button type="button" class="sc-secondary" data-security-open="recovery">查看恢复入口<span aria-hidden="true">↗</span></button>
-          </article>
-          </div>
-          </section>
-          <section class="sc-page" id="sc-panel-scan" data-security-panel="scan" role="tabpanel" aria-labelledby="sc-tab-scan" hidden>
-            <div class="sc-scan-hero">
-              <div class="sc-scan-art" aria-hidden="true">
-                <div class="sc-scan-orbit sc-scan-orbit-outer"></div><div class="sc-scan-orbit sc-scan-orbit-inner"></div>
-                <span class="sc-art-cross sc-art-cross-top"></span><span class="sc-art-cross sc-art-cross-bottom"></span>
-                <div class="sc-scan-sweep"></div>
-                <img class="sc-scan-shield" src="/assets/ironcurtain-shield.webp" width="360" height="360" alt="">
-                <div class="sc-art-caption">IRONCURTAIN <span>LOCAL DEFENSE</span></div>
-              </div>
-              <div class="sc-scan-copy">
-                <span class="sc-eyebrow">THREAT SCAN / 本机查杀</span>
-                <h3>核验环境，<br>逐文件深度查杀<span class="sc-title-dot">.</span></h3>
-                <p>核验病毒特征、程序完整性与服务器环境。<br>从文件到容器，看清每一项防护状态。</p>
-                <div class="sc-scan-badge" data-scan-phase-badge><i></i><span data-scan-status>等待本机扫描</span></div>
-                <div class="sc-scan-actions">
-                  <button class="sc-primary sc-scan-start" type="button" data-security-scan><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M7 12h10"/></svg><span data-scan-button-label>环境与范围核验</span><span aria-hidden="true">→</span></button>
-                  <button class="sc-scan-report-link" type="button" data-security-open="environment">查看完整报告 ↗</button>
-                </div>
-                <small>保护范围以本机纳管配置为准；文件深度查杀单独启动</small>
-              </div>
-            </div>
-            <article class="sc-scan-progress-card" aria-label="整体扫描进度">
-              <div class="sc-progress-heading"><div><span class="sc-eyebrow">SCAN PROGRESS</span><h4>整体扫描进度 <span data-scan-progress-tag>尚未开始</span></h4></div><div class="sc-progress-number"><b data-scan-percent>—</b><span data-scan-percent-unit></span></div></div>
-              <div class="sc-progress-track" data-scan-progress role="progressbar" aria-label="整体扫描进度" aria-valuemin="0" aria-valuemax="100" aria-valuetext="尚未开始"><span class="sc-progress-fill"></span></div>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>铁幕安全 · 本地终端防护</title><link rel="icon" href="/assets/ironcurtain-shield.webp"><script src="/assets/theme.js"></script><link rel="stylesheet" href="/assets/workbench.css"><script type="module" src="/assets/portal/app.js"></script></head><body>
+<section id="login-view" class="ic-login"><div class="ic-login-card"><img src="/assets/ironcurtain-shield.webp" alt="铁幕安全盾牌" width="96" height="96"><p class="ic-eyebrow">IRONCURTAIN ENDPOINT SECURITY</p><h1>铁幕安全</h1><p>独立本地终端防护中心</p><form id="login-form" method="post"><label>管理账号<input name="username" autocomplete="username" value="admin" required></label><label>管理密码<input name="password" type="password" autocomplete="current-password" minlength="12" maxlength="256" required></label><button type="submit">安全登录</button><p id="login-error" role="alert"></p></form><small>凭据由本机安装器生成，与授权打包系统独立。</small></div></section>
+
+<section id="workspace" hidden><div class="security-console ic-workbench"><div class="sc-layout"><nav class="sc-nav" role="tablist" aria-label="安全中心功能" aria-orientation="vertical"><div class="ic-brand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><div><b>铁幕安全</b><span>IRONCURTAIN</span></div></div><span class="sc-nav-label">本机安全工作台</span><button type="button" id="sc-tab-home" role="tab" aria-label="安全总览" title="安全总览" aria-selected="true" aria-controls="sc-panel-home" tabindex="0" data-security-tab="home" class="active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><span>安全总览</span></button>
+<button type="button" id="sc-tab-scan" role="tab" aria-label="安全查杀" title="安全查杀" aria-selected="false" aria-controls="sc-panel-scan" tabindex="-1" data-security-tab="scan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M7 12h10"/></svg><span>安全查杀</span></button>
+<button type="button" id="sc-tab-environment" role="tab" aria-label="主机与容器" title="主机与容器" aria-selected="false" aria-controls="sc-panel-environment" tabindex="-1" data-security-tab="environment"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01m5-11h5m-5 11h5"/></svg><span>主机与容器</span></button>
+<button type="button" id="sc-tab-realtime" role="tab" aria-label="持续监测" title="持续监测" aria-selected="false" aria-controls="sc-panel-realtime" tabindex="-1" data-security-tab="realtime"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg><span>持续监测</span></button>
+<button type="button" id="sc-tab-quarantine" role="tab" aria-label="风险与处置" title="风险与处置" aria-selected="false" aria-controls="sc-panel-quarantine" tabindex="-1" data-security-tab="quarantine"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2 21h20L12 3Z"/><path d="M12 9v5m0 3h.01"/></svg><span>风险与处置</span></button>
+<button type="button" id="sc-tab-settings" role="tab" aria-label="设置" title="设置" aria-selected="false" aria-controls="sc-panel-settings" tabindex="-1" data-security-tab="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8m0-6v3m0 14v3M2 12h3m14 0h3M5 5l2 2m10 10 2 2M5 19l2-2M17 7l2-2"/></svg><span>设置</span></button><div class="ic-sidebar-bottom"><span class="ic-tag">LOCAL FIRST</span><p>本机独立检测<br>云端按需增强</p><button type="button" data-iron-account>账户管理 ↗</button></div></nav><div class="sc-content"><div class="sc-topbar"><div class="ic-breadcrumb">工作台 <span>/</span> <b data-iron-page-title>安全总览</b></div><div class="sc-top-actions"><button type="button" class="sc-top-action sc-theme-toggle" data-theme-toggle aria-label="切换为日间主题" title="切换为日间主题"><span data-theme-icon="light"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg></span><span data-theme-icon="dark" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.8 13a8.8 8.8 0 0 1-9.8-9.8A8.8 8.8 0 1 0 20.8 13Z"/></svg></span><span data-theme-label>日间</span></button><button type="button" class="sc-top-action" data-security-open="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8m0-6v3m0 14v3M2 12h3m14 0h3M5 5l2 2m10 10 2 2M5 19l2-2M17 7l2-2"/></svg><span>设置</span></button><button type="button" class="sc-top-action" data-iron-logout>退出</button></div></div><div class="ic-pages"><section class="sc-page" id="sc-panel-home" data-security-panel="home" role="tabpanel" aria-labelledby="sc-tab-home"><header class="sc-page-heading"><div><span class="sc-eyebrow">ENDPOINT OVERVIEW</span><h3>守护，从看清这台服务器开始。</h3><p>本机检查、文件查杀与容器防护，在同一个工作台完成。</p></div><button class="sc-secondary" type="button" data-security-refresh><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg>刷新状态</button></header>
+<div class="ic-status-hero" data-overview-hero data-state="warning"><div class="ic-hero-copy"><span class="ic-status-kicker"><i></i><span data-overview-label>本机检测状态</span></span><h2 id="security-local-state" data-state="warning">本机检测尚未就绪</h2><p data-overview-detail>尚未取得 Linux 主机代理报告，暂不能确认这台服务器的安全状态。</p><div class="ic-hero-actions"><button id="security-local-run" class="sc-primary" type="button" data-security-checkup><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M7 12h10"/></svg><span data-checkup-button>一键全面体检</span><span aria-hidden="true">→</span></button><button class="sc-secondary" type="button" data-security-open="scan">选择扫描方式</button></div><small>环境与容器检查 → 已纳管文件病毒查杀</small></div><div class="ic-shield-scene" aria-hidden="true"><div class="ic-shield-orbit"></div><svg class="ic-shield" viewBox="0 0 180 202" fill="none"><defs><linearGradient id="ic-shield-metal" x1="35" y1="15" x2="160" y2="188" gradientUnits="userSpaceOnUse"><stop stop-color="#cfddf5"/><stop offset=".45" stop-color="#7899d8"/><stop offset="1" stop-color="#385376"/></linearGradient></defs><path d="M90 9 158 36v65c0 43-38 72-68 91-30-19-68-48-68-91V36L90 9Z" fill="url(#ic-shield-metal)" fill-opacity=".07" stroke="url(#ic-shield-metal)" stroke-width="3"/><path d="M90 25 144 47v53c0 32-27 57-54 74-27-17-54-42-54-74V47l54-22Z" stroke="url(#ic-shield-metal)" stroke-opacity=".5"/><path d="M90 39v117M51 54v46c0 25 22 44 39 56m0-117 39 15v46c0 25-22 44-39 56" stroke="url(#ic-shield-metal)" stroke-opacity=".24"/><path d="M69 96 86 113l31-38" stroke="url(#ic-shield-metal)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 54H3m12 72H3m162-72h12m-12 72h12M90 3V0" stroke="#7899d8" stroke-opacity=".7"/></svg><span>HOST DEFENSE / 本机防线</span></div></div>
+<div class="ic-summary-grid"><button type="button" class="ic-stat" data-security-open="quarantine"><span>环境风险</span><strong data-overview-findings>—</strong><small>本次报告发现的问题</small></button><button type="button" class="ic-stat" data-security-open="quarantine"><span>文件特征命中</span><strong data-overview-infected>—</strong><small>以文件扫描证据为准</small></button><button type="button" class="ic-stat" data-security-open="environment"><span>主机与容器</span><strong data-overview-containers>—</strong><small data-overview-listeners>等待主机观测</small></button><button type="button" class="ic-stat" data-security-open="scan"><span>本机查杀引擎</span><strong class="ic-stat-text" data-overview-engine>未核验</strong><small data-overview-engine-detail>无需连接玄武即可使用</small></button></div>
+<div class="ic-home-grid"><article class="sc-panel ic-task-card"><div class="sc-section-head"><div><span class="sc-eyebrow">TASK CENTER</span><h4>扫描任务</h4></div><span class="ic-tag" data-task-stage>等待开始</span></div><h5 data-task-title>还没有执行扫描</h5><p data-task-detail>真实进度来自本机代理，等待开始。</p><div class="ic-task-progress-head"><span data-task-kind>当前任务</span><strong data-task-percent>—</strong></div><div class="sc-progress-track" data-task-progress role="progressbar" aria-label="当前任务进度" aria-valuemin="0" aria-valuemax="100" aria-valuetext="尚未开始"><span></span></div><div class="ic-task-phases"><div><i>01</i><span>主机、容器与网络</span></div><div><i>02</i><span>已纳管文件查杀</span></div></div><p class="ic-task-foot" data-task-scope>百分比按当前阶段计算；未建立文件清单时显示等待。</p><button type="button" class="ic-text-button" data-security-open="scan">打开安全查杀 →</button></article>
+<article class="sc-panel ic-readiness"><div class="sc-section-head"><div><span class="sc-eyebrow">PROTECTION READINESS</span><h4>防护就绪</h4></div><span class="ic-tag" data-readiness-state>待核验</span></div><div class="ic-readiness-row"><span class="ic-readiness-icon">01</span><div><b>本机检测服务</b><p data-readiness-agent>等待主机代理报告</p></div></div><div class="ic-readiness-row"><span class="ic-readiness-icon">02</span><div><b>病毒引擎与病毒库</b><p id="security-local-antivirus" data-engine-overview>等待本机状态</p></div></div><div class="ic-readiness-row"><span class="ic-readiness-icon">03</span><div><b>受保护范围</b><p data-protection-roots>等待纳管目录</p><p data-protection-containers>等待容器发现</p></div></div><button type="button" class="ic-text-button" data-security-open="settings">查看配置与诊断步骤 →</button></article></div>
+<article class="sc-panel ic-coverage"><div class="sc-section-head"><div><span class="sc-eyebrow">COVERAGE & EVIDENCE</span><h4 data-protection-state>防护范围尚不可核验</h4></div><button type="button" class="sc-secondary" data-security-open="environment">查看主机清单 →</button></div><ul data-protection-gaps class="sc-check-list"><li>等待主机代理报告</li></ul><div class="ic-evidence-foot"><span id="security-local-time">尚无检查时间</span><span data-overview-coverage>尚不能确认完整覆盖</span></div><ul class="ic-report-notes" data-overview-notes></ul><p class="sc-muted">首次使用：运行 <code>sudo tiemu</code>，在菜单发现并纳管需要保护的目录和容器。发现资产不会自动批准可信基线。</p></article></section><section class="sc-page ic-antivirus-page" id="sc-panel-scan" data-security-panel="scan" role="tabpanel" aria-labelledby="sc-tab-scan" hidden>
+<header class="sc-page-heading"><div><span class="sc-eyebrow">IRONCURTAIN / PROTECTION</span><h3>安全查杀</h3><p>玄武引擎 · 本机独立检测，守护文件、镜像与服务器环境。</p></div><button class="ic-text-button" type="button" data-security-open="settings">引擎与更新设置 ↗</button></header>
+<article class="sc-panel ic-multi-engine" id="multi-engine-panel" aria-labelledby="multi-engine-title">
+<div class="ic-scan-hero"><div class="ic-shield-stage"><div class="ic-shield-orbit"></div><svg viewBox="0 0 180 200" fill="none" aria-hidden="true"><defs><linearGradient id="ic-scan-shield-metal" x1="25" y1="15" x2="140" y2="180" gradientUnits="userSpaceOnUse"><stop stop-color="#a6ffdd"/><stop offset=".48" stop-color="#35b991"/><stop offset="1" stop-color="#146451"/></linearGradient></defs><path d="M90 12 154 37v59c0 44-28 73-64 92-36-19-64-48-64-92V37L90 12Z" fill="url(#ic-scan-shield-metal)" fill-opacity=".17" stroke="url(#ic-scan-shield-metal)" stroke-width="2.5"/><path d="m90 27 51 20v48c0 34-20 60-51 77-31-17-51-43-51-77V47l51-20Z" fill="url(#ic-scan-shield-metal)" fill-opacity=".15" stroke="url(#ic-scan-shield-metal)" stroke-width="1"/><path d="M90 27v145M39 47l102 48M141 47 39 95" stroke="url(#ic-scan-shield-metal)" opacity=".25"/><path d="m69 99 15 15 30-34" stroke="url(#ic-scan-shield-metal)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/><path d="M11 63V34l21-9m116 0 21 9v29M11 128v22l22 18m114 0 22-18v-22" stroke="url(#ic-scan-shield-metal)" stroke-width="1.5" opacity=".5"/><circle cx="90" cy="188" r="3" fill="#54d3ae"/></svg><span>LOCAL PROTECTION</span></div>
+<div class="ic-scan-intro"><span class="ic-engine-kicker"><i></i>玄武引擎 · 本机防护</span><h4 id="multi-engine-title">一次检测，掌握安全状态。</h4><p>文件查杀、镜像漏洞、端口资产与行为事件，<br class="ic-desktop-break">四项能力联合核验，结果逐项可追溯。</p><div class="ic-scan-action"><button type="button" class="sc-primary" id="multi-engine-start" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M7 12h10"/></svg>开始联合检测<span aria-hidden="true"> →</span></button><span class="ic-local-note">本机执行 · 云端可选</span></div></div></div>
+<div class="ic-multi-progress"><div class="ic-progress-heading"><strong id="multi-engine-state" role="status">等待本机代理</strong><span id="multi-engine-percent">—</span></div><progress id="multi-engine-progress" max="4" value="0" aria-label="尚无已核验检测进度"></progress><div class="ic-progress-footer"><p id="multi-engine-detail">等待本机检查，尚无可核验结果。</p><span>任务结束项 <b id="multi-engine-completed">— / 4</b></span><span>完整覆盖 <b id="multi-engine-coverage">待核验</b></span></div></div>
+</article>
+<div class="ic-capability-section"><div class="ic-section-label"><h4>四项检测能力</h4><span>独立核验 · 真实证据</span></div><ul id="multi-engine-list" class="ic-engine-grid sc-check-list" aria-label="四项检测能力与覆盖情况"></ul><details class="ic-multi-evidence"><summary>查看本次检测证据 <span aria-hidden="true">↗</span></summary><p id="multi-engine-evidence" class="sc-muted">暂无可核验结果</p><ul id="multi-engine-findings" class="sc-check-list"></ul></details></div>
+<div class="ic-section-label"><h4>按需扫描</h4><span>选择适合本次检查的范围</span></div>
+<div class="ic-mode-grid"><article class="sc-panel ic-mode"><span class="ic-mode-number">01 / FULL CHECKUP</span><h4>全面体检</h4><p>检查主机、端口与容器，查杀已纳管文件。</p><button type="button" class="sc-secondary" data-security-checkup><span data-checkup-button>一键全面体检</span> →</button></article><article class="sc-panel ic-mode"><span class="ic-mode-number">02 / HOST CHECK</span><h4>环境与容器核验</h4><p>检查资产、权限风险与配置基线变化。</p><button type="button" class="sc-secondary" data-security-scan><span data-scan-button-label>环境与范围核验</span> →</button></article><article class="sc-panel ic-mode"><span class="ic-mode-number">03 / FILE SCAN</span><h4>文件深度查杀</h4><p>使用本机病毒库逐文件检查已纳管目录。</p><button type="button" class="sc-secondary" data-security-full-scan><span data-full-scan-button>文件深度查杀</span> →</button></article></div>
+<article class="sc-panel ic-task-compact"><div class="sc-section-head"><h4 data-task-title>还没有执行扫描</h4><strong data-task-percent>—</strong></div><p data-task-detail>等待本机代理</p><div class="sc-progress-track" data-task-progress role="progressbar" aria-label="当前体检或文件扫描任务进度" aria-valuemin="0" aria-valuemax="100"><span></span></div><p class="sc-muted" data-task-stage>等待开始</p></article><details class="ic-scan-details"><summary>查看分项进度与检查证据<span>环境检查 · 文件计数 · 覆盖说明</span></summary><div class="ic-scan-details-content"><article class="sc-scan-progress-card" aria-label="环境与容器检查进度">
+              <div class="sc-progress-heading"><div><span class="sc-eyebrow">SCAN PROGRESS</span><h4>环境与容器检查进度 <span data-scan-progress-tag>尚未开始</span></h4></div><div class="sc-progress-number"><b data-scan-percent>—</b><span data-scan-percent-unit></span></div></div>
+              <div class="sc-progress-track" data-scan-progress role="progressbar" aria-label="环境与容器检查进度" aria-valuemin="0" aria-valuemax="100" aria-valuetext="尚未开始"><span class="sc-progress-fill"></span></div>
               <div class="sc-progress-foot"><span data-scan-activity role="status">接入本机代理后可开始检查</span><span class="sc-progress-count"><b data-scan-check-count>—</b> / 25 项核验</span></div>
               <div class="sc-scan-stage-grid">
                 <div class="sc-scan-stage" data-scan-stage="containers"><span class="sc-stage-index">01</span><div><b>文件与容器</b><small data-scan-stage-label="containers">等待检查</small></div><span class="sc-stage-indicator" aria-hidden="true">○</span></div>
@@ -128,66 +34,43 @@
               </div>
             </article>
             <article class="sc-panel sc-file-scan-card">
-              <div class="sc-section-head"><div><span class="sc-eyebrow">FILE SCAN / CLAMAV</span><h4>文件深度查杀</h4><p class="sc-muted" data-full-scan-state role="status">尚未进行文件深度查杀</p></div><button type="button" class="sc-primary" data-security-full-scan><span data-full-scan-button>文件深度查杀</span> →</button></div>
+              <div class="sc-section-head"><div><span class="sc-eyebrow">XUANWU / FILE SCAN</span><h4>文件深度查杀</h4><p class="sc-muted" data-full-scan-state role="status">尚未进行文件深度查杀</p></div></div>
               <div class="sc-file-progress-heading"><span data-full-scan-count>等待真实文件计数</span><strong data-full-scan-percent>—</strong></div>
               <div class="sc-progress-track sc-file-progress" data-full-scan-progress role="progressbar" aria-label="文件深度查杀进度" aria-valuemin="0" aria-valuemax="100" aria-valuetext="尚未开始"><span></span></div>
+              <div class="ic-file-activity"><p data-full-scan-current role="status">等待文件任务</p><small data-full-scan-task>尚无任务编号</small></div>
               <div class="sc-file-counters"><div><b data-full-scan-clean>—</b><span>已扫描未命中</span></div><div><b data-full-scan-infected>—</b><span>特征命中文件</span></div><div><b data-full-scan-skipped>—</b><span>跳过文件/目录</span></div><div><b data-full-scan-errors>—</b><span>检查失败</span></div><div><b data-full-scan-bytes_scanned>—</b><span>已扫描字节</span></div></div>
+              <details class="ic-recent-files"><summary>最近检查的文件<span>最多保留 8 条实时记录</span></summary><ul data-full-scan-recent><li>尚无逐文件检查记录</li></ul></details>
               <p class="sc-muted" data-full-scan-time>尚无扫描记录</p><ul class="sc-check-list" data-full-scan-reasons></ul>
               <p class="sc-muted">仅查杀已纳管的程序与业务目录，不遍历整盘。建立清单时不显示假百分比；暂停后在范围和病毒库一致时续扫。命中证据在“文件证据”中查看，隔离须在 Linux 菜单核对后执行。</p>
             </article>
             <div class="sc-scan-bottom-grid">
               <article class="sc-panel sc-scan-results">
-                <div class="sc-section-head"><div><span class="sc-eyebrow">DETECTION REPORT</span><h4>查杀结果</h4></div><span class="sc-outline" data-scan-result-label>等待报告</span></div>
+                <div class="sc-section-head"><div><span class="sc-eyebrow">DETECTION REPORT</span><h4>环境检查结果</h4></div><span class="sc-outline" data-scan-result-label>等待报告</span></div>
                 <div class="sc-scan-result-stats"><div><b data-scan-finding-count>—</b><span>发现问题</span></div><div><b data-scan-attention-count>—</b><span>需要复核</span></div><div><b data-scan-checked-time>—</b><span>报告时间</span></div></div>
-                <div class="sc-report-head"><span>病毒特征核验</span><span data-security-group-state="malware">等待检查数据</span></div>
+                <div class="sc-report-head"><span>病毒特征与扫描前检查</span><span data-security-group-state="malware">等待检查数据</span></div>
                 <ul class="sc-check-list" data-security-group="malware"><li class="sc-empty-row">暂无已核验的检查结果</li></ul>
               </article>
-              <article class="sc-panel sc-scan-modes"><span class="sc-eyebrow">SCAN MODES</span><h4>扫描方式</h4>
-                <div class="sc-scan-mode sc-scan-mode-selected"><span class="sc-mode-symbol" aria-hidden="true">◎</span><div><b>环境与范围核验</b><small>25 项核验 · 系统、网络、容器与固定文件样本</small></div></div>
-                <div class="sc-scan-mode"><span class="sc-mode-symbol" aria-hidden="true">⊞</span><div><b>文件深度查杀</b><small>逐文件处理 · 纳管目录 · 支持暂停续扫</small></div></div>
-                <p class="sc-scan-engine"><span class="sc-engine-dot"></span>ClamAV 引擎状态以本机报告为准</p>
-              </article>
+
             </div>
-            <div id="sc-antivirus-engine" class="sc-integrated-engine">
-            <div class="sc-page-heading"><div><span class="sc-eyebrow">LOCAL ANTIVIRUS ENGINE</span><h3>本机杀毒引擎</h3><p>铁幕独立执行查杀，玄武提供可选的签名分发与集中管理。</p></div></div>
-            <article class="sc-panel sc-engine-hero"><div><span class="sc-eyebrow">CLAMAV · LOCAL FIRST</span><h4 data-engine-title role="status">等待本机引擎状态</h4><p class="sc-muted" data-engine-detail>等待本机代理报告</p><p class="sc-engine-source" data-engine-source>更新来源尚不可核验</p></div><span class="sc-engine-emblem" aria-hidden="true">◈</span></article>
+            </div></details><details id="sc-antivirus-engine" class="sc-integrated-engine ic-engine-disclosure"><summary><span><b>玄武引擎 · 病毒库与维护</b><small>查看本机版本、病毒库状态与更新来源</small></span><span aria-hidden="true">＋</span></summary><div class="ic-engine-disclosure-content">
+            <div class="sc-page-heading"><div><span class="sc-eyebrow">LOCAL ANTIVIRUS ENGINE</span><h3>本机引擎状态</h3><p>铁幕独立执行查杀，玄武云端提供可选的签名分发与集中管理。</p></div></div>
+            <article class="sc-panel sc-engine-hero"><div><span class="sc-eyebrow">XUANWU · LOCAL FIRST</span><h4 data-engine-title role="status">等待本机引擎状态</h4><p class="sc-muted" data-engine-detail>等待本机代理报告</p><p class="sc-engine-source" data-engine-source>更新来源尚不可核验</p></div><span class="sc-engine-emblem" aria-hidden="true">◈</span></article>
             <div class="sc-stat-grid sc-engine-stats"><div><span>引擎版本</span><strong data-engine-version>—</strong><small>本机实际执行结果</small></div><div><span>病毒库版本</span><strong data-engine-database-version>—</strong><small>官方 daily 库版本</small></div><div><span>库内特征</span><strong data-engine-signatures>—</strong><small>库文件元数据计数</small></div><div><span>病毒库时间</span><strong class="sc-engine-date" data-engine-database-at>—</strong><small>不是最近扫描时间</small></div></div>
-            <div class="sc-two-col"><article class="sc-panel"><h4>病毒库更新</h4><p data-engine-updater>等待更新器状态</p><p class="sc-muted" data-engine-update-state role="status">等待本机更新器</p><button type="button" class="sc-primary" data-security-engine-update disabled><span data-engine-update-button>更新官方病毒库</span> →</button><p class="sc-muted">官方来源从 ClamAV 下载，不需要玄武。已切换玄武签名库时，使用 Linux 菜单的签名库更新入口。</p></article><article class="sc-panel"><h4>独立防护与文件查杀</h4><p>体检与容器发现由本机代理执行。文件查杀使用本机引擎和已纳管目录，命中记录保留在本机。</p><p class="sc-muted">已有有效病毒库时可断网扫描。引擎缺失、病毒库过期或范围未配置时，界面明确显示未就绪；环境体检仍可执行。</p></article></div>
-            </div>
-          </section>
-          <section class="sc-page" id="sc-panel-realtime" data-security-panel="realtime" role="tabpanel" aria-labelledby="sc-tab-realtime" hidden>
-          <header class="sc-page-heading">
-          <div class="sc-heading-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg>
+            <div class="sc-two-col"><article class="sc-panel"><h4>病毒库更新</h4><p data-engine-updater>等待更新器状态</p><p class="sc-muted" data-engine-update-state role="status">等待本机更新器</p><button type="button" class="sc-primary" data-security-engine-update disabled><span data-engine-update-button>更新官方病毒库</span> →</button><p class="sc-muted">本机可直接更新官方病毒库。已连接玄武云端并启用签名库时，在 Linux 菜单更新签名库。</p></article><article class="sc-panel"><h4>独立防护与文件查杀</h4><p>体检与容器发现由本机代理执行。文件查杀使用本机引擎和已纳管目录，命中记录保留在本机。</p><p class="sc-muted">已有有效病毒库时可断网扫描。引擎缺失、病毒库过期或范围未配置时，界面明确显示未就绪；环境体检仍可执行。</p></article></div>
+            </div></details>
+          </section><section class="sc-page ic-environment-page" id="sc-panel-environment" data-security-panel="environment" role="tabpanel" aria-labelledby="sc-tab-environment" hidden><header class="sc-page-heading"><div><span class="sc-eyebrow">IRONCURTAIN / HOST INSPECTION</span><h3>主机与容器</h3><p>查看服务器资产、运行状态与环境变化。</p></div><button type="button" class="sc-outline" data-host-export disabled>导出检查报告 ↗</button></header>
+<article class="sc-panel ic-host-hero"><div class="ic-host-symbol" aria-hidden="true"><svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="9" y="9" width="46" height="19" rx="4"/><rect x="9" y="36" width="46" height="19" rx="4"/><circle cx="18" cy="19" r="2"/><circle cx="18" cy="46" r="2"/><path d="M33 19h13M33 46h13M24 28v8m16-8v8"/></svg></div><div class="ic-host-intro"><span class="ic-engine-kicker">玄武引擎 · 环境体检</span><h4>看清服务器的每一处变化。</h4><p>检查操作系统、软件、服务、监听端口与容器资产。</p><span class="ic-host-time" data-host-time>尚无观测时间</span></div><button class="sc-primary" type="button" data-security-container-scan><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M7 12h10"/></svg><span data-container-scan-button>检查主机与容器</span></button><div class="ic-host-progress"><div class="ic-progress-heading"><strong data-task-title>等待主机检查</strong><span data-task-percent>—</span></div><div class="sc-progress-track" data-task-progress role="progressbar" aria-label="主机与容器检查任务进度" aria-valuemin="0" aria-valuemax="100"><span></span></div><p data-task-detail>等待本机代理</p></div></article>
+<div class="ic-section-label"><h4>本机资产概览</h4><span data-host-status>等待主机检查</span></div><div class="ic-host-asset-grid"><article class="sc-panel sc-host-card"><span class="ic-asset-symbol" aria-hidden="true">▧</span><h4>容器资产</h4><p data-host-containers>等待检查</p></article><article class="sc-panel sc-host-card"><span class="ic-asset-symbol" aria-hidden="true">⌁</span><h4>端口与进程</h4><p data-host-listeners>等待检查</p></article><article class="sc-panel sc-host-card"><span class="ic-asset-symbol" aria-hidden="true">◫</span><h4>已安装软件</h4><p data-host-packages>等待检查</p></article><article class="sc-panel sc-host-card"><span class="ic-asset-symbol" aria-hidden="true">ϟ</span><h4>系统服务</h4><p data-host-services>等待检查</p><small data-host-failed>—</small></article></div><article class="sc-panel sc-host-card"><h4>容器安全资产</h4><div class="sc-table-scroll"><table class="sc-host-table"><thead><tr><th scope="col">容器</th><th scope="col">运行状态</th><th scope="col">文件系统</th><th scope="col">进程数</th><th scope="col">风险</th></tr></thead><tbody data-host-table="containers"></tbody></table></div></article><article class="sc-panel sc-host-card"><h4>监听端口与进程归属</h4><div class="sc-table-scroll"><table class="sc-host-table"><thead><tr><th scope="col">协议</th><th scope="col">监听地址</th><th scope="col">进程 (PID)</th></tr></thead><tbody data-host-table="listeners"></tbody></table></div></article><p class="sc-notice">容器清单显示运行元数据和风险；文件深度查杀只覆盖已纳管目录，未纳管容器需在 tiemu 菜单配置。</p>
+          <p class="sc-muted">可信基线与当前运行状态共同决定结果。</p>
+          <article class="sc-panel "><h4>完整性与运行环境</h4>
+          <div class="sc-report-head"><span>检查项目</span><span data-security-group-state="containers">等待检查数据</span>
           </div>
-          <div><span class="sc-eyebrow">LOCAL DEFENSE / REALTIME</span><h3>实时防护</h3><p>查看本机定期检查与封控准备情况。</p>
-          </div>
-          </header>
-          <div class="sc-notice">本机采用每五分钟定期检查；不承诺毫秒级拦截。状态依赖最近有效报告。</div>
-          <article class="sc-panel "><h4>防护与响应</h4>
-          <div class="sc-report-head"><span>检查项目</span><span data-security-group-state="realtime">等待检查数据</span>
-          </div>
-          <ul class="sc-check-list" data-security-group="realtime"><li class="sc-empty-row">暂无已核验的检查结果</li>
+          <ul class="sc-check-list" data-security-group="containers"><li class="sc-empty-row">暂无已核验的检查结果</li>
           </ul>
           </article>
-          <div class="sc-two-col">
-          <article class="sc-panel "><h4>定期巡检</h4><p>文件、固定配置与服务器风险由本机代理定期检查。浏览器轮询最新报告，后台保持状态变化记录。</p>
-          <button type="button" class="sc-secondary" data-security-open="logs">查看防护日志<span aria-hidden="true">↗</span></button>
-          </article>
-          <article class="sc-panel "><h4>策略边界</h4><p>发现风险不等于已完成隔离或清理。自动响应以已配置策略和真实处置证据为准。</p>
-          <button class="sc-secondary" type="button" disabled>策略编辑 · 待接入</button>
-          </article>
-          </div>
-          </section>
-          <section class="sc-page" id="sc-panel-environment" data-security-panel="environment" role="tabpanel" aria-labelledby="sc-tab-environment" hidden>
-          <header class="sc-page-heading">
-          <div class="sc-heading-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3h16v7H4zm0 11h16v7H4M7 6h1m-1 11h1"/></svg>
-          </div>
-          <div><span class="sc-eyebrow">LOCAL DEFENSE / ENVIRONMENT</span><h3>服务器环境检查</h3><p>核对 Linux 系统、SSH、敏感权限、监听端口、路由与防火墙。</p>
-          </div>
-          </header><div class="sc-host-banner"><strong data-host-status>等待主机检查</strong><span data-host-time>尚无观测时间</span><button type="button" class="sc-secondary" data-host-export disabled>导出检查报告</button></div><div class="sc-two-col"><article class="sc-panel sc-host-card"><h4>操作系统与内核</h4><p data-host-os>等待检查</p><p class="sc-muted" data-host-kernel>等待检查</p></article><article class="sc-panel sc-host-card"><h4>软件与服务</h4><p data-host-packages>等待检查</p><p data-host-services>等待检查</p><p data-host-failed>—</p></article></div><article class="sc-panel sc-host-card"><h4>环境变化与覆盖缺口</h4><p data-host-comparison>首次观测未批准为基线</p><ul class="sc-check-list" data-host-changes></ul></article><article class="sc-panel sc-host-card"><h4>系统服务 · 失败项优先</h4><div class="sc-table-scroll"><table class="sc-host-table"><thead><tr><th scope="col">服务</th><th scope="col">加载</th><th scope="col">状态</th><th scope="col">运行子状态</th></tr></thead><tbody data-host-table="services"></tbody></table></div></article><article class="sc-panel sc-host-card"><h4>已安装软件</h4><div class="sc-table-scroll"><table class="sc-host-table"><thead><tr><th scope="col">软件包</th><th scope="col">版本</th></tr></thead><tbody data-host-table="packages"></tbody></table></div></article><p class="sc-notice" data-host-limits></p>
-          <div class="sc-toolbar"><p>固定检查范围，未知状态需要人工复核。</p>
-          <button type="button" class="sc-secondary" data-security-scan><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M7 12h10"/></svg><span>重新检查</span></button>
-          </div>
+          <div class="sc-notice">数据库检查只核验结构健康；不会自动删除或修改业务数据。摘要一致不能证明宿主机 root 未被攻破。</div>
+          <div class="sc-two-col"><article class="sc-panel sc-host-card"><h4>操作系统与内核</h4><p data-host-os>等待检查</p><p class="sc-muted" data-host-kernel>等待检查</p></article><article class="sc-panel sc-host-card"><h4>软件与服务</h4><p data-host-packages>等待检查</p><p data-host-services>等待检查</p><p data-host-failed>—</p></article></div><article class="sc-panel sc-host-card"><h4>环境变化与覆盖缺口</h4><p data-host-comparison>首次观测未批准为基线</p><ul class="sc-check-list" data-host-changes></ul></article><article class="sc-panel sc-host-card"><h4>系统服务 · 失败项优先</h4><div class="sc-table-scroll"><table class="sc-host-table"><thead><tr><th scope="col">服务</th><th scope="col">加载</th><th scope="col">状态</th><th scope="col">运行子状态</th></tr></thead><tbody data-host-table="services"></tbody></table></div></article><article class="sc-panel sc-host-card"><h4>已安装软件</h4><div class="sc-table-scroll"><table class="sc-host-table"><thead><tr><th scope="col">软件包</th><th scope="col">版本</th></tr></thead><tbody data-host-table="packages"></tbody></table></div></article><p class="sc-notice" data-host-limits></p>
+
           <article class="sc-panel "><h4>环境检查项目</h4>
           <div class="sc-report-head"><span>检查项目</span><span data-security-group-state="environment">等待检查数据</span>
           </div>
@@ -198,113 +81,28 @@
           <ul id="security-local-checks" class="sc-check-list"><li class="sc-empty-row">暂无本机报告</li>
           </ul>
           </details>
-          </section>
-          <section class="sc-page" id="sc-panel-containers" data-security-panel="containers" role="tabpanel" aria-labelledby="sc-tab-containers" hidden>
-          <header class="sc-page-heading">
-          <div class="sc-heading-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 9 5v9l-9 5-9-5V8zm-9 5 9 5 9-5m-9 5v9"/></svg>
-          </div>
-          <div><span class="sc-eyebrow">LOCAL DEFENSE / CONTAINERS</span><h3>网站与容器防护</h3><p>检查程序摘要、固定配置、容器限制、获准镜像与数据库结构。</p>
-          </div>
-          <button type="button" class="sc-primary sc-container-scan-action" data-security-container-scan><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M7 12h10"/></svg><span data-container-scan-button>一键检查容器</span></button></header><article class="sc-panel sc-container-progress"><div class="sc-section-head"><h4>容器与主机联合检查</h4><span data-scan-progress-tag>尚未开始</span></div><p class="sc-muted">发现本机容器、监听端口与进程，核验已配置项目的程序、配置、镜像和数据库。</p><div class="sc-progress-track" data-scan-progress role="progressbar" aria-label="容器与主机联合检查进度" aria-valuemin="0" aria-valuemax="100"><span class="sc-progress-fill" style="width:0%"></span></div><div class="sc-container-progress-foot"><span data-scan-activity role="status">等待本机代理</span><strong><span data-scan-percent>—</span><span data-scan-percent-unit></span></strong></div><p class="sc-muted">此入口执行本机联合安全检查；文件病毒查杀请在“病毒查杀”运行深度扫描。</p></article><div class="sc-two-col"><article class="sc-panel sc-host-card"><h4>容器发现</h4><p data-host-containers>等待检查</p></article><article class="sc-panel sc-host-card"><h4>端口与进程</h4><p data-host-listeners>等待检查</p></article></div><article class="sc-panel sc-host-card"><h4>容器安全资产</h4><div class="sc-table-scroll"><table class="sc-host-table"><thead><tr><th scope="col">容器</th><th scope="col">运行状态</th><th scope="col">文件系统</th><th scope="col">进程数</th><th scope="col">风险</th></tr></thead><tbody data-host-table="containers"></tbody></table></div></article><article class="sc-panel sc-host-card"><h4>监听端口与进程归属</h4><div class="sc-table-scroll"><table class="sc-host-table"><thead><tr><th scope="col">协议</th><th scope="col">监听地址</th><th scope="col">进程 (PID)</th></tr></thead><tbody data-host-table="listeners"></tbody></table></div></article><p class="sc-notice">容器清单显示运行元数据和风险；文件深度查杀只覆盖已纳管目录，未纳管容器需在 tiemu 菜单配置。</p>
-          <p class="sc-muted">可信基线与当前运行状态共同决定结果。</p>
-          <article class="sc-panel "><h4>完整性与运行环境</h4>
-          <div class="sc-report-head"><span>检查项目</span><span data-security-group-state="containers">等待检查数据</span>
-          </div>
-          <ul class="sc-check-list" data-security-group="containers"><li class="sc-empty-row">暂无已核验的检查结果</li>
-          </ul>
-          </article>
-          <div class="sc-notice">数据库检查只核验结构健康；不会自动删除或修改业务数据。摘要一致不能证明宿主机 root 未被攻破。</div>
-          </section>
-          <section class="sc-page" id="sc-panel-quarantine" data-security-panel="quarantine" role="tabpanel" aria-labelledby="sc-tab-quarantine" hidden>
-          <header class="sc-page-heading">
-          <div class="sc-heading-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 11h14v10H5zm3 0V7a4 4 0 0 1 8 0v4m-4 4v2"/></svg>
-          </div>
-          <div><span class="sc-eyebrow">LOCAL DEFENSE / QUARANTINE</span><h3>隔离区</h3><p>查看可疑文件与证据的隔离记录。</p>
-          </div>
-          </header>
-          <article class="sc-panel "><h4>命中文件与证据</h4><p id="security-malware-findings-state" class="sc-muted">等候本次扫描的可核验文件证据</p>
-          <ul id="security-malware-findings" class="sc-check-list"></ul>
-          <h4>本机处置记录</h4><p id="security-quarantine-state" class="sc-muted">等待代理状态</p><ul id="security-quarantine-records" class="sc-check-list"></ul>
-          <h4>隔离管理</h4>
-          <div class="sc-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 11h14v10H5zm3 0V7a4 4 0 0 1 8 0v4m-4 4v2"/></svg><h4>Linux 本机隔离</h4><p>Linux 菜单选“隔离命中文件”核对证据编号。配置、凭据、数据库及共享可写文件需人工处置；恢复不覆盖目标，保留隔离副本。</p>
-          </div>
-          <div class="sc-actions">
-          <button type="button" class="sc-secondary" disabled>恢复文件 · 待接入</button>
-          <button type="button" class="sc-danger" disabled>删除文件 · 待接入</button>
-          </div>
-          </article>
-          <div class="sc-notice">容器网络封控与文件隔离不同。处置前保留证据，不根据界面状态自动删除业务文件。</div>
-          </section>
-          <section class="sc-page" id="sc-panel-recovery" data-security-panel="recovery" role="tabpanel" aria-labelledby="sc-tab-recovery" hidden>
-          <header class="sc-page-heading">
-          <div class="sc-heading-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10a9 9 0 1 1 2 8M3 3v7h7m2-3v6l4 2"/></svg>
-          </div>
-          <div><span class="sc-eyebrow">LOCAL DEFENSE / RECOVERY</span><h3>修复与恢复</h3><p>从可信程序和经过核验的备份恢复受影响服务。</p>
-          </div>
-          </header>
-          <div class="sc-two-col">
-          <article class="sc-panel "><h4>程序修复</h4><p>铁幕程序更新由独立的签名更新流程管理。先保存异常报告并核对版本；网站源码与业务服务的修复由所属项目执行。</p>
-          <button type="button" class="sc-secondary" data-security-open="settings">查看程序更新与运维</button>
-          </article>
-          <article class="sc-panel "><h4>安全事件恢复</h4><p>封控与恢复通过 Linux 管理工具完成。恢复前检查备份、可信版本与事件证据，恢复后重新检查。</p><span class="sc-outline">网页一键事件恢复待接入</span>
-          </article>
-          </div>
-          <article class="sc-panel "><h4>恢复准备检查</h4>
-          <div class="sc-report-head"><span>检查项目</span><span data-security-group-state="recovery">等待检查数据</span>
-          </div>
-          <ul class="sc-check-list" data-security-group="recovery"><li class="sc-empty-row">暂无已核验的检查结果</li>
-          </ul>
-          </article><ol class="sc-steps"><li><b>01</b><span>保存异常范围与证据</span></li><li><b>02</b><span>核验可信程序与备份</span></li><li><b>03</b><span>受控恢复并重新检查</span></li><li><b>04</b><span>确认风险消除后解封</span></li></ol>
-          </section>
-          <section class="sc-page" id="sc-panel-backup" data-security-panel="backup" role="tabpanel" aria-labelledby="sc-tab-backup" hidden>
-          <header class="sc-page-heading">
-          <div class="sc-heading-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16v5H4zm2 5v12h12V9m-9 5h6"/></svg>
-          </div>
-          <div><span class="sc-eyebrow">LOCAL DEFENSE / BACKUP</span><h3>备份与容灾</h3><p>备份可用性与实际恢复演练需要分别确认。</p>
-          </div>
-          </header>
-          <div class="sc-two-col">
-          <article class="sc-panel "><h4>安全项目加密备份</h4><p>备份铁幕自身的配置、身份与状态。网站数据库、业务密钥和打包成品由各业务系统另行备份；本项目备份不能替代业务容灾。</p>
-          <button type="button" class="sc-secondary" data-security-open="settings">查看备份与恢复步骤</button>
-          </article>
-          <article class="sc-panel "><h4>异机灾难恢复</h4>
-          <div class="sc-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 11h14v10H5zm3 0V7a4 4 0 0 1 8 0v4m-4 4v2"/></svg><h4>独立容灾尚未完成</h4><p>不可变异机备份、干净宿主重建与恢复时间目标仍待建设，当前不展示已达标。</p>
-          </div>
-          </article>
-          </div>
-          <div class="sc-notice">存在备份文件不等于已经验证可恢复。还原和容灾验收需要真实证据。</div>
-          </section>
-          <section class="sc-page" id="sc-panel-logs" data-security-panel="logs" role="tabpanel" aria-labelledby="sc-tab-logs" hidden>
-          <header class="sc-page-heading">
-          <div class="sc-heading-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3h14v18H5zm4 5h6m-6 4h6m-6 4h4"/></svg>
-          </div>
-          <div><span class="sc-eyebrow">LOCAL DEFENSE / LOGS</span><h3>防护日志</h3><p>展示本机报告保存的真实状态变化。</p>
-          </div>
-          </header>
-          <article class="sc-panel "><h4>状态变化记录</h4><p id="security-local-history-state" class="sc-muted">等待读取本机记录</p>
-          <ul id="security-local-history" class="sc-check-list"><li class="sc-empty-row">暂无可核验记录</li>
-          </ul>
-          </article>
-          <div class="sc-actions">
-          <button type="button" class="sc-secondary" data-security-refresh><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M7 12h10"/></svg><span>刷新检查与记录</span></button>
-          <button class="sc-secondary" type="button" data-security-open="settings">查看本机日志步骤</button>
-          </div>
-          </section>
-          <section class="sc-page" id="sc-panel-settings" data-security-panel="settings" role="tabpanel" aria-labelledby="sc-tab-settings" hidden>
+          </section><section class="sc-page" id="sc-panel-realtime" data-security-panel="realtime" role="tabpanel" aria-labelledby="sc-tab-realtime" hidden><header class="sc-page-heading"><div><span class="sc-eyebrow">CONTINUOUS MONITORING</span><h3>持续监测</h3><p>定期检查文件、固定配置与本机风险，保留真实状态变化。</p></div></header><div class="ic-monitor-overview"><article class="sc-panel"><span class="sc-eyebrow">MONITORING MODE</span><h4>周期巡检</h4><p>本机代理按配置周期执行检查。此页显示最近一次报告，不将周期检查标成实时拦截。</p><span class="ic-tag" data-security-summary="realtime">等待有效报告</span></article><article class="sc-panel"><span class="sc-eyebrow">CHANGE DETECTION</span><h4>变化与完整性</h4><p>程序文件与配置变化需要可信基线核验；未知项保留为覆盖缺口。</p><button class="sc-secondary" type="button" data-security-open="quarantine">查看风险与变化记录 →</button></article></div><article class="sc-panel"><div class="sc-section-head"><h4>本机防护与封控准备</h4><span data-security-group-state="realtime">等待检查</span></div><ul class="sc-check-list" data-security-group="realtime"></ul></article><article class="sc-panel"><span class="sc-eyebrow">OPERATING BOUNDARY</span><h4>配置与处置</h4><p>在 <code>sudo tiemu</code> 菜单配置保护范围和响应策略。风险告警、文件隔离和容器封控分别保留证据；发现风险不会在后台自动删除业务文件。</p><button class="sc-secondary" type="button" data-security-open="settings">打开配置与运维 →</button></article></section><section class="sc-page" id="sc-panel-quarantine" data-security-panel="quarantine" role="tabpanel" aria-labelledby="sc-tab-quarantine" hidden><header class="sc-page-heading"><div><span class="sc-eyebrow">RISKS & RESPONSE</span><h3>风险与处置</h3><p>从风险结论、文件证据到处置记录，在这里核对。</p></div><button class="sc-secondary" type="button" data-security-refresh>刷新报告</button></header><div class="ic-response-flow"><span><b>01</b>发现风险</span><i>→</i><span><b>02</b>核对证据</span><i>→</i><span><b>03</b>本机受控处置</span><i>→</i><span><b>04</b>重新扫描</span></div><article class="sc-panel"><div class="sc-section-head"><h4>当前风险与复核项</h4><span class="ic-tag" data-risk-state>等待报告</span></div><p class="sc-muted" data-risk-detail>检查未完成时不会显示安全结论。</p><ul class="ic-risk-list" data-risk-list></ul></article><div class="sc-two-col"><article class="sc-panel"><h4>命中文件与证据</h4><p id="security-malware-findings-state" class="sc-muted">等候本次扫描的可核验文件证据</p><ul id="security-malware-findings" class="sc-check-list"></ul></article><article class="sc-panel"><h4>本机处置记录</h4><p id="security-quarantine-state" class="sc-muted">等待代理状态</p><ul id="security-quarantine-records" class="sc-check-list"></ul><div class="ic-response-help"><b>在可信终端核对后处置</b><p>运行 <code>sudo tiemu</code>，选“隔离命中文件”核对证据编号。恢复操作保留隔离副本，不覆盖目标文件。</p></div></article></div><article class="sc-panel"><div class="sc-section-head"><h4>防护事件记录</h4><button type="button" class="ic-text-button" data-security-open="settings">服务日志步骤 →</button></div><p id="security-local-history-state" class="sc-muted">等待读取本机记录</p><ul id="security-local-history" class="sc-check-list"></ul></article></section><section class="sc-page" id="sc-panel-settings" data-security-panel="settings" role="tabpanel" aria-labelledby="sc-tab-settings" hidden>
           <header class="sc-page-heading">
           <div class="sc-heading-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8m0-6v3m0 14v3M2 12h3m14 0h3M5 5l2 2m10 10 2 2M5 19l2-2M17 7l2-2"/></svg>
           </div>
-          <div><span class="sc-eyebrow">LOCAL DEFENSE / SETTINGS</span><h3>设置</h3><p>本机防护、版本更新与可选的玄武连接。</p>
+          <div><span class="sc-eyebrow">LOCAL DEFENSE / SETTINGS</span><h3>设置与维护</h3><p>本机防护、版本更新与可选的玄武连接。</p>
           </div>
           </header>
+          <article class="sc-panel ic-readiness-panel" aria-labelledby="engine-readiness-heading">
+            <div class="sc-section-head"><div><span class="sc-eyebrow">LOCAL ENGINE MAINTENANCE</span><h4 id="engine-readiness-heading">玄武引擎与数据就绪</h4></div><button type="button" class="sc-outline" id="engine-readiness-check">重新检查引擎</button></div>
+            <strong id="engine-readiness-state" role="status">等待可信主机检查</strong><p id="engine-readiness-detail" class="sc-muted">检查版本、数据期限与实际依赖，缺项会明确显示。</p>
+            <ul id="engine-readiness-list" class="ic-readiness-grid" aria-label="四项检测能力就绪与维护"></ul>
+            <div class="ic-readiness-commands"><span>Linux 维护入口</span><code>sudo tiemu engines</code><span>安装本机病毒引擎</span><code>sudo tiemu engine-install</code><span>更新官方病毒库</span><code>sudo tiemu engine-update</code></div>
+            <p class="sc-muted">依赖可用不等于服务器安全，也不代表本次扫描完整。实际文件、镜像、端口与行为覆盖请查看检测报告。文件病毒库沿用病毒查杀页的维护入口。</p>
+          </article>
           <article class="sc-panel sc-appearance-panel"><div class="sc-section-head"><div><span class="sc-eyebrow">APPEARANCE</span><h4>外观主题</h4></div><span data-theme-status role="status">夜间主题</span></div><p class="sc-muted">选择舒适的显示方式，刷新或重新打开后保持你的选择。</p><div class="sc-theme-options" role="group" aria-label="外观主题"><button type="button" data-theme-choice="light" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg><span><b>日间</b><small>清晰 · 明亮</small></span></button><button type="button" data-theme-choice="dark" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.8 13a8.8 8.8 0 0 1-9.8-9.8A8.8 8.8 0 1 0 20.8 13Z"/></svg><span><b>夜间</b><small>沉稳 · 专注</small></span></button><button type="button" data-theme-choice="system" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg><span><b>跟随系统</b><small>自动切换</small></span></button></div></article>
           <article class="sc-panel sc-domain-panel"><span class="sc-muted">DOMAIN &amp; HTTPS</span><h4>访问域名</h4><p>在 Cloudflare 把域名指向本服务器 IP 后，填写域名并保存。</p><form data-domain-form><label>服务器域名<input data-domain-input name="domain" placeholder="tiemu.example.com" autocomplete="off" maxlength="253" required></label><button class="sc-primary" data-domain-save type="submit">保存并申请证书</button></form><div class="sc-cloud-grid"><div><span>当前域名地址</span><strong data-domain-origin>正在读取</strong></div><div><span>证书</span><strong data-domain-certificate>尚未读取</strong></div></div><p data-domain-status role="status">等待域名状态</p><p class="sc-muted" data-domain-reason></p><small>首次验证需要公网 80 端口的验证请求到达本机；失败原因会显示在这里，原 IP 入口继续保留。证书申请需公网 80/443 可用；端口冲突会保留原入口，不改动其他服务。</small></article>
 <article class="sc-panel sc-version-panel"><div class="sc-version-heading"><div><span class="sc-muted">PROGRAM UPDATE</span><h4>程序版本与更新</h4><p data-update-state>等待版本检查</p></div><div class="sc-version-actions"><button type="button" class="sc-outline" data-update-check>检测版本</button><button type="button" class="sc-primary" data-update-install disabled>安装正式更新</button></div></div><div class="sc-cloud-grid"><div><span>正在运行</span><strong data-update-running>未读取</strong></div><div><span>本机安装记录</span><strong data-update-installed>未读取</strong></div><div><span>最新正式版本</span><strong data-update-latest>未核验</strong></div><div><span>安装文件校准</span><strong data-update-integrity>等待核验</strong></div><div><span>发布签名</span><strong data-update-signature>等待核验</strong></div><div><span>最后检查时间</span><strong data-update-time>尚未检查</strong></div><div><span>Git main 提交</span><strong data-update-commit>未读取</strong></div><div><span>源码发布状态</span><strong data-update-source>未读取</strong></div></div><p class="sc-muted" data-update-job>尚无面板安装任务</p><div class="sc-notice">每 6 小时自动检查，也可随时手动检查。Git 源码提交与正式安装包分别显示；安装前重新校验签名和摘要，保留配置、节点身份和业务保护范围。</div></article>
-          <article class="sc-panel sc-operations-panel"><div class="sc-section-head"><div><span class="sc-eyebrow">LOCAL OPERATIONS</span><h4>本机运维与恢复步骤</h4></div></div><p class="sc-muted">在此服务器可信的 SSH 终端执行下列命令，或输入 <code>sudo tiemu</code> 打开管理菜单。网页仅展示步骤；恢复前由管理菜单核对路径、身份和确认信息。</p><div class="sc-table-scroll"><table class="sc-host-table"><thead><tr><th scope="col">操作</th><th scope="col">Linux 命令</th><th scope="col">实际范围</th></tr></thead><tbody><tr><td>环境诊断</td><td><code>sudo tiemu doctor</code></td><td>检查本机代理、配置、证书和服务健康</td></tr><tr><td>查看服务日志</td><td><code>sudo tiemu logs</code></td><td>读取铁幕容器服务日志；检测变化记录保留在防护日志页</td></tr><tr><td>创建加密备份</td><td><code>sudo tiemu backup</code></td><td>仅备份铁幕配置、身份与状态，业务系统另行备份</td></tr><tr><td>核验恢复包</td><td><code>sudo tiemu verify-backup</code></td><td>交互选择恢复包并核验，不能替代恢复演练</td></tr><tr><td>同机恢复</td><td><code>sudo tiemu restore-backup</code></td><td>同机器、同角色、同版本；需要确认并短暂停服</td></tr></tbody></table></div><div class="sc-notice">程序更新使用上方的“检测版本”；网站修复、病毒文件处置和异机容灾按各自流程执行。</div></article>
+          <article class="sc-panel sc-operations-panel"><div class="sc-section-head"><div><span class="sc-eyebrow">LOCAL OPERATIONS</span><h4>本机运维与恢复步骤</h4></div></div><p class="sc-muted">在此服务器可信的 SSH 终端执行下列命令，或输入 <code>sudo tiemu</code> 打开管理菜单。网页仅展示步骤；恢复前由管理菜单核对路径、身份和确认信息。</p><div class="sc-table-scroll"><table class="sc-host-table"><thead><tr><th scope="col">操作</th><th scope="col">Linux 命令</th><th scope="col">实际范围</th></tr></thead><tbody><tr><td>环境诊断</td><td><code>sudo tiemu doctor</code></td><td>检查本机代理、配置、证书和服务健康</td></tr><tr><td>查看服务日志</td><td><code>sudo tiemu logs</code></td><td>读取铁幕容器服务日志；检测变化记录保留在风险与处置页</td></tr><tr><td>创建加密备份</td><td><code>sudo tiemu backup</code></td><td>仅备份铁幕配置、身份与状态，业务系统另行备份</td></tr><tr><td>核验恢复包</td><td><code>sudo tiemu verify-backup</code></td><td>交互选择恢复包并核验，不能替代恢复演练</td></tr><tr><td>同机恢复</td><td><code>sudo tiemu restore-backup</code></td><td>同机器、同角色、同版本；需要确认并短暂停服</td></tr></tbody></table></div><div class="sc-notice">程序更新使用上方的“检测版本”；网站修复、病毒文件处置和异机容灾按各自流程执行。</div></article>
           <div class="sc-two-col">
           <article class="sc-panel "><h4>本机检查代理</h4><p>在业务服务器的 Linux 管理菜单配置本机安全检查与病毒扫描引擎。密钥与宿主机访问配置由安装工具管理。</p><span class="sc-outline">Linux 菜单 / 本地安全检查</span>
           </article>
-          <article class="sc-panel "><h4>节点与安全连接</h4><p>铁幕的环境、容器与文件查杀独立运行。需要集中管理时，在 Linux 菜单配置玄武证书与独立节点凭据；界面不显示私钥或令牌。</p><span class="sc-outline">连接编辑界面待接入</span>
+          <article class="sc-panel "><h4>节点与安全连接</h4><p>铁幕的环境、容器与文件查杀独立运行。需要集中管理时，在 Linux 菜单配置玄武证书与独立节点凭据；界面不显示私钥或令牌。</p><span class="sc-outline">通过 tiemu 菜单导入节点身份</span>
           </article>
           </div>
           <article class="sc-panel "><h4>玄武引擎 · 云端增强防护</h4>
@@ -329,12 +127,5 @@
           <div class="sc-cloud-event"><b id="security-event-title">云端状态未知</b><p id="security-event-message">尚无已核验的云端事件</p>
           </div>
           </article>
-          <article class="sc-panel"><h4>玄武引擎更新服务</h4><p>铁幕程序、官方病毒库与签名哈希规则分别管理版本。Linux 菜单执行验签更新，面板展示实际状态。</p><div class="sc-cloud-grid"><div><span>铁幕程序更新</span><strong id="security-cloud-release">云端发布状态待核验</strong></div><div><span>官方病毒库</span><strong>Linux 菜单独立更新</strong></div><div><span>玄武已发布规则</span><strong id="security-cloud-rules">等待认证连接</strong></div><div><span>本机已启用规则</span><strong id="security-local-rules">等待代理状态</strong></div></div><p id="security-rule-hits-state">等待哈希检测结果</p><ul id="security-rule-hits" class="sc-check-list"></ul></article><div class="sc-notice">哈希规则命中只告警与留证，需人工核查；程序包由固定更新服务独立验签安装；官方直接病毒库可在“病毒查杀”的本机引擎区域更新，无需玄武；选用玄武签名库时经认证分发与本地验签启用。玄武失联时，本机在库和规则有效期内继续检测。</div>
-          </section>
-          </div>
-          </div>
-          <footer class="sc-footer"><span>IRONCURTAIN · 铁幕安全</span><span>本地防护工作台 · 以有效检查报告为准</span>
-          </footer>
-          </div>
-          </section>
-<div id="notice" role="status" hidden></div></body></html>
+          <article class="sc-panel"><h4>玄武引擎更新服务</h4><p>铁幕程序、官方病毒库与签名哈希规则分别管理版本。Linux 菜单执行验签更新，面板展示实际状态。</p><div class="sc-cloud-grid"><div><span>铁幕程序更新</span><strong id="security-cloud-release">云端发布状态待核验</strong></div><div><span>官方病毒库</span><strong>Linux 菜单独立更新</strong></div><div><span>玄武已发布规则</span><strong id="security-cloud-rules">等待认证连接</strong></div><div><span>本机已启用规则</span><strong id="security-local-rules">等待代理状态</strong></div></div><p id="security-rule-hits-state">等待哈希检测结果</p><ul id="security-rule-hits" class="sc-check-list"></ul></article><div class="sc-notice">哈希规则命中只告警与留证，需人工核查；程序包由固定更新服务独立验签安装；官方直接病毒库可在“安全查杀”的本机引擎区域更新，无需玄武；选用玄武签名库时经认证分发与本地验签启用。玄武失联时，本机在库和规则有效期内继续检测。</div>
+          </section></div><footer class="sc-footer"><span>IRONCURTAIN · ENDPOINT SECURITY</span><span>以真实报告和已配置范围为准</span></footer></div></div></div></section><div id="notice" role="status" hidden></div></body></html>

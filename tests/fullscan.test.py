@@ -92,7 +92,42 @@ class QueueTests(unittest.TestCase):
   task=self.task();task.engine['database_generation']='b'*64;second=task.run();self.assertEqual(second['state'],'finished');self.assertFalse(any('继续' in x for x in second['reasons']))
  def test_profile_change_reindexes_instead_of_reusing_old_queue(self):
   self.files();stop=threading.Event();stop.set();self.task(stop=stop).run();self.profile['name']='changed';r=self.task().run();self.assertEqual(r['state'],'finished');self.assertFalse(any('继续' in x for x in r['reasons']))
+ def test_progress_events_do_not_finish_file_before_engine_returns(self):
+  (self.scope/'large.bin').write_bytes(b'x'*131072)
+  snapshots=[];clock=iter(range(10000))
+  def run(args,**kw):
+   self.assertEqual(snapshots[-1]['current_file']['phase'],'engine')
+   self.assertEqual(snapshots[-1]['processed'],0)
+   return self.runner(args,**kw)
+  with patch.object(f.time,'monotonic',side_effect=lambda:next(clock)):
+   result=self.task(run=run,publish=lambda value:snapshots.append(value)).run()
+  self.assertEqual(result['state'],'finished');self.assertIsNone(result['current_file'])
+  phases=[x['current_file']['phase'] for x in snapshots if x.get('current_file')]
+  self.assertEqual(phases[0],'opening');self.assertIn('hashing',phases);self.assertEqual(phases[-1],'engine')
+  reads=[x['current_file']['bytes_read'] for x in snapshots if x.get('current_file',{} ) and x['current_file']['phase']=='hashing']
+  self.assertEqual(reads,[0,65536,131072]);self.assertTrue(all(f.valid_report(x) for x in snapshots))
+  self.assertEqual(snapshots[0]['processed'],0);self.assertEqual(snapshots[0]['recent_files'],[])
+  self.assertEqual(result['recent_files'][0]['state'],'clean')
+ def test_recent_file_history_is_bounded_and_resume_changes_identity(self):
+  for n in range(10):(self.scope/('file-'+str(n))).write_bytes(b'clean')
+  first=self.task().run();self.assertEqual(len(first['recent_files']),8)
+  stop=threading.Event()
+  def run(args,**kw):
+   result=self.runner(args,**kw);stop.set();return result
+  paused=self.task(run=run,stop=stop).run();self.assertEqual(paused['state'],'paused')
+  resumed=self.task().run();self.assertNotEqual(resumed['task_id'],paused['task_id']);self.assertEqual(resumed['resumed_from'],paused['task_id'])
+  self.assertGreaterEqual(resumed['started_at'],paused['started_at']);self.assertEqual(resumed['processed'],10)
 class ReportTests(unittest.TestCase):
  def test_malformed_reports_are_rejected(self):
   self.assertFalse(f.valid_report(None));self.assertFalse(f.valid_report({'schema':'ironcurtain-full-scan/v1','state':'finished'}));self.assertFalse(f.valid_finding({'id':'fake'}))
+ def test_progress_validation_and_immutable_publications(self):
+  stamp=f.utc();base={'task_id':'a'*32,'current_file':None,'recent_files':[]}
+  current={'path':'/srv/site/file','size':10,'bytes_read':5,'phase':'hashing'}
+  recent={'path':current['path'],'size':10,'state':'clean','checked_at':stamp,'reason':None}
+  self.assertTrue(f.valid_progress({**base,'current_file':current,'recent_files':[recent]}))
+  for update in [{'task_id':123},{'resumed_from':'bad'},{'current_file':{**current,'bytes_read':11}},{'current_file':{**current,'size':True}},{'current_file':{**current,'path':'/srv/../secret'}},{'current_file':{**current,'phase':'done'}},{'recent_files':[recent]*9},{'recent_files':[{**recent,'checked_at':'invalid'}]}]:
+   with self.subTest(update=update):self.assertFalse(f.valid_progress({**base,**update}))
+  published=[];task=f.FullScan({},'/unused',None,None,{},'/unused',published.append)
+  task.report['current_file']=dict(current);task.emit();task.report['current_file']['bytes_read']=10;task.report['recent_files'].append(recent)
+  self.assertEqual(published[0]['current_file']['bytes_read'],5);self.assertEqual(published[0]['recent_files'],[])
 if __name__=='__main__':unittest.main()

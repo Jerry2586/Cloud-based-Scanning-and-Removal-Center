@@ -49,7 +49,7 @@ ic_env_prepare
 [[ -d /run/lock ]] || install -d -m 755 /run/lock
 [[ ! -L /run/lock/ironcurtain-$ROLE.lock ]] || ic_fail '安装锁文件是符号链接'
 exec 9>"/run/lock/ironcurtain-$ROLE.lock"
-flock -n 9 || ic_fail '另一安装或管理操作正在运行'
+ic_wait_management_lock 9 "/run/lock/ironcurtain-$ROLE.lock"
 for directory in /opt/ironcurtain /etc/ironcurtain /var/lib/ironcurtain "$BASE" "$CONF" "$DATA"; do ic_trusted_dir "$directory"; done
 ic_env_docker_prepare
 if [[ -e $BASE/transaction.json || -L $BASE/transaction.json ]]; then
@@ -118,6 +118,15 @@ else
   find "$RELEASE" -type d -exec chown root:root {} + -exec chmod 755 {} +
   find "$RELEASE" -type f -exec chown root:root {} + -exec chmod 644 {} +
 fi
+# Preserve executable permission only for the two signed host manager programs.
+if [[ $ROLE == local ]]; then
+  for arch in amd64 arm64; do
+    manager_binary=$RELEASE/src/manager/bin/ironcurtain-manager-linux-$arch
+    [[ -f $manager_binary && ! -L $manager_binary ]] || ic_fail '签名载荷缺少 Go 检测主控，请使用包含主控的正式安装包'
+    chown root:root "$manager_binary"
+    chmod 755 "$manager_binary"
+  done
+fi
 IMAGE=ironcurtain-security:$VERSION-$ROLE-$DIGEST
 # Build before active configuration/service changes.
 ic_image_build "$RELEASE" "$IMAGE" "$DATA/logs"
@@ -172,7 +181,7 @@ if [[ $ROLE == local ]]; then
   install -d -m 750 -o root -g 10001 /run/ironcurtain
   cat > /etc/systemd/system/ironcurtain-agent.service <<EOF
 [Unit]
-Description=IronCurtain bounded read-only host scanner
+Description=IronCurtain bounded host detection agent
 After=network-online.target docker.service
 [Service]
 Type=simple
@@ -181,6 +190,8 @@ Group=10001
 ExecStart=/usr/bin/python3 $BASE/current/src/host/agent.py --profile $CONF/profile.json --state $DATA/agent --socket /run/ironcurtain/scan.sock --allowed-uid 10001 --group 10001
 Restart=on-failure
 RestartSec=5
+KillMode=control-group
+TimeoutStopSec=10
 UMask=0077
 RuntimeDirectory=ironcurtain
 RuntimeDirectoryMode=0750

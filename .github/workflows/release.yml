@@ -18,6 +18,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Verify Go manager and build signed-payload inputs
+        run: |
+          (cd manager && sudo env "PATH=$PATH" go test -race -count=1 ./... && go vet ./...)
+          bash scripts/build-manager.sh
+          sudo env "PATH=$PATH" python3 tests/multi-engine.test.py
+          sudo env "PATH=$PATH" python3 tests/engine-readiness.test.py
       - name: Enforce exact release tag and package version
         run: |
           [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
@@ -30,6 +40,9 @@ jobs:
           bash tests/install-environment.test.sh
           bash tests/install-public-host.test.sh
           bash tests/install-image.test.sh
+          bash tests/management-lock.test.sh
+          python3 tests/management-lock.test.py
+          node scripts/render-git-install.js --check
           node --test
           sudo env "PATH=$PATH" node --test tests/release-delivery.test.js
           sudo env "PATH=$PATH" node --test tests/virus-db.test.js

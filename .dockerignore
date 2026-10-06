@@ -6,3 +6,7 @@ migration
 integrations
 **/__pycache__
 *.log
+
+manager
+src/manager/bin
+.codex

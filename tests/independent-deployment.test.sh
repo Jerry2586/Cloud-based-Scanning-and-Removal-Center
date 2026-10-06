@@ -38,6 +38,19 @@ for role in local cloud; do
   release=$(readlink -f "/opt/ironcurtain/$role/current")
   [[ -z $(find "$release" \( ! -user root -o ! -group root -o -perm /022 \) -print -quit) ]]
 done
+# Signed manager executables survive root-owned install normalization and are runnable.
+manager_dir=$(readlink -f /opt/ironcurtain/local/current)/src/manager/bin
+for arch in amd64 arm64; do
+  [[ $(stat -c '%u:%g:%a' "$manager_dir/ironcurtain-manager-linux-$arch") == 0:0:755 ]]
+done
+case "$(uname -m)" in x86_64) manager_arch=amd64 ;; aarch64) manager_arch=arm64 ;; *) exit 1 ;; esac
+set +e
+printf '{}\n' | "$manager_dir/ironcurtain-manager-linux-$manager_arch" > "$WORK/manager-stdout" 2> "$WORK/manager-stderr"
+manager_status=$?
+set -e
+[[ $manager_status == 2 && ! -s $WORK/manager-stdout ]]
+grep -qx 'invalid managed request' "$WORK/manager-stderr"
+[[ $(systemctl show ironcurtain-agent.service -p KillMode --value) == control-group ]]
 # Actual fixed root services exist, but a fresh IP installation must not claim 443.
 for role in local cloud; do
   systemctl is-active --quiet "ironcurtain-domain-$role-control.service"

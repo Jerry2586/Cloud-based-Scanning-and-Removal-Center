@@ -2,7 +2,7 @@
 """Disk-backed, resumable malware scan of administrator-enrolled directories.
 Each file is pinned by openat, hashed and scanned through stdin; paths are never executed.
 """
-import datetime, hashlib, json, os, pathlib, re, sqlite3, stat, time
+import datetime, hashlib, json, os, pathlib, re, sqlite3, stat, time, uuid, copy
 MAX_FILES = 200000
 MAX_SIZE = 64 * 1024 * 1024
 EXCLUDED = ('/proc', '/sys', '/dev', '/run', '/etc/ironcurtain', '/var/lib/ironcurtain', '/var/lib/ironcurtain-antivirus', '/opt/ironcurtain')
@@ -52,20 +52,34 @@ def valid_report(value):
             if not isinstance(stamp,str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z',stamp): return False
             datetime.datetime.fromisoformat(stamp.replace('Z','+00:00'))
         except (KeyError,ValueError,TypeError): return False
-    return True
+    return valid_progress(value)
+
+def valid_progress(value):
+    if 'task_id' in value and (not isinstance(value['task_id'], str) or not re.fullmatch(r'[a-f0-9]{32}', value['task_id'])): return False
+    if 'resumed_from' in value and (not isinstance(value['resumed_from'], str) or not re.fullmatch(r'[a-f0-9]{32}', value['resumed_from'])): return False
+    def valid_file(item, recent=False):
+        if not isinstance(item, dict): return False
+        path = item.get('path')
+        if not isinstance(path, str) or not path.startswith('/') or len(path)>1024 or '..' in pathlib.PurePosixPath(path).parts or re.search(r'[\x00-\x1f\x7f]',path): return False
+        if type(item.get('size')) is not int or not 0<=item['size']<=9007199254740991: return False
+        if recent: return item.get('state') in ('clean','infected','skipped','errors') and valid_stamp(item.get('checked_at')) and (item.get('reason') is None or isinstance(item['reason'],str) and len(item['reason'])<=180 and not re.search(r'[\x00-\x1f\x7f]',item['reason']))
+        return item.get('phase') in ('opening','hashing','engine') and type(item.get('bytes_read')) is int and 0<=item['bytes_read']<=item['size']
+    if value.get('current_file') is not None and not valid_file(value['current_file']): return False
+    recent = value.get('recent_files',[])
+    return isinstance(recent,list) and len(recent)<=8 and all(valid_file(item,True) for item in recent)
 
 class FullScan:
-    def __init__(self, profile, state_dir, run, secure_fd, engine, database_dir, publish, stop=None, maximum=MAX_FILES, database_status=None):
+    def __init__(self, profile, state_dir, run, secure_fd, engine, database_dir, publish, stop=None, maximum=MAX_FILES, database_status=None, task_id=None, started_at=None):
         self.profile = profile; self.directory = pathlib.Path(state_dir); self.run_command = run; self.open_file = secure_fd
         self.engine = engine; self.database_dir = database_dir; self.publish = publish; self.stop = stop; self.maximum = min(MAX_FILES, maximum)
         self.database_status = database_status
-        self.db = None; self.report = {'schema': 'ironcurtain-full-scan/v1', 'state': 'indexing', 'started_at': utc(),
+        self.db = None; self.report = {'schema': 'ironcurtain-full-scan/v1', 'state': 'indexing', 'started_at': started_at or utc(), 'task_id': task_id or uuid.uuid4().hex, 'current_file': None, 'recent_files': [],
             'indexed': 0, 'processed': 0, 'clean': 0, 'infected': 0, 'skipped': 0, 'errors': 0,
             'profile_digest': profile_digest(profile), 'bytes_scanned': 0, 'index_complete': True, 'reasons': [], 'findings': [], 'scope': 'enrolled-directories-only'}
     def reason(self, text):
         if text not in self.report['reasons'] and len(self.report['reasons']) < 16: self.report['reasons'].append(text)
     def emit(self):
-        self.report['updated_at'] = utc(); self.publish(dict(self.report))
+        self.report['updated_at'] = utc(); self.publish(copy.deepcopy(self.report))
     def connect(self):
         self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         for current in [self.directory, *self.directory.parents]:
@@ -90,9 +104,10 @@ class FullScan:
     def save(self):
         self.report['updated_at'] = utc()
         self.db.execute('INSERT OR REPLACE INTO meta VALUES (?,?)', ('report', json.dumps(self.report, ensure_ascii=False)))
-        self.db.commit(); self.publish(dict(self.report))
+        self.db.commit(); self.publish(copy.deepcopy(self.report))
     def index(self, roots):
-        deadline = time.monotonic() + 120; seen = set(); aborted = False
+        deadline = time.monotonic() + 120; seen = set(); aborted = False; emitted = time.monotonic()
+        self.emit()
         def failure(error):
             self.report['index_complete'] = False; self.reason('目录不可读，文件清单不完整')
         for root in roots:
@@ -126,6 +141,8 @@ class FullScan:
                         seen.add(key)
                         self.db.execute('INSERT OR IGNORE INTO files VALUES (?,?,?,?)', (file, json.dumps(identity(info)), 'pending', info.st_size))
                         self.report['indexed'] += 1
+                        if time.monotonic()-emitted>=1:
+                            self.save(); emitted=time.monotonic()
                     except (OSError, ValueError):
                         self.report['skipped'] += 1; self.reason('特殊文件、链接或不可读取的文件已跳过')
                 if aborted: break
@@ -138,13 +155,18 @@ class FullScan:
             before = os.fstat(stream.fileno())
             if not stat.S_ISREG(before.st_mode) or identity(before) != json.loads(planned): raise ValueError('文件在建立清单后发生变化')
             if before.st_size > MAX_SIZE: return 'skipped', '超过单文件 64 MiB 扫描上限', None
-            digest = hashlib.sha256(); total = 0
+            self.report['current_file']={'path':path,'size':before.st_size,'bytes_read':0,'phase':'hashing'}; self.emit()
+            digest = hashlib.sha256(); total = 0; emitted = time.monotonic()
             for block in iter(lambda: stream.read(65536), b''):
                 total += len(block)
-                if total > MAX_SIZE: raise ValueError('文件在扫描中增长超过上限')
+                if total > MAX_SIZE or total > before.st_size: raise ValueError('文件在扫描中增长超过清单大小')
                 digest.update(block)
+                self.report['current_file']['bytes_read'] = total
+                if time.monotonic()-emitted>=1:
+                    self.emit(); emitted=time.monotonic()
             if identity(os.fstat(stream.fileno())) != identity(before): raise ValueError('文件在摘要读取中发生变化')
             stream.seek(0)
+            self.report['current_file'].update(phase='engine'); self.emit()
             args = ['clamscan', '--database=' + self.database_dir, '--official-db-only=yes', '--infected',
                     '--max-filesize=64M', '--max-scansize=256M', '--max-files=10000', '--alert-exceeds-max=yes',
                     '--fail-if-cvd-older-than=7', '--', '-']
@@ -200,7 +222,11 @@ class FullScan:
             prior = json.loads(saved[0]) if saved else None
             if old and old[0] == token and prior and prior.get('state') in ('scanning', 'paused'):
                 self.validate_resume(prior)
-                self.report = prior; self.report['state'] = 'scanning'; self.reason('从已保存文件队列继续扫描')
+                task_id=self.report['task_id']; started=self.report['started_at']
+                previous_id=prior.get('task_id')
+                self.report=prior; self.report.update(state='scanning',task_id=task_id,started_at=started,current_file=None,recent_files=[])
+                if previous_id and previous_id!=task_id: self.report['resumed_from']=previous_id
+                self.reason('从已保存文件队列继续扫描；已处理计数包含前次结果'); self.save()
             else:
                 self.db.execute('DELETE FROM files'); self.db.execute('DELETE FROM meta')
                 self.db.execute('INSERT INTO meta VALUES (?,?)', ('fingerprint', token)); self.db.commit()
@@ -211,23 +237,27 @@ class FullScan:
                 if not row: break
                 file, planned = row
                 if self.database_status and not self.database_unchanged(token):
-                    self.report['state'] = 'partial'; self.report['finished_at'] = utc(); self.reason('病毒库在扫描期间改变，请重新开始本次文件查杀'); self.save(); return self.report
+                    self.report['current_file']=None; self.report['state'] = 'partial'; self.report['finished_at'] = utc(); self.reason('病毒库在扫描期间改变，请重新开始本次文件查杀'); self.save(); return self.report
+                self.report['current_file']={'path':file,'size':json.loads(planned)[2],'bytes_read':0,'phase':'opening'}; self.emit()
                 try: state, reason, finding = self.scan_file(file, planned)
                 except (OSError, ValueError): state, reason, finding = 'errors', '文件读取失败、变化或引擎未完成', None
                 if self.database_status and not self.database_unchanged(token):
-                    self.report['state'] = 'partial'; self.report['finished_at'] = utc(); self.reason('病毒库在扫描期间改变，请重新开始本次文件查杀'); self.save(); return self.report
+                    self.report['current_file']=None; self.report['state'] = 'partial'; self.report['finished_at'] = utc(); self.reason('病毒库在扫描期间改变，请重新开始本次文件查杀'); self.save(); return self.report
+                self.report['current_file']=None
+                self.report['recent_files']=(self.report.get('recent_files',[])+[{'path':file,'size':json.loads(planned)[2],'state':state,'reason':reason,'checked_at':utc()}])[-8:]
                 self.report['processed'] += 1; self.report[state] += 1
                 if state in ('clean', 'infected'): self.report['bytes_scanned'] += json.loads(planned)[2]
                 if reason: self.reason(reason)
                 if finding and len(self.report['findings']) < 32: self.report['findings'].append(finding)
                 self.db.execute('UPDATE files SET state=? WHERE path=?', (state, file)); self.save()
             if self.database_status and not self.database_unchanged(token):
-                self.report['state'] = 'partial'; self.report['finished_at'] = utc(); self.reason('汇总前病毒库改变，请重新扫描'); self.save(); return self.report
+                self.report['current_file']=None; self.report['state'] = 'partial'; self.report['finished_at'] = utc(); self.reason('汇总前病毒库改变，请重新扫描'); self.save(); return self.report
             complete = self.report['index_complete'] and self.report['skipped'] == 0 and self.report['errors'] == 0 and self.report['indexed'] > 0
+            self.report['current_file']=None
             self.report['state'] = 'finished' if complete else 'partial'; self.report['finished_at'] = utc()
             if not self.report['indexed']: self.reason('范围中没有可检查的文件')
             self.save(); return self.report
         except Exception:
-            self.report['state'] = 'failed'; self.report['finished_at'] = utc(); self.reason('范围/引擎未就绪或受保护扫描队列不可用'); self.emit(); return self.report
+            self.report['current_file']=None; self.report['state'] = 'failed'; self.report['finished_at'] = utc(); self.reason('范围/引擎未就绪或受保护扫描队列不可用'); self.emit(); return self.report
         finally:
             if self.db: self.db.close()

@@ -20,6 +20,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Verify Go manager and build signed-payload inputs
+        run: |
+          (cd manager && sudo env "PATH=$PATH" go test -race -count=1 ./... && go vet ./...)
+          bash scripts/build-manager.sh
+          sudo env "PATH=$PATH" python3 tests/multi-engine.test.py
+          sudo env "PATH=$PATH" python3 tests/engine-readiness.test.py
       - name: Validate every shell script independently
         run: |
           while IFS= read -r file; do
@@ -32,6 +42,10 @@ jobs:
         run: bash tests/install-image.test.sh
       - name: Test automatic public IPv4 selection without host mutation
         run: bash tests/install-public-host.test.sh
+      - name: Test management lock contention and bounded waiting
+        run: |
+          bash tests/management-lock.test.sh
+          python3 tests/management-lock.test.py
       - name: Check copyable Git install commands match the tested entry
         run: node scripts/render-git-install.js --check
       - name: Validate release verifier syntax
@@ -84,6 +98,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Verify Go manager and build signed-payload inputs
+        run: |
+          (cd manager && sudo env "PATH=$PATH" go test -race -count=1 ./... && go vet ./...)
+          bash scripts/build-manager.sh
+          sudo env "PATH=$PATH" python3 tests/multi-engine.test.py
+          sudo env "PATH=$PATH" python3 tests/engine-readiness.test.py
       - name: Check disposable runner Docker prerequisites
         run: |
           sudo systemctl start docker
@@ -133,6 +157,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Verify Go manager and build signed-payload inputs
+        run: |
+          (cd manager && sudo env "PATH=$PATH" go test -race -count=1 ./... && go vet ./...)
+          bash scripts/build-manager.sh
+          sudo env "PATH=$PATH" python3 tests/multi-engine.test.py
+          sudo env "PATH=$PATH" python3 tests/engine-readiness.test.py
       - name: Sign and verify candidate without publishing
         env:
           SIGNING_KEY: ${{ secrets.APPGOG_SECURITY_RELEASE_PRIVATE_KEY }}

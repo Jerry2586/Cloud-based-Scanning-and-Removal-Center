@@ -1,8 +1,12 @@
+import {engineDisplayText} from './engine-labels.js';
+import {createEngineReadiness} from './engine-readiness.js';
+import { createMultiEngine } from './multi-engine.js';
 import { createUpdateSettings } from './update-settings.js';
 import { createDomainSettings } from './domain-settings.js';
 import { createSecurityPoller } from './security-poller.js';
 const $ = id => document.getElementById(id);
-import { createSecurityConsole } from './security-console.js?v=ironcurtain-login-20261004';
+import { createSecurityConsole } from './security-console.js';
+import { summarizeLocalSecurity } from '/contracts/local-workbench.js';
 
 // Keep this fixed browser view in sync with the core/agent contract (verified in tests).
 const HOST_SCAN_IDS = Object.freeze([
@@ -64,6 +68,8 @@ function completeReport(report, checks) {
 
 export function createSecurityUi({ state, can, request, notify }) {
   const consoleView = createSecurityConsole();
+  const multiEngine = createMultiEngine({state,request,notify});
+  const engineReadiness = createEngineReadiness({state,request,notify});
   const updateSettings = createUpdateSettings({state,request,notify});
   const domainSettings = createDomainSettings({state,request,notify});
   let localRunning = false;
@@ -124,7 +130,7 @@ export function createSecurityUi({ state, can, request, notify }) {
       const value=report.antivirus;
       const updater={scheduled:'定时更新已启用',disabled:'定时更新未启用',failed:'最近更新失败',unknown:'更新状态未知'};
       const updateText=value?.source==='xuanwu-signed'?'玄武签名库 · Linux 菜单更新':(updater[value?.updater] || updater.unknown);
-      engine.textContent = value?.engine === 'ClamAV' ? value.detail + (value.database_version ? ' · 库版本 '+value.database_version : '') + ' · '+updateText : '病毒引擎状态待检查';
+      engine.textContent = value?.engine === 'ClamAV' ? engineDisplayText(value.detail) + (value.database_version ? ' · 库版本 '+value.database_version : '') + ' · '+updateText : '病毒引擎状态待检查';
       engine.dataset.state = value?.state || 'unavailable';
     }
     const status = $('security-local-state');
@@ -143,11 +149,12 @@ export function createSecurityUi({ state, can, request, notify }) {
     });
     const coverageIncomplete = !completeReport(report, checks);
     const historyUnavailable = !['ok', 'truncated'].includes(report.history_state) || !Array.isArray(report.history);
-    status.textContent = ({ idle: '等待首次检查', running: '本机检查正在执行', finished: coverageIncomplete ? '检查报告覆盖不完整，请重新扫描' : stale ? '检查结果过期或时间异常' : historyUnavailable ? '检查完成，告警历史不可用' : findings ? '警报：发现 ' + findings + ' 项问题' : incomplete ? '检查完成，有 ' + incomplete + ' 项需要复核或不可用' : '固定检查范围内未发现异常', failed: '本机检查失败', unavailable: '本机代理不可用' })[report.state] || '状态未知';
-    status.dataset.state = report.state === 'finished' && !coverageIncomplete && !stale && !historyUnavailable && findings ? 'finding' : (report.state !== 'finished' || stale || incomplete || coverageIncomplete || historyUnavailable ? 'warning' : 'ok');
+    const overview=summarizeLocalSecurity(report,{coverageComplete:!coverageIncomplete,stale,historyUnavailable,now});
+    status.textContent=overview.title;
+    status.dataset.state=overview.tone;
     timestamp.textContent = report.checked_at ? '检查时间：' + report.checked_at : (report.reason || '尚无检查时间');
     list.replaceChildren();
-    for (const item of checks) {
+    for (const item of [...checks].sort((a,b)=>(a.state==='finding'?0:a.state==='ok'?2:1)-(b.state==='finding'?0:b.state==='ok'?2:1))) {
       const row = document.createElement('li');
       row.dataset.state = item.state;
       row.textContent = item.name + ' · ' + (localStateLabels[item.state] || '未知') + ' · ' + item.detail;
@@ -159,7 +166,7 @@ export function createSecurityUi({ state, can, request, notify }) {
       row.textContent = item.checked_at + ' · ' + item.name + ' · ' + (localStateLabels[item.previous_state] || '首次记录') + ' → ' + (localStateLabels[item.state] || '未知') + ' · ' + item.detail;
       history?.append(row);
     }
-    consoleView.update(report, { busy: scanRequested, trusted: report.state === 'finished' && !coverageIncomplete && !stale, issue: report.state === 'running' ? '本机检查中' : report.state === 'idle' ? '等待首次检查' : report.state === 'unavailable' ? '本机代理不可用' : report.state === 'failed' ? '本机检查失败' : coverageIncomplete ? '等待完整有效报告' : stale ? '报告过期或时间异常' : historyUnavailable ? '告警历史不可用' : '本机检查不可用' });
+    consoleView.update(report, { overview, busy: scanRequested, trusted: report.state === 'finished' && !coverageIncomplete && !stale, issue: report.state === 'running' ? '本机检查中' : report.state === 'idle' ? '等待首次检查' : report.state === 'unavailable' ? '本机代理不可用' : report.state === 'failed' ? '本机检查失败' : coverageIncomplete ? '等待完整有效报告' : stale ? '报告过期或时间异常' : historyUnavailable ? '告警历史不可用' : '本机检查不可用' });
     if (historyState) historyState.textContent = historyUnavailable ? '告警历史不可用；请检查本地代理与状态目录' : report.history_state === 'truncated' ? '仅显示响应容量内的最近记录；完整记录保留在服务器' : report.history?.length ? '显示最近八条状态变化；本机最多保留一百二十八条' : '暂无状态变化记录';
   }
   const localSecurityPoller = createSecurityPoller({
@@ -260,6 +267,7 @@ export function createSecurityUi({ state, can, request, notify }) {
     if (bound) return;
     bound = true;
     consoleView.bind();
+    multiEngine.bind(); multiEngine.start(); engineReadiness.bind(); engineReadiness.start();
     updateSettings.bind(); updateSettings.start(); domainSettings.bind(); domainSettings.start();
     void renderSecurity(); void renderLocalSecurity();
     document.querySelectorAll('[data-security-refresh]').forEach(button => button.addEventListener('click', async () => {
@@ -277,11 +285,11 @@ export function createSecurityUi({ state, can, request, notify }) {
       const action=button.hasAttribute('data-security-engine-update')?'engine-update':button.hasAttribute('data-security-checkup')?'checkup':button.hasAttribute('data-security-full-scan')?'full-scan':'scan';
       consoleView.setBusy(true,action);
       try {
-        await request(action==='engine-update' ? '/api/engine/update' : button.hasAttribute('data-security-checkup') ? '/api/checkup' : button.hasAttribute('data-security-full-scan') ? '/api/full-scan' : '/api/scan', { method: 'POST', body: {} });
-        if (current()) await localSecurityPoller.refresh();
-      } catch (error) { if (current()) notify(error.message, true); }
+        const accepted=await request(action==='engine-update' ? '/api/engine/update' : button.hasAttribute('data-security-checkup') ? '/api/checkup' : button.hasAttribute('data-security-full-scan') ? '/api/full-scan' : '/api/scan', { method: 'POST', body: {} });
+        if (current()) { consoleView.requestResult(accepted); await localSecurityPoller.refresh(); }
+      } catch (error) { if (current()) { consoleView.requestResult({error:error.message}); notify(error.message, true); } }
       finally { if (current()) { scanRequested = false; consoleView.setBusy(false); } }
     }));
   }
-  return Object.freeze({ bind, render() { updateSettings.start(); domainSettings.start(); void renderSecurity(); void renderLocalSecurity(); } });
+  return Object.freeze({ bind, render() { engineReadiness.start(); multiEngine.start(); updateSettings.start(); domainSettings.start(); void renderSecurity(); void renderLocalSecurity(); } });
 }

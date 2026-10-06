@@ -8,10 +8,10 @@ import { createLocalServer } from '../src/local/server.js';
 import { createCloudLink } from '../src/local/cloud-client.js';
 import { passwordRecord, loadCredentials, verifyPassword, createSessions } from '../src/local/auth.js';
 const password = 'fixture-independent-password-only';
-async function fixture(t, scanResult, updates, cloudStatus) {
+async function fixture(t, scanResult, updates, cloudStatus, extra = {}) {
   let invoked = 0;
   const actions = [];
-  const server = createLocalServer({ credentials: passwordRecord(password), origin: 'http://127.0.0.1:8791', ...(updates ? {updates} : {}), ...(cloudStatus ? {cloudStatus} : {}), scan: async action => { invoked++; actions.push(action); return scanResult || { state: ['scan','full-scan','checkup','engine-update'].includes(action) ? 'running' : 'idle', checks: [] }; } });
+  const server = createLocalServer({ ...extra, credentials: passwordRecord(password), origin: 'http://127.0.0.1:8791', ...(updates ? {updates} : {}), ...(cloudStatus ? {cloudStatus} : {}), scan: async action => { invoked++; actions.push(action); return scanResult || { state: ['scan','full-scan','checkup','engine-update'].includes(action) ? 'running' : 'idle', checks: [] }; } });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
   const base = 'http://127.0.0.1:' + server.address().port;
@@ -57,6 +57,11 @@ test('panel has independent entry and fixed static whitelist with no APPGOG depe
   const f = await fixture(t);
   const response = await f.request('/'); const html = await response.text(); assert.equal(response.status, 200);
   assert.match(html, /铁幕安全/); assert.match(html, /data-security-scan/);
+  assert.match(html, /data-task-progress/);
+  assert.match(html, /<form id="login-form" method="post">/);
+  for(const [url,type] of [['/assets/workbench.css','text/css'],['/assets/portal/engine-labels.js','text/javascript'],['/contracts/local-workbench.js','text/javascript']]){
+    const asset=await f.request(url);assert.equal(asset.status,200);assert.ok(asset.headers.get('content-type').startsWith(type));
+  }
   assert.doesNotMatch(html, /admin-portal|data-page-target|APPGOG DEFENDER/);
   assert.equal((await f.request('/assets/../../panel-auth.json')).status, 401);
   assert.equal((await f.request('/api/session')).status, 200);
@@ -161,4 +166,36 @@ test('unpaired cloud does not gate local checkup, scan or official updater', asy
   const response=await f.post(route,{},headers);assert.equal(response.status,202);assert.equal((await response.json()).state,'running');
  }
  assert.equal(f.invoked(),4);assert.equal((await f.request('/api/report',{headers})).status,404);
+});
+
+test('multi engine start enforces session, Origin, CSRF and server-selected targets',async t=>{
+ const calls=[];const f=await fixture(t,undefined,undefined,undefined,{multi:async action=>{calls.push(action);return {state:action==='status'?'idle':'unavailable',response_status:503};}});
+ assert.equal((await f.request('/api/multi-engine')).status,401);
+ const identity=await f.login();const headers={cookie:identity.cookie,'x-csrf-token':identity.csrf};
+ assert.equal((await f.post('/api/multi-engine',{}, {cookie:identity.cookie})).status,403);
+ assert.equal((await f.post('/api/multi-engine',{}, {...headers,origin:'https://evil.invalid'})).status,403);
+ assert.equal((await f.post('/api/multi-engine',{images:['attacker/image']},headers)).status,400);
+ assert.deepEqual(calls,[]);
+ assert.equal((await f.request('/api/multi-engine',{headers})).status,200);assert.deepEqual(calls,['status']);
+ assert.equal((await f.post('/api/multi-engine',{},headers)).status,503);assert.deepEqual(calls,['status','start']);
+ const asset=await f.request('/assets/portal/multi-engine.js');assert.equal(asset.status,200);
+});
+test('cloud admin never launches a local Go detection job',async t=>{
+ let calls=0;const f=await fixture(t,undefined,undefined,undefined,{role:'cloud',multi:async()=>{calls++;return {state:'idle'};}});
+ const identity=await f.login();const headers={cookie:identity.cookie,'x-csrf-token':identity.csrf};
+ assert.equal((await f.request('/api/multi-engine',{headers})).status,404);assert.equal((await f.post('/api/multi-engine',{},headers)).status,404);assert.equal(calls,0);
+});
+
+test('readiness routes require local role, session, CSRF, Origin and no custom arguments',async t=>{
+ const {unavailableReadiness}=await import('../src/contracts/engine-readiness.js');const calls=[];
+ const f=await fixture(t,undefined,undefined,undefined,{engines:async action=>{calls.push(action);return {...unavailableReadiness(),state:action==='check'?'checking':'unavailable',...(action==='check'?{response_status:202}:{})};}});
+ assert.equal((await f.request('/api/engines')).status,401);assert.equal((await f.post('/api/engines/check',{})).status,401);
+ const id=await f.login(),headers={cookie:id.cookie,'x-csrf-token':id.csrf};
+ assert.equal((await f.post('/api/engines/check',{}, {cookie:id.cookie})).status,403);
+ assert.equal((await f.post('/api/engines/check',{}, {...headers,origin:'https://evil.invalid'})).status,403);
+ assert.equal((await f.post('/api/engines/check',{engine:'custom',command:'sh'},headers)).status,400);assert.deepEqual(calls,[]);
+ assert.equal((await f.request('/api/engines',{headers})).status,200);assert.equal((await f.post('/api/engines/check',{},headers)).status,202);assert.deepEqual(calls,['status','check']);
+ for(const asset of ['/contracts/engine-readiness.js','/assets/portal/engine-readiness.js'])assert.equal((await f.request(asset)).status,200);
+ const cloud=await fixture(t,undefined,undefined,undefined,{role:'cloud',engines:async()=>{throw new Error('must not invoke');}});const cid=await cloud.login(),ch={cookie:cid.cookie,'x-csrf-token':cid.csrf};
+ assert.equal((await cloud.request('/api/engines',{headers:ch})).status,404);assert.equal((await cloud.post('/api/engines/check',{},ch)).status,404);
 });

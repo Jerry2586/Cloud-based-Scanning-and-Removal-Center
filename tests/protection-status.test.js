@@ -29,3 +29,18 @@ test('old terminal results and stalled scans never show current green safety',()
  assert.equal(describeFullScan({...full,state:'scanning'},now).active,true);
  assert.equal(describeFullScan({...full,updated_at:new Date(now+31000).toISOString()},now).stale,true);
 });
+
+test('file progress preserves phase and bytes without claiming internal engine percentage',()=>{
+ const current={path:'/srv/site/index.php',size:65536,bytes_read:32768,phase:'hashing'};
+ const value=sanitizeFullScan({...full,state:'scanning',task_id:'a'.repeat(32),current_file:current,recent_files:[]});
+ assert.deepEqual(value.current_file,current);assert.match(describeFullScan(value,now).detail,/32,768 \/ 65,536 字节/);
+ const engine=describeFullScan({...value,current_file:{...current,bytes_read:65536,phase:'engine'}},now);
+ assert.match(engine.detail,/正在引擎检测/);assert.doesNotMatch(engine.detail,/100%/);assert.equal(engine.percent,99);
+ assert.equal(describeFullScan({...value,state:'indexing'},now).percent,null);
+});
+test('untrusted file activity and excessive recent history fail closed',()=>{
+ const current={path:'/srv/site/index.php',size:10,bytes_read:5,phase:'hashing'};
+ const recent={path:current.path,size:10,state:'clean',checked_at:full.updated_at,reason:null};
+ for(const change of [{task_id:123},{task_id:'invalid'},{resumed_from:{}},{current_file:{...current,path:'/srv/../secret'}},{current_file:{...current,path:'/srv/evil\nfile'}},{current_file:{...current,bytes_read:11}},{current_file:{...current,bytes_read:-1}},{current_file:{...current,phase:'done'}},{recent_files:Array(9).fill(recent)},{recent_files:[{...recent,state:'safe'}]},{recent_files:[{...recent,reason:'bad\nreason'}]}])assert.equal(sanitizeFullScan({...full,...change}).state,'unavailable');
+ const safe=sanitizeFullScan({...full,recent_files:[recent]});assert.deepEqual(safe.recent_files,[recent]);assert.notEqual(safe.recent_files[0],recent);
+});

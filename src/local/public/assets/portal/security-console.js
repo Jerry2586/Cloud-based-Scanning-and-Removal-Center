@@ -1,8 +1,11 @@
+import {engineDisplayText} from './engine-labels.js';
 import { describeAntivirus } from '../../../../contracts/antivirus-status.js';
 import { describeCheckup } from '../../../../contracts/checkup-status.js';
 import { createHostWorkspace } from './host-workspace.js';
-import { describeFullScan } from '../../../../contracts/protection-status.js';
+import { describeFullScan, sanitizeFullScan } from '../../../../contracts/protection-status.js';
 import { hostScanProgress } from '../../../../contracts/host-scan-contract.js';
+import { summarizeLocalSecurity, describeWorkbenchTask, friendlyActivity, checkName } from '/contracts/local-workbench.js';
+import { sanitizeInventory, sanitizeProtection } from '/contracts/protection-status.js';
 
 // View-only controller; authorization and report validation remain in security-ui.
 const GROUPS = Object.freeze({
@@ -26,7 +29,7 @@ export function describeScan(report, { trusted = false, busy = false, issue = '�
   const attention = phase === 'complete' ? checks.filter(item => ['warning', 'unavailable'].includes(item.state)).length : null;
   const checkedAt = phase === 'complete' && Number.isFinite(Date.parse(report.checked_at)) ? new Date(report.checked_at).toLocaleTimeString('zh-CN', { hour12: false }) : '—';
   return {
-    phase, active: running || busy, complete: phase === 'complete', percent: phase === 'complete' ? 100 : progress ? Math.floor(progress.completed * 100 / progress.total) : null,
+    phase, active: running || busy, complete: phase === 'complete', percent: phase === 'complete' ? 100 : progress ? Math.min(99,Math.floor(progress.completed * 100 / progress.total)) : null,
     status: running ? '本机检查正在执行' : busy ? '正在提交扫描请求' : complete ? findings ? '检查完成 · 发现问题' : attention ? '检查完成 · 需要复核' : '检查完成 · 查看报告' : phase === 'review' ? '报告需要复核' : '等待本机扫描',
     tag: running ? '执行中' : busy ? '请求中' : complete ? '已完成' : phase === 'review' ? '需要复核' : issue.includes('代理') ? '等待连接' : '尚未开始',
     activity: running ? progress ? '已完成 ' + progress.completed + ' / ' + progress.total + ' 项检查；当前：' + (progress.current || '汇总报告') : '本机代理正在检查，等待结果汇总' : busy ? '正在联系本机代理，等待请求确认' : complete ? '结果已核验，' + (findings || attention ? '请查看发现的问题与复核项' : '固定检查范围内未发现异常') : issue,
@@ -45,10 +48,12 @@ export function createSecurityConsole() {
   let latestContext = { trusted: false, issue: "等待有效报告" };
   let requestBusy = false;
   let requestAction = null;
+  let requestIssue = null, requestedTaskId = null;
   function open(name, focus = false) {
-    if (name === 'engine') name = 'scan';
+    name = ({engine:'scan',containers:'environment',logs:'quarantine',recovery:'quarantine',backup:'settings',cloud:'settings',security:'home'})[name] || name;
     const tab = scope?.querySelector('[data-security-tab="' + name + '"]');
     if (!tab) return;
+    const changed = !tab.classList.contains('active');
     set("[data-iron-page-title]", name === "home" ? "安全总览" : tab.textContent.trim());
     scope.querySelectorAll('[data-security-tab]').forEach(node => {
       const selected = node === tab;
@@ -57,12 +62,17 @@ export function createSecurityConsole() {
       node.tabIndex = selected ? 0 : -1;
     });
     scope.querySelectorAll('[data-security-panel]').forEach(node => { node.hidden = node.dataset.securityPanel !== name; });
-    if (focus) tab.focus();
+    if (focus) tab.focus({ preventScroll: true });
+    if (changed) window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    if (location.hash !== '#'+name) history.replaceState(null, '', '#'+name);
   }
   function bind() {
     if (!scope || bound) return;
     bound = true;
     hostWorkspace.bind();
+    const restore = () => open(location.hash.slice(1) || 'home');
+    window.addEventListener('hashchange', restore);
+    restore();
     scope.querySelectorAll('[data-security-tab], [data-security-open]').forEach(button => {
       button.addEventListener('click', () => open(button.dataset.securityTab || button.dataset.securityOpen, Boolean(button.dataset.securityOpen)));
     });
@@ -89,7 +99,7 @@ export function createSecurityConsole() {
     const checkup = describeCheckup(latestReport, {busy:requestBusy && requestAction==='checkup'});
     scope.dataset.scRunning = String(view.active || fileView.active || checkup.active);
     set('[data-checkup-status]',checkup.status);
-    set('[data-checkup-detail]',checkup.detail);
+    set('[data-checkup-detail]',friendlyActivity(checkup.detail));
     set('[data-checkup-button]',checkup.button);
     set('[data-checkup-percent]',checkup.percent===null?'阶段进度':checkup.percent+'%');
     scope.querySelectorAll('[data-security-checkup]').forEach(button=>{button.disabled=requestBusy || view.active || fileView.active || checkup.active;});
@@ -100,12 +110,12 @@ export function createSecurityConsole() {
       const bar=node.querySelector('span'); if(bar)bar.style.width=checkup.percent===null?(checkup.active?'24%':'0%'):checkup.percent+'%';
     });
     scope.querySelectorAll('[data-security-scan], [data-security-container-scan]').forEach(button => { button.disabled = requestBusy || view.active || fileView.active || checkup.active; });
-    set('[data-container-scan-button]', view.active ? view.buttonLabel : '一键检查容器');
+    set('[data-container-scan-button]', view.active ? view.buttonLabel : '检查主机与容器');
     set('[data-scan-status]', view.status);
     set('[data-scan-progress-tag]', view.tag);
     set('[data-scan-percent]', view.percent === null ? '—' : String(view.percent));
     set('[data-scan-percent-unit]', view.percent === null ? '' : '%');
-    set('[data-scan-activity]', view.activity);
+    set('[data-scan-activity]', friendlyActivity(view.activity));
     set('[data-scan-button-label]', view.buttonLabel);
     set('[data-scan-check-count]', view.count === null ? '—' : String(view.count));
     set('[data-scan-finding-count]', view.findings === null ? '—' : String(view.findings));
@@ -123,7 +133,7 @@ export function createSecurityConsole() {
     scope.querySelectorAll('[data-scan-stage]').forEach(node => {
       const group = node.dataset.scanStage;
       const items = checks.filter(item => GROUPS[group]?.includes(item.id));
-      const state = !view.complete ? 'unavailable' : items.some(item => item.state === 'finding') ? 'finding' : items.some(item => item.state !== 'ok') ? 'warning' : 'ok';
+      const state = !view.complete || !items.length ? 'unavailable' : items.some(item => item.state === 'finding') ? 'finding' : items.some(item => item.state !== 'ok') ? 'warning' : 'ok';
       node.dataset.state = state;
       const progress = hostScanProgress(latestReport);
       const groupIds = GROUPS[group] || [];
@@ -165,6 +175,12 @@ export function createSecurityConsole() {
     const view=describeFullScan(scan);
     set('[data-full-scan-state]', view.label);
     set('[data-full-scan-count]', view.files);
+    set('[data-full-scan-current]',view.detail || (scan?.state==='finished'?'本次已纳管目录扫描结束':'当前没有正在检查的文件'));
+    set('[data-full-scan-task]',scan?.task_id?'任务 '+scan.task_id.slice(0,8)+(scan.resumed_from?' · 续接 '+scan.resumed_from.slice(0,8):''):'尚无任务标识');
+    const recentFiles=scope?.querySelector('[data-full-scan-recent]');recentFiles?.replaceChildren();
+    const outcomes={clean:'未命中',infected:'发现威胁',skipped:'跳过',errors:'检查失败'};
+    for(const item of scan?.recent_files || []){const row=document.createElement('li');row.dataset.state=item.state;row.textContent=outcomes[item.state]+' · '+item.path+(item.reason?' · '+item.reason:'');recentFiles?.append(row);}
+    if(!scan?.recent_files?.length){const row=document.createElement('li');row.textContent='等待实际文件检查结果；仅保留最近八项。';recentFiles?.append(row);}
     set('[data-full-scan-percent]', view.percent===null ? '—' : view.percent+'%');
     set('[data-full-scan-time]', scan?.updated_at ? '更新于 '+scan.updated_at : '尚无扫描记录');
     set('[data-full-scan-button]', scan?.state==='paused' ? '继续文件查杀' : '文件深度查杀');
@@ -182,7 +198,7 @@ export function createSecurityConsole() {
   function renderEngine() {
     const value=describeAntivirus(latestReport?.antivirus);
     set('[data-engine-title]',value.title); set('[data-engine-summary]',value.title);
-    set('[data-engine-detail]',value.detail); set('[data-engine-source]',value.source_label);
+    set('[data-engine-detail]',engineDisplayText(value.detail)); set('[data-engine-source]',value.source_label);
     set('[data-engine-version]',value.installed===null ? '尚不可核验' : value.installed ? value.version || '版本不可用' : '未安装');
     set('[data-engine-database-version]',value.database_version?.toLocaleString() || '—');
     set('[data-engine-signatures]',value.signatures?.toLocaleString() || '—');
@@ -193,17 +209,82 @@ export function createSecurityConsole() {
     scope?.querySelectorAll('[data-engine-summary]').forEach(node=>{node.dataset.state=value.state==='configured'?'ok':value.state==='stale'?'warning':'unavailable';});
     scope?.querySelectorAll('[data-security-engine-update]').forEach(button=>{button.disabled=requestBusy || !value.can_update || latestReport?.state==='running' || latestReport?.checkup?.state==='running' || ['indexing','scanning'].includes(latestReport?.full_scan?.state);});
   }
+  function renderWorkbench() {
+    const report=latestReport;
+    const summary=latestContext.overview || summarizeLocalSecurity(report);
+    const task=describeWorkbenchTask(report,{busy:requestBusy,action:requestAction,trusted:latestContext.trusted,requestIssue,requestedTaskId});
+    const inv=sanitizeInventory(report?.inventory), protection=sanitizeProtection(report?.protection);
+    const engine=describeAntivirus(report?.antivirus);
+    const observed=inv.schema==='ironcurtain-inventory/v1';
+    const knownReport=Array.isArray(report?.checks) && report.checks.length>0;
+    const file=sanitizeFullScan(report?.full_scan);
+    const waiting=requestBusy && summary.tone!=='finding';
+    set('#security-local-state',waiting?'正在提交检测任务':summary.title);
+    set('[data-overview-label]',({ok:'检查完成',finding:'风险待处理',running:'检测进行中',warning:'防护需要关注'})[waiting?'running':summary.tone]);
+    set('[data-overview-detail]',waiting?'等待本机代理确认，随后显示真实阶段进度。':summary.detail);
+    scope?.querySelectorAll('[data-overview-hero], #security-local-state').forEach(node=>{node.dataset.state=waiting?'running':summary.tone;});
+    set('[data-overview-findings]',knownReport?summary.findings:'—');
+    set('[data-overview-infected]',file.schema?summary.infected:'—');
+    set('[data-overview-containers]',observed?inv.container_count+' 个容器':'—');
+    set('[data-overview-listeners]',observed?inv.listener_count+' 个监听 · '+(inv.container_state==='complete' && inv.listener_state==='complete'?'采集完整':'采集不完整'):'等待主机观测');
+    set('[data-overview-engine]',engine.state==='configured'?'引擎已就绪':engine.state==='stale'?'病毒库过期':engine.installed===false?'尚未安装':'尚未就绪');
+    set('[data-overview-engine-detail]',engine.installed===null?'等待本机引擎报告':engine.version?'文件查杀 · '+engine.version:engineDisplayText(engine.detail));
+    set('[data-overview-coverage]',summary.coverage);
+    const notes=scope?.querySelector('[data-overview-notes]');notes?.replaceChildren();
+    for(const text of summary.notes){const li=document.createElement('li');li.textContent=text;notes?.append(li);}
+    const ready=report && !['unavailable','failed'].includes(report.state);
+    set('[data-readiness-agent]',ready?'已取得本机报告 · '+(report.state==='running'?'检查执行中':latestContext.trusted?'环境报告有效':'请核对范围与报告时间'):report?.reason || latestContext.issue || '等待本机代理报告');
+    set('[data-engine-overview]',engine.title+(engine.database_version?' · 病毒库 '+engine.database_version:''));
+    set('[data-readiness-state]',ready && engine.state==='configured' && protection.state==='ready' && latestContext.trusted?'当前检查范围已就绪':'尚需核验');
+    set('[data-task-stage]',task.stage);set('[data-task-title]',task.title);set('[data-task-detail]',task.detail);
+    set('[data-task-kind]',({checkup:'全面体检',scan:'环境与容器核验','full-scan':'文件深度查杀','engine-update':'病毒库维护',idle:'当前任务'})[task.kind] || '当前任务');
+    set('[data-task-percent]',task.percent===null?task.active?'等待进度':'—':task.percent+'%');
+    set('[data-task-scope]',task.active?'百分比仅代表当前阶段；结果以本机报告为准。':task.at?'任务记录：'+new Date(task.at).toLocaleString('zh-CN',{hour12:false}):'仅查杀已纳管目录；未配置范围时不会假报全盘安全。');
+    scope?.querySelectorAll('[data-task-progress]').forEach(node=>{
+      if(task.percent===null)node.removeAttribute('aria-valuenow');else node.setAttribute('aria-valuenow',String(task.percent));
+      node.setAttribute('aria-valuetext',task.title+' · '+task.detail);node.setAttribute('aria-busy',String(task.active));
+      node.dataset.active=String(task.active);node.dataset.indeterminate=String(task.active && task.percent===null);
+      const bar=node.querySelector('span');if(bar)bar.style.width=task.percent===null?task.active?'24%':'0%':task.percent+'%';
+    });
+    renderRisks(summary);
+  }
+  function renderRisks(summary) {
+    const checks=Array.isArray(latestReport?.checks)?latestReport.checks:[];
+    const levels={critical:0,high:1,medium:2,low:3,info:4,unknown:5};
+    const risks=checks.filter(item=>item && item.id!=='host.history' && ['finding','warning','unavailable'].includes(item.state))
+      .sort((a,b)=>(a.state==='finding'?0:1)-(b.state==='finding'?0:1) || (levels[a.severity]??5)-(levels[b.severity]??5));
+    set('[data-risk-state]',summary.findings || summary.infected?'风险需要处理':latestContext.trusted?'查看检查结果':'等待有效检查结果');
+    set('[data-risk-detail]',checks.length ? summary.findings+' 项环境风险 · '+summary.attention+' 项复核项；文件命中与隔离记录单独核对。' : '尚未取得有效环境报告，风险数量暂不可核验；文件命中与隔离记录单独核对。');
+    const list=scope?.querySelector('[data-risk-list]');list?.replaceChildren();
+    if(!risks.length){const li=document.createElement('li');li.className='sc-empty-row';li.textContent=latestContext.trusted?'本次环境检查未记录风险；文件查杀结果见下方。':'尚无可核验的环境风险记录，先执行一次检查。';list?.append(li);}
+    for(const item of risks.slice(0,25)){
+      const li=document.createElement('li');li.className='ic-risk-item';li.dataset.state=item.state;
+      const head=document.createElement('div');head.className='ic-risk-heading';
+      const title=document.createElement('strong');title.textContent=item.name || checkName(item.id);
+      const badge=document.createElement('span');badge.className='ic-tag';badge.textContent=(LABELS[item.state]||'需复核')+' · '+(({critical:'严重',high:'高',medium:'中',low:'低',info:'信息',unknown:'待评估'})[item.severity] || '待评估');
+      head.append(title,badge);
+      const detail=document.createElement('p');detail.textContent=item.detail || '暂无详细证据';
+      const meta=document.createElement('small');meta.textContent=(item.scope || '范围未报告')+' · '+(item.checked_at || '时间未报告')+(latestContext.trusted?'':' · 历史或不完整记录，请重新核验');
+      li.append(head,detail,meta);list?.append(li);
+    }
+  }
   function setBusy(busy, action = null) {
     requestBusy = Boolean(busy);
-    if (!requestBusy) requestAction=null; else if(action) requestAction=action;
+    if (requestBusy && action) { requestAction=action; requestIssue=null; requestedTaskId=null; }
     renderScan();
     renderFullScan();
     renderEngine();
+    renderWorkbench();
   }
-  function update(report, { trusted = false, busy = false, issue = '等待有效报告' } = {}) {
+  function requestResult(result) {
+    requestIssue=result?.error ? String(result.error).slice(0,240) : null;
+    requestedTaskId=typeof result?.task_id==='string' && /^[a-f0-9]{32}$/.test(result.task_id) ? result.task_id : null;
+    renderWorkbench();
+  }
+  function update(report, { trusted = false, busy = false, issue = '等待有效报告', overview = null } = {}) {
     const checks = Array.isArray(report?.checks) ? report.checks : [];
     latestReport = report;
-    latestContext = { trusted, issue };
+    latestContext = { trusted, issue, overview };
     setBusy(busy);
     renderProtection();
     hostWorkspace.update(report);
@@ -214,8 +295,8 @@ export function createSecurityConsole() {
     set('[data-security-stat="freshness"]', trusted ? '最近十五分钟内' : issue);
     for (const [group, ids] of Object.entries(GROUPS)) {
       const items = checks.filter(item => ids.includes(item.id));
-      const groupState = !trusted ? 'unavailable' : items.some(item => item.state === 'finding') ? 'finding' : items.some(item => item.state !== 'ok') ? 'warning' : 'ok';
-      const label = !trusted ? issue : groupState === 'ok' ? '检查范围内正常' : groupState === 'finding' ? '发现问题 · 查看报告' : '需要复核 · 查看报告';
+      const groupState = !trusted || !items.length ? 'unavailable' : items.some(item => item.state === 'finding') ? 'finding' : items.some(item => item.state !== 'ok') ? 'warning' : 'ok';
+      const label = !trusted ? issue : !items.length ? '尚无本组检查结果' : groupState === 'ok' ? '检查范围内正常' : groupState === 'finding' ? '发现问题 · 查看报告' : '需要复核 · 查看报告';
       set('[data-security-summary="' + group + '"]', label);
       scope?.querySelectorAll('[data-security-summary="' + group + '"]').forEach(node => { node.dataset.state = groupState; });
       set('[data-security-group-state="' + group + '"]', !trusted ? issue : items.length + ' 项已检查');
@@ -234,9 +315,10 @@ export function createSecurityConsole() {
     set('[data-security-recent]', trusted && report.history_state==='unavailable' ? '当前报告有效 · 告警历史不可用，请检查状态目录' : trusted && report.history?.length ? report.history.at(-1).name + ' · ' + (LABELS[report.history.at(-1).state] || '未知') : trusted ? '暂无状态变化记录' : issue + '，暂不能确认防护动态');
   }
   function clear(reason) {
+    requestIssue=null; requestedTaskId=null; requestAction=null;
     update(null, { issue: reason });
     scope?.querySelectorAll('[data-security-group]').forEach(node => { node.replaceChildren(); });
     open('home');
   }
-  return Object.freeze({ bind, update, clear, setBusy });
+  return Object.freeze({ bind, update, clear, setBusy, requestResult });
 }

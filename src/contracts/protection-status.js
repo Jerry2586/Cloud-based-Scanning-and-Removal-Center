@@ -43,18 +43,29 @@ export function sanitizeInventory(value) {
     drift_state:value.drift_state,container_count:value.container_count,listener_count:value.listener_count,candidate_count:value.candidate_count,
     environment:sanitizeEnvironment(value.environment),containers,listeners,candidates,issues:[...value.issues],drift:[...value.drift],truncated:value.truncated};
 }
+function scanProgress(value) {
+  const id=value.task_id, resumed=value.resumed_from;
+  if (id!==undefined && (typeof id!=='string' || !/^[a-f0-9]{32}$/.test(id)) || resumed!==undefined && (typeof resumed!=='string' || !/^[a-f0-9]{32}$/.test(resumed))) return null;
+  const validFile=item=>item && text(item.path,1024) && item.path.startsWith('/') && !item.path.split('/').includes('..') && count(item.size);
+  const current=value.current_file;
+  if(current!==undefined && current!==null && (!validFile(current) || !['opening','hashing','engine'].includes(current.phase) || !count(current.bytes_read) || current.bytes_read>current.size)) return null;
+  const recent=value.recent_files ?? [];
+  if(!Array.isArray(recent) || recent.length>8 || recent.some(item=>!validFile(item) || !['clean','infected','skipped','errors'].includes(item.state) || !safeTimestamp(item.checked_at) || item.reason!==null && item.reason!==undefined && !text(item.reason))) return null;
+  return {task_id:id,resumed_from:resumed,current_file:current?{path:current.path,size:current.size,phase:current.phase,bytes_read:current.bytes_read}:null,recent_files:recent.map(item=>({path:item.path,size:item.size,state:item.state,reason:item.reason || null,checked_at:item.checked_at}))};
+}
 export function sanitizeFullScan(value) {
   if (!value || value.schema !== 'ironcurtain-full-scan/v1' || !['idle','indexing','scanning','paused','finished','partial','failed'].includes(value.state)) return unavailable();
   if (value.state === 'idle') return {state:'idle'};
-  if (!safeTimestamp(value.started_at)) return unavailable();
-  if (value.state === 'indexing' && value.indexed === undefined) return {state:'indexing',started_at:value.started_at};
+  const progress=scanProgress(value);
+  if (!safeTimestamp(value.started_at) || !progress) return unavailable();
+  if (value.state === 'indexing' && value.indexed === undefined) return {state:'indexing',started_at:value.started_at,...progress};
   const keys=['indexed','processed','clean','infected','skipped','errors','bytes_scanned'];
   if (!keys.every(k => count(value[k])) || value.indexed > 200000 || value.processed > value.indexed || value.clean + value.infected + value.errors > value.processed ||
       value.clean + value.infected + value.errors + value.skipped < value.processed || typeof value.index_complete !== 'boolean' ||
       value.scope !== 'enrolled-directories-only' || !texts(value.reasons) || !safeTimestamp(value.updated_at) || Date.parse(value.updated_at)<Date.parse(value.started_at) ||
       ['finished','partial','failed'].includes(value.state) && (!safeTimestamp(value.finished_at) || Date.parse(value.finished_at)<Date.parse(value.started_at) || Date.parse(value.finished_at)>Date.parse(value.updated_at)) ||
       value.state === 'finished' && (!value.index_complete || !value.indexed || value.processed !== value.indexed || value.skipped || value.errors)) return unavailable();
-  return {schema:value.schema,state:value.state,profile_digest:/^[a-f0-9]{64}$/.test(value.profile_digest || '')?value.profile_digest:undefined,started_at:value.started_at,updated_at:value.updated_at,finished_at:safeTimestamp(value.finished_at),
+  return {...progress,schema:value.schema,state:value.state,profile_digest:/^[a-f0-9]{64}$/.test(value.profile_digest || '')?value.profile_digest:undefined,started_at:value.started_at,updated_at:value.updated_at,finished_at:safeTimestamp(value.finished_at),
     ...Object.fromEntries(keys.map(k => [k,value[k]])),index_complete:value.index_complete,scope:value.scope,reasons:[...value.reasons]};
 }
 export function describeFullScan(value, now = Date.now()) {
@@ -65,8 +76,11 @@ export function describeFullScan(value, now = Date.now()) {
   const active=running && !stale;
   const labels={idle:'尚未进行文件深度查杀',indexing:'正在建立文件清单',scanning:'正在逐文件查杀',paused:'扫描已暂停，可继续',finished:'文件查杀完成',partial:'扫描不完整，需要复核',failed:'文件查杀失败',unavailable:'文件查杀状态不可用'};
   const counted=count(value?.processed) && count(value?.indexed);
-  const percent=counted && value.indexed > 0 && value.state !== 'indexing' ? Math.min(100,Math.floor(100 * value.processed / value.indexed)) : null;
-  return {active,stale,percent:stale ? null : percent,label:stale ? (running ? '进度已过期，请核对主机代理' : '历史查杀记录，需重新扫描') : labels[value?.state] || labels.unavailable,
+  const percent=counted && value.indexed > 0 && value.state !== 'indexing' ? Math.min(running ? 99 : 100,Math.floor(100 * value.processed / value.indexed)) : null;
+  const current=active ? value?.current_file : null;
+  const phases={opening:'正在读取文件',hashing:'正在校验文件摘要',engine:'正在引擎检测'};
+  const detail=current ? phases[current.phase]+' · '+current.path+(current.phase==='hashing'?' · '+current.bytes_read.toLocaleString()+' / '+current.size.toLocaleString()+' 字节':'') : active && value.state==='indexing' ? '正在枚举已纳管目录，文件总数尚未确定' : active ? '等待下一文件或汇总报告' : '';
+  return {detail,active,stale,percent:stale ? null : percent,label:stale ? (running ? '进度已过期，请核对主机代理' : '历史查杀记录，需重新扫描') : labels[value?.state] || labels.unavailable,
     tone:value?.infected > 0 ? 'finding' : value?.state === 'finished' && !stale ? 'ok' : 'warning',
     files:counted ? value.processed.toLocaleString()+' / '+value.indexed.toLocaleString()+' 文件' : '等待真实文件计数'};
 }

@@ -46,7 +46,7 @@ trap 'exit 143' TERM
 stage() { ic_check_dir "$CONF"; STAGE=$(mktemp -d "$CONF/.admin.XXXXXXXX"); chmod 700 "$STAGE"; }
 lock() {
   exec 9>"/run/lock/ironcurtain-$ROLE.lock"
-  flock -n 9 || ic_fail '安装或管理操作正在运行'
+  ic_wait_management_lock 9 "/run/lock/ironcurtain-$ROLE.lock"
   MANAGEMENT_LOCKED=true
   ic_admin_recover || ic_fail '原管理事务尚未恢复，停止新操作'
 }
@@ -117,6 +117,13 @@ full_scan() {
   [[ $ROLE == local ]] || ic_fail '此操作仅用于铁幕本地节点'
   curl --max-time 10 -fsS --unix-socket /run/ironcurtain/scan.sock -X POST -H 'Content-Length: 0' http://localhost/full-scan | jq .
   echo '已提交文件深度查杀；只检查纳管目录。暂停任务将在相同范围与病毒库版本下继续。'
+}
+engines() {
+  [[ $ROLE == local ]] || ic_fail '引擎就绪检查仅用于铁幕'
+  local result
+  result=$(curl -q --max-time 8 --max-filesize 16384 -fsS --unix-socket /run/ironcurtain/scan.sock http://localhost/engines) || ic_fail '本机检查代理不可用，请运行环境诊断'
+  printf '%s\n' "$result" | jq -e 'select(.schema == "ironcurtain-engine-readiness/v1") | {state,checked_at,reason,ready_count,engines}'
+  echo '检查在后台执行；如显示 checking，请稍后再次运行 sudo tiemu engines。'
 }
 scan_status() {
   [[ $ROLE == local ]] || ic_fail '此操作仅用于铁幕本地节点'
@@ -467,6 +474,7 @@ dispatch() {
     virus-db-import|virus-db-status|virus-db-update) virus_database_action "$1" ;;
     domain) configure_domain ;; domain-status) domain_status ;;
     update) update ;; doctor) doctor ;; scan) scan ;; profile) profile ;;
+    engines) engines ;;
     discover) discover_scope ;; enroll) enroll_scope ;; full-scan) full_scan ;; scan-status) scan_status ;;
     pair) pair ;; cloud-status) cloud_status ;; unpair) unpair ;;
     register) register ;; revoke) revoke ;; nodes) [[ $ROLE == cloud ]] || ic_fail '仅用于玄武'; jq -r '.nodes | keys[]' "$CONF/runtime/config.json" ;;
@@ -531,6 +539,7 @@ while true; do
   fi
   ic_menu_item 35 '设置域名并自动申请 HTTPS'
   ic_menu_item 36 '查看域名与证书状态'
+  if [[ $ROLE == local ]]; then ic_menu_item 37 '四引擎就绪检查'; fi
   ic_menu_item 0 '退出'
   echo
   echo '身份变更、隔离与恢复请核对提示；更新仅接受已验签的正式包。'
@@ -570,6 +579,7 @@ while true; do
       32) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=enroll ;;
       33) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=full-scan ;;
       34) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=scan-status ;;
+      37) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=engines ;;
       35) action=domain ;; 36) action=domain-status ;;
       *) echo '请选择有效菜单项'; continue ;;
     esac

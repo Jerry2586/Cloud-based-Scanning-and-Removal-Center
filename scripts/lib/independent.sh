@@ -3,6 +3,22 @@
 set -euo pipefail
 umask 077
 ic_fail() { echo "错误：$*" >&2; exit 1; }
+
+# Interactive maintenance may briefly overlap with a scheduled rules/domain job.
+# Never remove the lock inode or unlock a different process to resolve contention.
+ic_wait_management_lock() {
+  local descriptor=$1 path=$2 result
+  if flock -n "$descriptor"; then return 0; else result=$?; fi
+  [[ $result == 1 ]] || ic_fail "无法获取管理锁（退出码 $result）：$path"
+  printf '另一安装、管理或定时维护任务正在运行；等待释放管理锁（最多 15 秒）…\n' >&2
+  if flock -w 15 "$descriptor"; then
+    printf '管理锁已释放，继续当前操作。\n' >&2
+    return 0
+  else result=$?; fi
+  [[ $result == 1 ]] || ic_fail "等待管理锁失败（退出码 $result）：$path"
+  printf '占用的管理锁：%s\n查看占用进程：sudo lslocks --notruncate -o PID,COMMAND,PATH\n查看后台任务：sudo systemctl status ironcurtain-rules-sync.service ironcurtain-panel-update.service ironcurtain-domain-%s-apply.service --no-pager\n请等待正在运行的任务结束后重试；不要删除锁文件或强制并行更新。\n' "$path" "$ROLE" >&2
+  ic_fail '等待 15 秒后管理锁仍被占用，本次操作未取得锁，已停止。'
+}
 ic_role() {
   case "$1" in local|cloud) ROLE=$1 ;; *) ic_fail '角色须为 local 或 cloud' ;; esac
   BASE=/opt/ironcurtain/$ROLE

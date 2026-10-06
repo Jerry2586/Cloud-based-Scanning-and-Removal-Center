@@ -16,3 +16,6 @@ var/
 __pycache__/
 *.py[cod]
 dist/
+
+# Build outputs; signed release packaging cross-builds both host architectures.
+/src/manager/bin/
