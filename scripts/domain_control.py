@@ -94,6 +94,9 @@ def run(args, timeout=60, umask=-1):
 
 def port_free(port):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        # Match ThreadingHTTPServer: closed connections in TIME_WAIT are reusable,
+        # while a live listener still prevents binding (never use SO_REUSEPORT).
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             sock.bind(('0.0.0.0', port))
             return True

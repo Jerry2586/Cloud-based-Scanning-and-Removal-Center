@@ -39,6 +39,7 @@ for role in ('local', 'cloud'):
     original = origin_file.read_bytes() if origin_file.exists() else None
     for port in (80, 443):
         with socket.socket() as listener:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             listener.bind(('0.0.0.0', port))
             listener.listen(4)
             listener.settimeout(5)

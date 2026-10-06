@@ -18,6 +18,38 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 import domain_control as dc
 
+class PortAvailabilityTests(unittest.TestCase):
+    def listener(self):
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.addCleanup(listener.close)
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(('0.0.0.0', 0))
+        listener.listen(1)
+        listener.settimeout(2)
+        return listener, listener.getsockname()[1]
+
+    def test_live_listener_cannot_be_reused(self):
+        listener, port = self.listener()
+        self.assertFalse(dc.port_free(port))
+        with socket.create_connection(('127.0.0.1', port), timeout=2) as client:
+            peer, _ = listener.accept()
+            with peer:
+                peer.sendall(b'alive')
+                self.assertEqual(client.recv(5), b'alive')
+
+    def test_closed_connection_time_wait_does_not_block_challenge(self):
+        listener, port = self.listener()
+        with socket.create_connection(('127.0.0.1', port), timeout=2) as client:
+            peer, _ = listener.accept()
+            peer.close()  # Server closes first, leaving server-side TIME_WAIT.
+            self.assertEqual(client.recv(1), b'')
+        listener.close()
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as strict:
+            with self.assertRaises(OSError):
+                strict.bind(('0.0.0.0', port))
+        self.assertTrue(dc.port_free(port))
+
+
 class ProbeTests(unittest.TestCase):
     def serve(self, handler):
         listener = socket.socket()
