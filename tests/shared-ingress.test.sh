@@ -71,7 +71,7 @@ with ingress_lock():
  before=adapter.snapshot()
  adapter.prepare('guard.example.test',before)
  token=adapter.webroot/'.well-known/acme-challenge/fixture-token'
- token.parent.mkdir(parents=True,mode=0o755)
+ token.parent.mkdir(parents=True,mode=0o755,exist_ok=True)
  token.write_text('real-http-challenge')
  assert curl('guard.example.test','/.well-known/acme-challenge/fixture-token')==b'real-http-challenge'
  adapter.activate('guard.example.test',generation,work/'runtime','127.0.0.1')
