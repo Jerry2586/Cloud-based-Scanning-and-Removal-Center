@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Bounded host scanner and fixed local release-job bridge. No arbitrary commands."""
-import argparse, copy, importlib.util, datetime, hashlib, http.server, json, os, pathlib, re, shutil, socket, socketserver, sqlite3, stat, struct, subprocess, tempfile, threading, time, uuid
+import argparse, copy, importlib.util, datetime, hashlib, http.server, json, os, pathlib, re, shutil, socket, socketserver, sqlite3, stat, struct, subprocess, tempfile, threading, time, uuid, sys
+
+# Installed release code stays immutable, including CLI and dynamic module loads.
+sys.dont_write_bytecode = True
 
 IDS = ['integrity.program','host.configuration','container.contract','container.approved-image','response.containment','host.os-release','host.systemd-state','ssh.effective','permissions.secret-inventory','permissions.installation','permissions.cron','network.listeners','network.udp-listeners','network.routes','host.kernel-security','network.firewall','malware.program','malware.business','database.sqlite','host.process-executables','host.failed-units','cloudflare.dns','cloudflare.workers','cloudflare.rules','cloudflare.settings']
 LABELS = ['程序完整性','关键配置完整性','容器隔离配置','容器镜像身份','处置与隔离状态','Linux 系统版本','持续监测服务','SSH 有效配置','凭据文件权限','程序目录权限','定时任务权限','TCP 监听端口','UDP 监听端口','路由环境','内核安全配置','主机防火墙','程序病毒扫描','数据目录病毒扫描','SQLite 一致性','进程执行文件','异常系统服务','Cloudflare DNS','Cloudflare Workers','Cloudflare 规则','Cloudflare 设置']

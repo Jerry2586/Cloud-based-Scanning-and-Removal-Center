@@ -30,6 +30,9 @@ WORK=$(mktemp -d /opt/ironcurtain-deployment-test.XXXXXXXX)
 install -d -m 750 "$WORK/source"
 tar -C "$ROOT" --exclude=.git --exclude=.codex --exclude=dist --exclude='__pycache__' -cf - . | tar -C "$WORK/source" -xf -
 SOURCE=$WORK/source
+# A source checkout may contain local bytecode; installation must omit it.
+install -d -m 777 "$SOURCE/src/host/__pycache__"
+printf 'not a release input\n' > "$SOURCE/src/host/__pycache__/fixture.pyc"
 node "$SOURCE/tests/helpers/rule-deployment-fixture.js" "$SOURCE" "$WORK"
 CLOUD_HOST=$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')
 [[ $CLOUD_HOST =~ ^[0-9.]+$ ]] || { echo 'Docker bridge gateway unavailable' >&2; exit 1; }
@@ -39,8 +42,15 @@ bash "$SOURCE/scripts/install-independent.sh" --role local --antivirus skip --ho
 for role in local cloud; do
   release=$(readlink -f "/opt/ironcurtain/$role/current")
   unsafe=$(find "$release" \( ! -user root -o ! -group root -o -perm /022 \) -print -quit)
-  [[ -z $unsafe ]] || { stat -c 'Untrusted installed code: %u:%g:%a %n' "$unsafe" >&2; exit 1; }
+  [[ -z $unsafe ]] || { stat -c 'Untrusted installed code: %u:%g:%a type=%F path=%n target=%N' "$unsafe" >&2; exit 1; }
 done
+# Source cache must stay absent across root agent startup and fixed release checks.
+release=$(readlink -f /opt/ironcurtain/local/current)
+[[ -z $(find "$release/src/host" -name __pycache__ -print -quit) ]]
+for action in check update; do
+  [[ $(systemctl show "ironcurtain-panel-$action.service" -p ExecStart --value) == *"python3 -B "* ]]
+done
+[[ $(systemctl show ironcurtain-agent.service -p ExecStart --value) == *"python3 -B "* ]]
 # Signed manager executables survive root-owned install normalization and are runnable.
 manager_dir=$(readlink -f /opt/ironcurtain/local/current)/src/manager/bin
 for arch in amd64 arm64; do
@@ -301,4 +311,10 @@ done
 /usr/local/bin/tiemu doctor
 /usr/local/bin/xuanwu doctor
 echo 'Real encrypted local/cloud recovery passed; current identity and revocation state retained.'
+for role in local cloud; do
+  release=$(readlink -f "/opt/ironcurtain/$role/current")
+  [[ -z $(find "$release/src/host" -name __pycache__ -print -quit) ]]
+  unsafe=$(find "$release" \( ! -user root -o ! -group root -o -perm /022 \) -print -quit)
+  [[ -z $unsafe ]] || { stat -c 'Untrusted installed code: %u:%g:%a type=%F path=%n target=%N' "$unsafe" >&2; exit 1; }
+done
 echo 'Real local/cloud Docker first installation, rerun and upgrade passed; identities preserved.'

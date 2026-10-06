@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Fixed, root-only import/pull. Cloud cannot supply paths or execute actions."""
-import argparse, hashlib, http.client, importlib.util, json, os, pathlib, re, signal, ssl, tempfile, threading, time, urllib.parse
+import argparse, hashlib, http.client, importlib.util, json, os, pathlib, re, signal, ssl, tempfile, threading, time, urllib.parse, sys
+sys.dont_write_bytecode = True
 _spec=importlib.util.spec_from_file_location('ironcurtain_rules',pathlib.Path(__file__).resolve().parents[1]/'src/host/rules.py')
 rules=importlib.util.module_from_spec(_spec);_spec.loader.exec_module(rules)
 

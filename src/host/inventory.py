@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Bounded host discovery. Observations are never a trusted baseline or an allowlist."""
 import importlib.util
-import argparse, datetime, hashlib, itertools, json, os, pathlib, re, stat, time
+import argparse, datetime, hashlib, itertools, json, os, pathlib, re, stat, time, sys
+sys.dont_write_bytecode = True
 
 _env_spec = importlib.util.spec_from_file_location('ironcurtain_environment', pathlib.Path(__file__).with_name('environment.py'))
 environment = importlib.util.module_from_spec(_env_spec); _env_spec.loader.exec_module(environment)

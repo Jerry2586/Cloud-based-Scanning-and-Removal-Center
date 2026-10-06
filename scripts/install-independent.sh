@@ -111,10 +111,11 @@ if [[ -e $RELEASE ]]; then
   [[ -f $RELEASE/.payload-sha256 && $(cat "$RELEASE/.payload-sha256") == "$DIGEST" && $(payload_digest "$RELEASE") == "$DIGEST" ]] || ic_fail '残留候选版本内容不一致，拒绝覆盖'
 else
   install -d -m 750 "$RELEASE"
-  cp -a "$SOURCE/src" "$SOURCE/scripts" "$SOURCE/docker" "$RELEASE/"
+  # Python bytecode is runtime cache, never an installed release input.
+  tar -C "$SOURCE" --exclude='__pycache__' -cf - src scripts docker | tar -C "$RELEASE" -xf -
   cp "$SOURCE/package.json" "$SOURCE/release-contract.json" "$SOURCE/release-public.pem" "$SOURCE/.dockerignore" "$SOURCE/install.sh" "$RELEASE/"
   printf '%s\n' "$DIGEST" > "$RELEASE/.payload-sha256"
-  # cp -a preserves archive ownership; executable release inputs must be root-controlled.
+  # Archive copy preserves input ownership; executable release inputs must be root-controlled.
   find "$RELEASE" -type d -exec chown root:root {} + -exec chmod 755 {} +
   find "$RELEASE" -type f -exec chown root:root {} + -exec chmod 644 {} +
 fi
@@ -187,7 +188,7 @@ After=network-online.target docker.service
 Type=simple
 User=root
 Group=10001
-ExecStart=/usr/bin/python3 $BASE/current/src/host/agent.py --profile $CONF/profile.json --state $DATA/agent --socket /run/ironcurtain/scan.sock --allowed-uid 10001 --group 10001
+ExecStart=/usr/bin/python3 -B $BASE/current/src/host/agent.py --profile $CONF/profile.json --state $DATA/agent --socket /run/ironcurtain/scan.sock --allowed-uid 10001 --group 10001
 Restart=on-failure
 RestartSec=5
 KillMode=control-group
@@ -217,7 +218,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 User=root
-ExecStart=/usr/bin/python3 $BASE/current/src/host/updates.py $action
+ExecStart=/usr/bin/python3 -B $BASE/current/src/host/updates.py $action
 TimeoutStartSec=32min
 KillMode=control-group
 UMask=0077

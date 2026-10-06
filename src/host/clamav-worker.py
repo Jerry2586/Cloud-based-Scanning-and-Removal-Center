@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Fixed Go adapter: reuse the pinned file queue and managed official database."""
 import hashlib, importlib.util, json, os, pathlib, signal, sys, threading, time
+sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location('ironcurtain_worker_agent', pathlib.Path(__file__).with_name('agent.py'))
 host = importlib.util.module_from_spec(spec); spec.loader.exec_module(host)
 

@@ -19,6 +19,9 @@ import time
 import urllib.parse
 import urllib.request
 
+# Fixed jobs must not materialize bytecode inside the trusted release tree.
+sys.dont_write_bytecode = True
+
 try:
     import fcntl
 except ImportError:
