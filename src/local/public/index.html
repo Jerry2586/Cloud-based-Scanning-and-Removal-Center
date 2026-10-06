@@ -243,8 +243,8 @@
           </div>
           </header>
           <div class="sc-two-col">
-          <article class="sc-panel "><h4>程序修复</h4><p>通过系统运维重新获取当前版本的可信程序。先保留异常报告并核对签名，不用可疑文件建立新基线。</p>
-          <button type="button" class="sc-secondary" data-go-view="cms">打开系统运维 ↗</button>
+          <article class="sc-panel "><h4>程序修复</h4><p>铁幕程序更新由独立的签名更新流程管理。先保存异常报告并核对版本；网站源码与业务服务的修复由所属项目执行。</p>
+          <button type="button" class="sc-secondary" data-security-open="settings">查看程序更新与运维</button>
           </article>
           <article class="sc-panel "><h4>安全事件恢复</h4><p>封控与恢复通过 Linux 管理工具完成。恢复前检查备份、可信版本与事件证据，恢复后重新检查。</p><span class="sc-outline">网页一键事件恢复待接入</span>
           </article>
@@ -265,7 +265,7 @@
           </header>
           <div class="sc-two-col">
           <article class="sc-panel "><h4>安全项目加密备份</h4><p>备份铁幕自身的配置、身份与状态。网站数据库、业务密钥和打包成品由各业务系统另行备份；本项目备份不能替代业务容灾。</p>
-          <button type="button" class="sc-secondary" data-go-view="cms">管理备份与恢复 ↗</button>
+          <button type="button" class="sc-secondary" data-security-open="settings">查看备份与恢复步骤</button>
           </article>
           <article class="sc-panel "><h4>异机灾难恢复</h4>
           <div class="sc-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 11h14v10H5zm3 0V7a4 4 0 0 1 8 0v4m-4 4v2"/></svg><h4>独立容灾尚未完成</h4><p>不可变异机备份、干净宿主重建与恢复时间目标仍待建设，当前不展示已达标。</p>
@@ -286,8 +286,8 @@
           </ul>
           </article>
           <div class="sc-actions">
-          <button type="button" class="sc-secondary" data-security-scan><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M7 12h10"/></svg><span>刷新检查与记录</span></button>
-          <button class="sc-secondary" type="button" data-go-view="audit">打开系统审计 ↗</button>
+          <button type="button" class="sc-secondary" data-security-refresh><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M7 12h10"/></svg><span>刷新检查与记录</span></button>
+          <button class="sc-secondary" type="button" data-security-open="settings">查看本机日志步骤</button>
           </div>
           </section>
           <section class="sc-page" id="sc-panel-settings" data-security-panel="settings" role="tabpanel" aria-labelledby="sc-tab-settings" hidden>
@@ -298,7 +298,9 @@
           </div>
           </header>
           <article class="sc-panel sc-appearance-panel"><div class="sc-section-head"><div><span class="sc-eyebrow">APPEARANCE</span><h4>外观主题</h4></div><span data-theme-status role="status">夜间主题</span></div><p class="sc-muted">选择舒适的显示方式，刷新或重新打开后保持你的选择。</p><div class="sc-theme-options" role="group" aria-label="外观主题"><button type="button" data-theme-choice="light" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg><span><b>日间</b><small>清晰 · 明亮</small></span></button><button type="button" data-theme-choice="dark" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.8 13a8.8 8.8 0 0 1-9.8-9.8A8.8 8.8 0 1 0 20.8 13Z"/></svg><span><b>夜间</b><small>沉稳 · 专注</small></span></button><button type="button" data-theme-choice="system" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg><span><b>跟随系统</b><small>自动切换</small></span></button></div></article>
-          <article class="sc-panel sc-version-panel"><div class="sc-version-heading"><div><span class="sc-muted">PROGRAM UPDATE</span><h4>程序版本与更新</h4><p data-update-state>等待版本检查</p></div><div class="sc-version-actions"><button type="button" class="sc-outline" data-update-check>检测版本</button><button type="button" class="sc-primary" data-update-install disabled>安装正式更新</button></div></div><div class="sc-cloud-grid"><div><span>正在运行</span><strong data-update-running>未读取</strong></div><div><span>本机安装记录</span><strong data-update-installed>未读取</strong></div><div><span>最新正式版本</span><strong data-update-latest>未核验</strong></div><div><span>安装文件校准</span><strong data-update-integrity>等待核验</strong></div><div><span>发布签名</span><strong data-update-signature>等待核验</strong></div><div><span>最后检查时间</span><strong data-update-time>尚未检查</strong></div><div><span>Git main 提交</span><strong data-update-commit>未读取</strong></div><div><span>源码发布状态</span><strong data-update-source>未读取</strong></div></div><p class="sc-muted" data-update-job>尚无面板安装任务</p><div class="sc-notice">每 6 小时自动检查，也可随时手动检查。Git 源码提交与正式安装包分别显示；安装前重新校验签名和摘要，保留配置、节点身份和业务保护范围。</div></article>
+          <article class="sc-panel sc-domain-panel"><span class="sc-muted">DOMAIN &amp; HTTPS</span><h4>访问域名</h4><p>在 Cloudflare 把域名指向本服务器 IP 后，填写域名并保存。</p><form data-domain-form><label>服务器域名<input data-domain-input name="domain" placeholder="tiemu.example.com" autocomplete="off" maxlength="253" required></label><button class="sc-primary" data-domain-save type="submit">保存并申请证书</button></form><div class="sc-cloud-grid"><div><span>当前域名地址</span><strong data-domain-origin>正在读取</strong></div><div><span>证书</span><strong data-domain-certificate>尚未读取</strong></div></div><p data-domain-status role="status">等待域名状态</p><p class="sc-muted" data-domain-reason></p><small>首次验证需要公网 80 端口的验证请求到达本机；失败原因会显示在这里，原 IP 入口继续保留。同机 APPGOG 共享入口生效时，业务容器会短暂重启。</small></article>
+<article class="sc-panel sc-version-panel"><div class="sc-version-heading"><div><span class="sc-muted">PROGRAM UPDATE</span><h4>程序版本与更新</h4><p data-update-state>等待版本检查</p></div><div class="sc-version-actions"><button type="button" class="sc-outline" data-update-check>检测版本</button><button type="button" class="sc-primary" data-update-install disabled>安装正式更新</button></div></div><div class="sc-cloud-grid"><div><span>正在运行</span><strong data-update-running>未读取</strong></div><div><span>本机安装记录</span><strong data-update-installed>未读取</strong></div><div><span>最新正式版本</span><strong data-update-latest>未核验</strong></div><div><span>安装文件校准</span><strong data-update-integrity>等待核验</strong></div><div><span>发布签名</span><strong data-update-signature>等待核验</strong></div><div><span>最后检查时间</span><strong data-update-time>尚未检查</strong></div><div><span>Git main 提交</span><strong data-update-commit>未读取</strong></div><div><span>源码发布状态</span><strong data-update-source>未读取</strong></div></div><p class="sc-muted" data-update-job>尚无面板安装任务</p><div class="sc-notice">每 6 小时自动检查，也可随时手动检查。Git 源码提交与正式安装包分别显示；安装前重新校验签名和摘要，保留配置、节点身份和业务保护范围。</div></article>
+          <article class="sc-panel sc-operations-panel"><div class="sc-section-head"><div><span class="sc-eyebrow">LOCAL OPERATIONS</span><h4>本机运维与恢复步骤</h4></div></div><p class="sc-muted">在此服务器可信的 SSH 终端执行下列命令，或输入 <code>sudo tiemu</code> 打开管理菜单。网页仅展示步骤；恢复前由管理菜单核对路径、身份和确认信息。</p><div class="sc-table-scroll"><table class="sc-host-table"><thead><tr><th scope="col">操作</th><th scope="col">Linux 命令</th><th scope="col">实际范围</th></tr></thead><tbody><tr><td>环境诊断</td><td><code>sudo tiemu doctor</code></td><td>检查本机代理、配置、证书和服务健康</td></tr><tr><td>查看服务日志</td><td><code>sudo tiemu logs</code></td><td>读取铁幕容器服务日志；检测变化记录保留在防护日志页</td></tr><tr><td>创建加密备份</td><td><code>sudo tiemu backup</code></td><td>仅备份铁幕配置、身份与状态，业务系统另行备份</td></tr><tr><td>核验恢复包</td><td><code>sudo tiemu verify-backup</code></td><td>交互选择恢复包并核验，不能替代恢复演练</td></tr><tr><td>同机恢复</td><td><code>sudo tiemu restore-backup</code></td><td>同机器、同角色、同版本；需要确认并短暂停服</td></tr></tbody></table></div><div class="sc-notice">程序更新使用上方的“检测版本”；网站修复、病毒文件处置和异机容灾按各自流程执行。</div></article>
           <div class="sc-two-col">
           <article class="sc-panel "><h4>本机检查代理</h4><p>在业务服务器的 Linux 管理菜单配置本机安全检查与病毒扫描引擎。密钥与宿主机访问配置由安装工具管理。</p><span class="sc-outline">Linux 菜单 / 本地安全检查</span>
           </article>

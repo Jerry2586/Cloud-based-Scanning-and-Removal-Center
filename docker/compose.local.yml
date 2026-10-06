@@ -15,6 +15,7 @@ services:
     ports: ["${IRONCURTAIN_BIND:-127.0.0.1}:8790:8790"]
     environment:
       IRONCURTAIN_ROLE: local
+      IRONCURTAIN_DOMAIN_SOCKET: /run/ironcurtain-domain-local/control.sock
       IRONCURTAIN_PUBLIC_HOST: ${IRONCURTAIN_PUBLIC_HOST:?}
       IRONCURTAIN_LISTEN_HOST: 0.0.0.0
       IRONCURTAIN_PORT: 8790
@@ -23,6 +24,7 @@ services:
       IRONCURTAIN_TLS_KEY: /etc/ironcurtain/panel.key
       IRONCURTAIN_SCAN_SOCKET: /run/ironcurtain/scan.sock
     volumes:
+      - /run/ironcurtain-domain-local:/run/ironcurtain-domain-local:ro
       - ${IRONCURTAIN_CONFIG:?}/runtime:/etc/ironcurtain:ro
       - /run/ironcurtain:/run/ironcurtain:ro
     healthcheck:

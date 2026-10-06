@@ -49,12 +49,15 @@ jobs:
           sudo bash tests/antivirus-apparmor.test.sh
           sudo env "PATH=$PATH" python3 tests/antivirus-metadata.test.py
           sudo env "PATH=$PATH" python3 tests/recovery-archive.test.py
+          sudo env "PATH=$PATH" python3 tests/domain-control.test.py
       - name: Check disposable runner Docker prerequisites
         run: |
           sudo systemctl start docker
           docker info >/dev/null
           docker compose version
           docker buildx version
+      - name: Real Caddy shared ingress, upstream trust and rollback
+        run: sudo env "PATH=$PATH" GITHUB_ACTIONS=true bash tests/shared-ingress.test.sh
       - name: Actual mirror pull and build after injected official registry timeout
         run: sudo env "PATH=$PATH" GITHUB_ACTIONS=true IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER=1 bash tests/install-image-mirror.test.sh
       - name: Real independent Docker deployment gate

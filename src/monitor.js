@@ -229,8 +229,8 @@ export function createMonitor({ nodes, readers, policy, stateFile, now = () => D
         certificate_not_after: certificate.not_after,
         revocation_state: identities.length > 1 ? 'pending-old-identity' : 'enforced' }];
     }));
-    const summaryState = worst(Object.values(roles).map(role => role.certificate_state === 'expired' ? 'finding'
-      : role.certificate_state === 'healthy' && role.rotation_state === 'active' ? 'ok' : 'warning'));
+    const summaryState = Object.keys(roles).length ? worst(Object.values(roles).map(role => role.certificate_state === 'expired' ? 'finding'
+      : role.certificate_state === 'healthy' && role.rotation_state === 'active' ? 'ok' : 'warning')) : 'unavailable';
     return { generated_at: new Date(now()).toISOString(), summary_state: summaryState, roles };
   };
   const status = () => {
@@ -477,6 +477,7 @@ export function startFromEnvironment(env = process.env) {
   server.listen(Number(env.SECURITY_PORT ?? 9443), env.SECURITY_HOST ?? '0.0.0.0');
   const timer = setInterval(() => { void monitor.runProbes().catch(error => console.error('probe error:', error)); }, 30000);
   timer.unref();
+  server.once('close', () => clearInterval(timer));
   void monitor.runProbes().catch(error => console.error('probe error:', error));
   return { server, monitor };
 }

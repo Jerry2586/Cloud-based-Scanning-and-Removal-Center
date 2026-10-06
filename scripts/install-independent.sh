@@ -4,6 +4,7 @@ umask 077
 SOURCE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$SOURCE/scripts/lib/independent.sh"
 source "$SOURCE/scripts/lib/install-transaction.sh"
+source "$SOURCE/scripts/lib/domain-services.sh"
 source "$SOURCE/scripts/lib/management-transaction.sh"
 source "$SOURCE/scripts/lib/install-environment.sh"
 source "$SOURCE/scripts/lib/install-host.sh"
@@ -101,6 +102,7 @@ if docker inspect "$CONTAINER" >/dev/null 2>&1; then
   [[ -n $OLD_VERSION ]] || ic_fail '同名容器缺少可信安装记录，拒绝接管'
   [[ $(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' "$CONTAINER") == "$PROJECT" ]] || ic_fail '同名容器不属于本项目，拒绝接管'
 else
+  if [[ $ROLE == cloud ]] && ss -ltnH | awk '{print $4}' | grep -Eq ":8791$"; then ic_fail "管理端口 8791 已被占用"; fi
   if ss -ltnH | awk '{print $4}' | grep -Eq ":$PORT$"; then ic_fail "端口 $PORT 已被占用"; fi
 fi
 ic_trusted_dir "$BASE/releases"
@@ -147,8 +149,11 @@ fi
 ic_trusted_dir "$DATA/virus-db"
 chown root:10001 "$DATA/virus-db"
 chmod 750 "$DATA/virus-db"
-if [[ $ROLE == local ]]; then
-  if [[ ! -f $CONF/runtime/panel-auth.json ]]; then
+if ! getent group 10001 >/dev/null; then
+  ! getent group ironcurtain-web >/dev/null || ic_fail "ironcurtain-web 用户组编号冲突"
+  groupadd --system --gid 10001 ironcurtain-web
+fi
+if [[ ! -f $CONF/runtime/panel-auth.json ]]; then
     [[ -f $CONF/credentials/panel-auth.json ]] || ic_helper "$CONF/credentials" init-local
     install -m 600 -o 10001 -g 10001 "$CONF/credentials/panel-auth.json" "$CONF/runtime/panel-auth.json"
   fi
@@ -156,6 +161,7 @@ if [[ $ROLE == local ]]; then
     openssl req -x509 -newkey rsa:3072 -nodes -days 365 -subj "/CN=$HOST" -addext "subjectAltName=$SAN" -addext 'extendedKeyUsage=serverAuth' -keyout "$CONF/runtime/panel.key" -out "$CONF/runtime/panel.crt" >/dev/null 2>&1
     chown root:10001 "$CONF/runtime/panel.key" "$CONF/runtime/panel.crt"; chmod 640 "$CONF/runtime/panel.key" "$CONF/runtime/panel.crt"
   fi
+if [[ $ROLE == local ]]; then
   if [[ ! -f $CONF/profile.json ]]; then printf '{"schema":"ironcurtain-profile/v1"}\n' > "$CONF/profile.json"; fi
   # systemd resolves Group through NSS even when a numeric ID is configured.
   # Container GID 10001 therefore needs a real host group; do not add members.
@@ -279,7 +285,9 @@ else
   fi
   ic_helper "$CONF/runtime" validate-cloud
   install -m 640 -o root -g 10001 "$CONF/ca.crt" "$CONF/runtime/ca.crt"
-  chown root:10001 "$CONF/runtime/"*; chmod 640 "$CONF/runtime/"*
+  for name in server.key server.crt health.key health.crt ca.crt config.json; do
+    chown root:10001 "$CONF/runtime/$name"; chmod 640 "$CONF/runtime/$name"
+  done
   chmod 600 "$CONF/ca.key"
 fi
 jq -n --arg role "$ROLE" --arg host "$HOST" --arg bind "$BIND" --arg image "$IMAGE" --arg version "$VERSION" --arg antivirus "$ENGINE_MODE" '{schema:1,role:$role,host:$host,bind:$bind,image:$image,version:$version,antivirus:$antivirus}' > "$BASE/install.json.new"
@@ -307,9 +315,11 @@ if [[ $ROLE == local ]]; then
     if [[ -f $IC_TX/rules-timer-active ]]; then systemctl start ironcurtain-rules-sync.timer; fi
   fi
 fi
+ic_domain_install
 ic_compose config --quiet
 ic_compose up -d --wait --wait-timeout 90
 ic_wait || ic_fail '容器 HTTPS 身份健康检查未通过'
+ic_domain_gateway_resume
 if [[ $ROLE == local ]]; then
   ic_scan_wait || ic_fail '宿主扫描器或容器扫描通道不可用'
 fi
@@ -317,7 +327,10 @@ ic_tx_finish
 SUCCESS=true
 engine_setup
 echo "$PRODUCT_NAME v$VERSION 安装完成"
-echo "网页面板：https://$HOST:$PORT"
+PANEL_PORT=$PORT
+[[ $ROLE != cloud ]] || PANEL_PORT=8791
+echo "网页面板：https://$HOST:$PANEL_PORT"
+echo "已绑定 DNS 后，可在设置或菜单中填写域名，自动申请和续期证书。"
 echo "打开 Linux 管理菜单：sudo $MENU_COMMAND"
 echo "检查并更新程序：sudo $MENU_COMMAND update"
 echo '请在防火墙限制管理来源，确认服务器证书指纹后导入信任；脚本不会关闭 TLS 校验。'

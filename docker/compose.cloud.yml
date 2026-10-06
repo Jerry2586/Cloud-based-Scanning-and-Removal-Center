@@ -13,9 +13,16 @@ services:
     mem_limit: 512m
     cpus: 1.0
     tmpfs: ["/tmp:rw,noexec,nosuid,nodev,size=32m"]
-    ports: ["${IRONCURTAIN_BIND:-127.0.0.1}:9443:9443"]
+    ports: ["${IRONCURTAIN_BIND:-127.0.0.1}:9443:9443", "${IRONCURTAIN_BIND:-127.0.0.1}:8791:8791"]
     environment:
       IRONCURTAIN_ROLE: cloud
+      IRONCURTAIN_CONFIG_DIR: /etc/xuanwu
+      IRONCURTAIN_LISTEN_HOST: 0.0.0.0
+      IRONCURTAIN_PORT: 8791
+      IRONCURTAIN_PUBLIC_ORIGIN: "https://${IRONCURTAIN_PUBLIC_HOST}:8791"
+      IRONCURTAIN_TLS_CERT: /etc/xuanwu/panel.crt
+      IRONCURTAIN_TLS_KEY: /etc/xuanwu/panel.key
+      IRONCURTAIN_DOMAIN_SOCKET: /run/ironcurtain-domain-cloud/control.sock
       IRONCURTAIN_PUBLIC_HOST: ${IRONCURTAIN_PUBLIC_HOST:?}
       SECURITY_TLS_KEY: /etc/xuanwu/server.key
       SECURITY_TLS_CERT: /etc/xuanwu/server.crt
@@ -25,6 +32,7 @@ services:
       SECURITY_RELEASE_DIR: /var/lib/xuanwu-releases
       SECURITY_VIRUS_DB_DIR: /var/lib/xuanwu-virus-db
     volumes:
+      - /run/ironcurtain-domain-cloud:/run/ironcurtain-domain-cloud:ro
       - ${IRONCURTAIN_CONFIG:?}/runtime:/etc/xuanwu:ro
       - ${IRONCURTAIN_DATA:?}:/var/lib/xuanwu
       - ${IRONCURTAIN_RELEASES:?}:/var/lib/xuanwu-releases:ro

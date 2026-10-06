@@ -1,4 +1,5 @@
 import { createUpdateSettings } from './update-settings.js';
+import { createDomainSettings } from './domain-settings.js';
 import { createSecurityPoller } from './security-poller.js';
 const $ = id => document.getElementById(id);
 import { createSecurityConsole } from './security-console.js?v=ironcurtain-login-20261004';
@@ -64,6 +65,7 @@ function completeReport(report, checks) {
 export function createSecurityUi({ state, can, request, notify }) {
   const consoleView = createSecurityConsole();
   const updateSettings = createUpdateSettings({state,request,notify});
+  const domainSettings = createDomainSettings({state,request,notify});
   let localRunning = false;
   let scanRequested = false;
   let scanGeneration = 0;
@@ -214,6 +216,15 @@ export function createSecurityUi({ state, can, request, notify }) {
     try {
       const data = await request('/api/cloud/status');
       if (!current()) return;
+      if (data.state === 'unpaired' && data.connected === false) {
+        set('security-cloud-state', '尚未对接');
+        set('security-cloud-reason', '玄武为可选服务；本机体检和病毒查杀独立运行。');
+        set('security-identity', '尚未配置节点身份');
+        for (const id of ['security-cloud-rules', 'security-cloud-release', 'security-build-probe', 'security-license-probe', 'security-integrity', 'security-host-scan', 'security-build-host-scan']) set(id, '尚未对接');
+        set('security-event-title', '尚无云端事件');
+        set('security-event-message', '需要集中管理时，在 Linux 菜单完成玄武配对。');
+        return;
+      }
       if (!data.connected) throw new Error(data.reason ?? '云端不可达');
       set('security-cloud-state', '云端已连接');
       set('security-cloud-rules',ruleLabel(data.rules));
@@ -249,8 +260,14 @@ export function createSecurityUi({ state, can, request, notify }) {
     if (bound) return;
     bound = true;
     consoleView.bind();
-    updateSettings.bind(); updateSettings.start();
+    updateSettings.bind(); updateSettings.start(); domainSettings.bind(); domainSettings.start();
     void renderSecurity(); void renderLocalSecurity();
+    document.querySelectorAll('[data-security-refresh]').forEach(button => button.addEventListener('click', async () => {
+      if (button.disabled || !state.csrf || !can('system.manage')) return;
+      button.disabled = true;
+      try { await localSecurityPoller.refresh(); }
+      finally { button.disabled = false; }
+    }));
     document.querySelectorAll('[data-security-scan], [data-security-container-scan], [data-security-full-scan], [data-security-checkup], [data-security-engine-update]').forEach(button => button.addEventListener('click', async () => {
       if (scanRequested || !state.csrf || !can('system.manage')) return;
       const session = state.csrf;
@@ -266,5 +283,5 @@ export function createSecurityUi({ state, can, request, notify }) {
       finally { if (current()) { scanRequested = false; consoleView.setBusy(false); } }
     }));
   }
-  return Object.freeze({ bind, render() { updateSettings.start(); void renderSecurity(); void renderLocalSecurity(); } });
+  return Object.freeze({ bind, render() { updateSettings.start(); domainSettings.start(); void renderSecurity(); void renderLocalSecurity(); } });
 }

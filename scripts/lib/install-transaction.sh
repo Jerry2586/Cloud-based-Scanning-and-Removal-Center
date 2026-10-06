@@ -46,9 +46,11 @@ ic_tx_begin() {
     systemctl is-enabled --quiet ironcurtain-agent.service && touch "$IC_TX/agent-enabled" || true
     systemctl is-active --quiet ironcurtain-agent.service && touch "$IC_TX/agent-active" || true
   fi
+  if declare -F ic_domain_snapshot >/dev/null; then ic_domain_snapshot || return 1; fi
   docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null | grep -qx true && touch "$IC_TX/container-running" || true
   jq -n --arg role "$ROLE" --arg snapshot "$IC_TX" '{schema:1,role:$role,snapshot:$snapshot}' > "$BASE/transaction.json.new"
   chmod 600 "$BASE/transaction.json.new"; mv -f "$BASE/transaction.json.new" "$BASE/transaction.json"
+  if declare -F ic_domain_quiesce >/dev/null; then ic_domain_quiesce || return 1; fi
   if [[ $ROLE == local && -n ${PANEL_TIMER:-} && -f $PANEL_TIMER ]]; then systemctl stop ironcurtain-panel-check.timer; fi
   if [[ -s $IC_TX/install.json ]]; then ic_compose stop; fi
   [[ $ROLE != local || ! -f $IC_TX/agent.service ]] || systemctl stop ironcurtain-agent.service
@@ -138,6 +140,7 @@ ic_tx_recover() {
       fi
     fi
   fi
+  if declare -F ic_domain_restore >/dev/null; then ic_domain_restore "$snapshot" || return 1; fi
   if [[ $ROLE == local ]]; then
     systemctl daemon-reload || result=1
     if [[ -f $snapshot/panel-timer-enabled ]]; then systemctl enable ironcurtain-panel-check.timer || result=1; fi
@@ -155,6 +158,7 @@ ic_tx_recover() {
     ic_load || return 1
     if [[ -f $snapshot/container-running ]]; then ic_compose up -d || result=1; ic_wait || result=1; [[ $ROLE != local ]] || ic_scan_wait || result=1; fi
   fi
+  if declare -F ic_domain_resume >/dev/null; then ic_domain_resume "$snapshot" || result=1; fi
   if ((result)); then echo '恢复尚未通过健康检查，事务记录保留，下一次运行将继续恢复。' >&2; return 1; fi
   rm -f -- "$BASE/transaction.json" || return 1
   echo '安装前配置、身份和服务状态已恢复；失败文件保留在 root 私有恢复目录。' >&2

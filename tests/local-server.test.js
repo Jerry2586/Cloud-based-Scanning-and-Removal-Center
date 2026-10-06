@@ -10,7 +10,8 @@ import { passwordRecord, loadCredentials, verifyPassword, createSessions } from 
 const password = 'fixture-independent-password-only';
 async function fixture(t, scanResult, updates, cloudStatus) {
   let invoked = 0;
-  const server = createLocalServer({ credentials: passwordRecord(password), origin: 'http://127.0.0.1:8791', ...(updates ? {updates} : {}), ...(cloudStatus ? {cloudStatus} : {}), scan: async action => { invoked++; return scanResult || { state: ['scan','full-scan','checkup','engine-update'].includes(action) ? 'running' : 'idle', checks: [] }; } });
+  const actions = [];
+  const server = createLocalServer({ credentials: passwordRecord(password), origin: 'http://127.0.0.1:8791', ...(updates ? {updates} : {}), ...(cloudStatus ? {cloudStatus} : {}), scan: async action => { invoked++; actions.push(action); return scanResult || { state: ['scan','full-scan','checkup','engine-update'].includes(action) ? 'running' : 'idle', checks: [] }; } });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
   const base = 'http://127.0.0.1:' + server.address().port;
@@ -21,7 +22,7 @@ async function fixture(t, scanResult, updates, cloudStatus) {
   });
   const post = (pathname, value, headers = {}) => request(pathname, { method: 'POST', headers: { origin: 'http://127.0.0.1:8791', 'content-type': 'application/json', ...headers }, body: JSON.stringify(value) });
   const login = async () => { const response = await post('/api/login', { username: 'admin', password }); assert.equal(response.status, 200); return { cookie: response.headers.get('set-cookie').split(';')[0], csrf: (await response.json()).csrf }; };
-  return { request, post, login, invoked: () => invoked };
+  return { request, post, login, invoked: () => invoked, actions: () => [...actions] };
 }
 test('standalone session owns scan authorization and rejects shell/path inputs', async t => {
   const f = await fixture(t);
@@ -37,6 +38,20 @@ test('standalone session owns scan authorization and rejects shell/path inputs',
   assert.equal((await f.request('/web/admin/security/status', { headers })).status, 404);
   await f.post('/api/logout', {}, headers);
   assert.equal((await f.request('/api/scan', { headers })).status, 401);
+});
+test('authenticated status refresh stays read-only and never starts a scan', async t => {
+  const f = await fixture(t);
+  const identity = await f.login();
+  const headers = { cookie: identity.cookie };
+  for (let n = 0; n < 2; n++) {
+    const response = await f.request('/api/scan', { headers });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).state, 'idle');
+  }
+  assert.deepEqual(f.actions(), ['status', 'status']);
+  const started = await f.post('/api/scan', {}, { ...headers, 'x-csrf-token': identity.csrf });
+  assert.equal(started.status, 202);
+  assert.deepEqual(f.actions(), ['status', 'status', 'scan']);
 });
 test('panel has independent entry and fixed static whitelist with no APPGOG dependency', async t => {
   const f = await fixture(t);

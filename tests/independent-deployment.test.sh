@@ -38,6 +38,45 @@ for role in local cloud; do
   release=$(readlink -f "/opt/ironcurtain/$role/current")
   [[ -z $(find "$release" \( ! -user root -o ! -group root -o -perm /022 \) -print -quit) ]]
 done
+# Actual fixed root services exist, but a fresh IP installation must not claim 443.
+for role in local cloud; do
+  systemctl is-active --quiet "ironcurtain-domain-$role-control.service"
+  systemctl is-active --quiet "ironcurtain-domain-$role-renew.timer"
+  ! systemctl is-active --quiet "ironcurtain-domain-$role-gateway.socket"
+  [[ $(systemctl show "ironcurtain-domain-$role-apply.service" -p ProtectSystem --value) == strict ]]
+  [[ $(systemctl show "ironcurtain-domain-$role-renew.service" -p ProtectSystem --value) == strict ]]
+  command -v certbot
+  # Drive the real Unix controller as the exact non-root panel identity.
+  setpriv --reuid=10001 --regid=10001 --clear-groups python3 - "$role" <<'PY'
+import http.client, json, socket, sys, time
+address = '/run/ironcurtain-domain-' + sys.argv[1] + '/control.sock'
+for _ in range(40):
+    try:
+        client = socket.socket(socket.AF_UNIX)
+        client.settimeout(5)
+        client.connect(address)
+        break
+    except (FileNotFoundError, ConnectionRefusedError):
+        client.close()
+        time.sleep(0.25)
+else:
+    raise RuntimeError('domain controller socket unavailable')
+connection = http.client.HTTPConnection('localhost', timeout=5)
+connection.sock = client
+connection.request('GET', '/domain')
+response = connection.getresponse()
+assert response.status == 200, response.status
+reply = json.loads(response.read())
+assert reply['state'] == 'idle', reply
+connection.close()
+PY
+  # Real systemd socket passthrough; trust only the fixture's existing IP cert.
+  systemctl start "ironcurtain-domain-$role-gateway.socket"
+  host=127.0.0.1; port=8790; service=ironcurtain-local
+  if [[ $role == cloud ]]; then host=$CLOUD_HOST; port=8791; service=xuanwu-admin; fi
+  curl --noproxy '*' --fail --silent --show-error --max-time 15 --cacert "/etc/ironcurtain/$role/runtime/panel.crt" --resolve "$host:443:127.0.0.1" -H "Host: $host:$port" "https://$host:443/healthz" | jq -e --arg service "$service" '.service == $service and .ready == true'
+  systemctl stop "ironcurtain-domain-$role-gateway.socket" "ironcurtain-domain-$role-gateway.service"
+done
 # Both role menus must open in a real terminal; the legacy entry still works.
 for entry in tiemu ironcurtain xuanwu; do
   [[ -f /usr/local/bin/$entry && ! -L /usr/local/bin/$entry && $(stat -c '%a:%u:%h' /usr/local/bin/$entry) == 755:0:1 ]]
@@ -64,7 +103,7 @@ assert '\x1b[' not in plain
 assert text[text.index('╔'):text.index('请输入菜单编号（0 退出）')] == plain[plain.index('╔'):plain.index('请输入菜单编号（0 退出）')]
 lines = text.splitlines()
 items = [line for line in lines if re.match(r'^ *\d+\. ', line)]
-expected = list(range(1, 28)) + [29, 31, 32, 33, 34, 0] if sys.argv[2] == 'tiemu' else list(range(1, 12)) + list(range(22, 31)) + [0]
+expected = list(range(1, 28)) + [29, 31, 32, 33, 34, 35, 36, 0] if sys.argv[2] == 'tiemu' else list(range(1, 12)) + [13, 14] + list(range(22, 31)) + [35, 36] + [0]
 assert [int(re.match(r'^ *(\d+)\.', line)[1]) for line in items] == expected
 assert all(len(re.findall(r'\d+\. ', line)) == 1 for line in items)
 assert '╔' in text and '╠' in text and '╚' in text
@@ -162,7 +201,14 @@ installed_before=$(sha256sum /opt/ironcurtain/local/install.json)
 if /usr/local/bin/tiemu release-update; then echo 'Damaged cloud program accepted' >&2; exit 1; fi
 [[ $(sha256sum /opt/ironcurtain/local/install.json) == "$installed_before" ]]
 install -m 640 -o root -g 10001 "$WORK/program-valid.run" "$active_run"
+# Exercise preservation of an already activated gateway across a real signed upgrade.
+systemctl enable --now ironcurtain-domain-local-gateway.socket
 /usr/local/bin/tiemu release-update
+systemctl is-enabled --quiet ironcurtain-domain-local-gateway.socket
+systemctl is-active --quiet ironcurtain-domain-local-gateway.socket
+curl --noproxy '*' --fail --silent --show-error --max-time 15 --cacert /etc/ironcurtain/local/runtime/panel.crt -H 'Host: 127.0.0.1:8790' https://127.0.0.1:443/healthz | jq -e '.service == "ironcurtain-local" and .ready == true'
+systemctl disable --now ironcurtain-domain-local-gateway.socket
+systemctl stop ironcurtain-domain-local-gateway.service
 [[ $(jq -er .version /opt/ironcurtain/local/install.json) == "$version" ]]
 [[ $(jq -er .antivirus /opt/ironcurtain/local/install.json) == skip ]]
 [[ $(sha256sum /etc/ironcurtain/local/profile.json) == "$profile_before" ]]

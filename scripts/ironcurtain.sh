@@ -7,6 +7,7 @@ if [[ ${1:-} == --role ]]; then ROLE=${2:?}; shift 2; fi
 case "${ROLE:-$(basename "$0")}" in local|tiemu|ironcurtain) ROLE=local ;; cloud|xuanwu) ROLE=cloud ;; *) echo '角色无效' >&2; exit 1 ;; esac
 SOURCE=/opt/ironcurtain/$ROLE/current
 source "$SOURCE/scripts/lib/independent.sh"
+source "$SOURCE/scripts/lib/domain-services.sh"
 source "$SOURCE/scripts/lib/management-transaction.sh"
 source "$SOURCE/scripts/lib/menu-display.sh"
 [[ $EUID == 0 ]] || ic_fail '请用 sudo 运行管理菜单'
@@ -71,7 +72,11 @@ status() {
   ic_menu_row '部署角色' "$PRODUCT_NAME"
   if ic_healthy; then ic_menu_row '运行状态' '正常（容器健康）' "$IC_MENU_GREEN";
   else ic_menu_row '运行状态' '容器未通过健康检查，请运行环境诊断' "$IC_MENU_RED"; fi
-  ic_menu_row '网页面板' "https://$HOST:$PORT" "$IC_MENU_GREEN"
+  local panel_port=8790 panel_origin
+  [[ $ROLE != cloud ]] || panel_port=8791
+  panel_origin=$(jq -r '.origin // empty' "$CONF/runtime/domain.json" 2>/dev/null || true)
+  ic_menu_row '网页面板' "${panel_origin:-https://$HOST:$panel_port}" "$IC_MENU_GREEN"
+  [[ $ROLE != cloud ]] || ic_menu_row '节点接口' "https://$HOST:9443（双向证书认证）"
   ic_menu_row '更新状态' "本地 v$version（选 6 检查并更新最新签名正式版）"
   ic_menu_row '打开菜单' "sudo $MENU_COMMAND"
   ic_menu_row '更新程序' "sudo $MENU_COMMAND update"
@@ -311,13 +316,11 @@ doctor() {
 }
 update() { exec bash "$SOURCE/install.sh" --role "$ROLE" --host "$HOST" --bind "$BIND"; }
 credentials() {
-  [[ $ROLE == local ]] || ic_fail '此操作只显示本地面板凭据'
   ic_private_file "$CONF/credentials/initial-credentials.txt"
   echo '仅在可信的本机终端查看：'
   cat "$CONF/credentials/initial-credentials.txt"
 }
 reset_password() {
-  [[ $ROLE == local ]] || ic_fail '此操作仅用于本地面板'
   lock; stage; ic_helper "$STAGE" init-local
   ic_admin_begin reset-password
   install -m 600 -o 10001 -g 10001 "$STAGE/panel-auth.json" "$CONF/runtime/panel-auth.json"
@@ -430,6 +433,17 @@ virus_database_action() {
     ic_fail '启用未完成；交换前保留原库，交换后保留已验证的新库与恢复日志。请检查记录后重试菜单 29'
   fi
 }
+domain_status() {
+  curl -q -sS --max-time 8 --unix-socket "/run/ironcurtain-domain-$ROLE/control.sock" http://localhost/domain | jq '{state,domain,requested_domain,reason,certificate,updated_at}'
+}
+configure_domain() {
+  local domain payload
+  IFS= read -r -p '请输入已解析到本服务器的域名（例如 tiemu.example.com）：' domain </dev/tty
+  domain=$(printf '%s' "$domain" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+  payload=$(jq -nc --arg domain "$domain" '{domain:$domain}')
+  curl -q -sS --max-time 8 --unix-socket "/run/ironcurtain-domain-$ROLE/control.sock" -H 'Content-Type: application/json' -d "$payload" http://localhost/domain | jq .
+  echo '后台正在验证域名并申请证书，原 IP 地址继续可用；选 36 查看实际结果。'
+}
 dispatch() {
   case "$1" in
     status) status ;; logs) ic_compose logs --tail 100 ;;
@@ -443,6 +457,7 @@ dispatch() {
     rules-sync|rules-status) rules_action "$1" ;;
     release-import|release-status|release-update) release_action "$1" ;;
     virus-db-import|virus-db-status|virus-db-update) virus_database_action "$1" ;;
+    domain) configure_domain ;; domain-status) domain_status ;;
     update) update ;; doctor) doctor ;; scan) scan ;; profile) profile ;;
     discover) discover_scope ;; enroll) enroll_scope ;; full-scan) full_scan ;; scan-status) scan_status ;;
     pair) pair ;; cloud-status) cloud_status ;; unpair) unpair ;;
@@ -482,7 +497,9 @@ while true; do
     ic_menu_item 8 '登记节点与加密导出'
     ic_menu_item 9 '撤销节点'
     ic_menu_item 10 '查看节点'
-    ic_menu_item 11 '浏览器面板证书'
+    ic_menu_item 11 '只读节点接口证书'
+    ic_menu_item 13 '查看面板凭据'
+    ic_menu_item 14 '重置面板密码'
   fi
   ic_menu_item 22 '创建加密恢复包'
   ic_menu_item 23 '验证恢复包'
@@ -504,6 +521,8 @@ while true; do
     ic_menu_item 29 '导入签名官方病毒库'
     ic_menu_item 30 '云端病毒库状态'
   fi
+  ic_menu_item 35 '设置域名并自动申请 HTTPS'
+  ic_menu_item 36 '查看域名与证书状态'
   ic_menu_item 0 '退出'
   echo
   echo '身份变更、隔离与恢复请核对提示；更新仅接受已验签的正式包。'
@@ -524,8 +543,8 @@ while true; do
       10) [[ $ROLE == local ]] && action=pair || action=nodes ;;
       11) [[ $ROLE == local ]] && action=cloud-status || action=reader ;;
       12) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=unpair ;;
-      13) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=credentials ;;
-      14) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=reset-password ;;
+      13) action=credentials ;;
+      14) action=reset-password ;;
       15) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=engine-install ;;
       16) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=engine-update ;;
       17) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=engine-status ;;
@@ -543,6 +562,7 @@ while true; do
       32) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=enroll ;;
       33) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=full-scan ;;
       34) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=scan-status ;;
+      35) action=domain ;; 36) action=domain-status ;;
       *) echo '请选择有效菜单项'; continue ;;
     esac
     break
