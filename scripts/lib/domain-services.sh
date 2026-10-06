@@ -50,8 +50,10 @@ ic_domain_resume() {
   done
 }
 ic_domain_install() {
-  local prefix=ironcurtain-domain-$ROLE proxy port=8790 action
+  local prefix=ironcurtain-domain-$ROLE proxy port=8790 action upstream=${BIND:-0.0.0.0}
   [[ $ROLE != cloud ]] || port=8791
+  [[ $upstream != 0.0.0.0 ]] || upstream=127.0.0.1
+  python3 -c 'import ipaddress,sys;ipaddress.IPv4Address(sys.argv[1])' "$upstream" || ic_fail "HTTPS 上游监听地址无效"
   install -d -m 700 "$CONF/domain-control"
   install -d -m 750 -o root -g 10001 "/run/ironcurtain-domain-$ROLE"
   proxy=
@@ -141,7 +143,7 @@ Description=IronCurtain $ROLE TLS passthrough
 Requires=$prefix-gateway.socket
 After=docker.service
 [Service]
-ExecStart=$proxy 127.0.0.1:$port
+ExecStart=$proxy $upstream:$port
 DynamicUser=true
 NoNewPrivileges=true
 PrivateTmp=true

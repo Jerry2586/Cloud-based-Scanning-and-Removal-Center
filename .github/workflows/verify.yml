@@ -98,9 +98,13 @@ jobs:
         run: |
           set -o pipefail
           sudo env "PATH=$PATH" IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER=1 bash tests/independent-deployment.test.sh 2>&1 | tee "$RUNNER_TEMP/independent-deployment.log"
-      - name: Diagnose independent scanner failure
+      - name: Diagnose independent services and HTTPS gateway failure
         if: failure()
         run: |
+          for role in local cloud; do
+            sudo systemctl status "ironcurtain-domain-$role-gateway.socket" "ironcurtain-domain-$role-gateway.service" "ironcurtain-domain-$role-control.service" --no-pager || true
+            sudo journalctl -u "ironcurtain-domain-$role-gateway.service" -u "ironcurtain-domain-$role-control.service" --no-pager -n 40 || true
+          done
           sudo systemctl status ironcurtain-panel-check.service ironcurtain-panel-update.service --no-pager || true
           sudo journalctl -u ironcurtain-panel-check.service -u ironcurtain-panel-update.service --no-pager -n 40 || true
           sudo systemctl status ironcurtain-agent.service --no-pager || true
