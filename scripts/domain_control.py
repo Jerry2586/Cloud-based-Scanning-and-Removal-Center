@@ -22,7 +22,7 @@ import threading
 import time
 import urllib.request
 from urllib.parse import urlsplit
-from shared_ingress import SharedIngress, ingress_lock
+from contextlib import contextmanager
 
 
 def valid_domain(value):
@@ -99,6 +99,23 @@ def port_free(port):
             return True
         except OSError:
             return False
+
+
+@contextmanager
+def entry_lock():
+    """Serialize security roles without touching business services."""
+    fd = os.open('/run/lock/ironcurtain-domain-entry.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1 or info.st_mode & 0o022:
+            raise DomainError('安全域名锁异常，请在 Linux 菜单检查服务')
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise DomainError('另一个安全域名任务正在执行，请稍后重试') from error
+        yield
+    finally:
+        os.close(fd)
 
 
 class SafeRedirect(urllib.request.HTTPRedirectHandler):
@@ -282,6 +299,8 @@ class Controller:
         transaction = read_json(self.control / 'transaction.json')
         if transaction is None:
             return
+        if transaction.get('shared') is not None:
+            raise DomainError('发现旧版外部入口恢复记录；保留证据，请管理员检查，程序不会改动其他项目')
         previous = transaction['previous']
         if previous:
             atomic_json(self.runtime / 'domain.json', previous, public=True)
@@ -294,9 +313,6 @@ class Controller:
         run(['systemctl', 'start' if gateway['active'] else 'stop', self.gateway])
         if not gateway['active']:
             run(['systemctl', 'stop', self.gateway.replace('.socket', '.service')])
-        if transaction.get('shared') is not None:
-            ingress = SharedIngress.discover(self.role, transaction['domain'])
-            ingress.restore(transaction['shared'])
         durable_unlink(self.control / 'transaction.json')
 
     def challenge_probe(self, domain, standalone, webroot):
@@ -415,8 +431,8 @@ class Controller:
         trusted_directory(self.control)
         domain = ''
         try:
-            # Shared lock spans recovery, challenge publication, activation and compensation.
-            with ingress_lock():
+            # Security-only lock spans recovery, challenge publication and activation.
+            with entry_lock():
                 self.restore()
                 request = read_json(self.runtime / 'domain.json' if renew else self.control / 'request.json')
                 if renew and not request:
@@ -433,29 +449,21 @@ class Controller:
                 else:
                     self.status_write('running', domain, '正在检查入口并申请证书')
                 try:
-                    standalone = port_free(80)
-                    ingress = None if standalone else SharedIngress.discover(self.role, domain)
+                    if not port_free(80):
+                        raise DomainError('80 端口已被其他服务占用，无法自动验证域名；原入口保留，程序不会修改或停止其他服务')
                     previous = read_json(self.runtime / 'domain.json', {})
                     owned = subprocess.run(['systemctl', 'is-active', '--quiet', self.gateway], check=False).returncode == 0
                     enabled = subprocess.run(['systemctl', 'is-enabled', '--quiet', self.gateway], check=False).returncode == 0
-                    if ingress is None and not owned and not port_free(443):
-                        raise DomainError('443 已由其他服务占用，入口未提供受控共享接口')
+                    if not owned and not port_free(443):
+                        raise DomainError('443 端口已被其他服务占用，无法启用独立 HTTPS 入口；原入口保留，程序不会修改或停止其他服务')
                     atomic_json(self.control / 'transaction.json', {'previous': previous,
-                        'gateway': {'active': owned, 'enabled': enabled}, 'domain': domain,
-                        'shared': ingress.snapshot() if ingress else None})
-                    webroot = ingress.webroot if ingress else self.runtime / 'acme-challenge'
-                    if ingress:
-                        ingress.prepare(domain, read_json(self.control / 'transaction.json')['shared'])
-                    self.challenge_probe(domain, standalone, webroot)
-                    generation = self.issue(domain, standalone, webroot)
+                        'gateway': {'active': owned, 'enabled': enabled}, 'domain': domain})
+                    webroot = self.runtime / 'acme-challenge'
+                    self.challenge_probe(domain, True, webroot)
+                    generation = self.issue(domain, True, webroot)
                     atomic_json(self.runtime / 'domain.json', {'schema': 1, 'domain': domain, 'origin': 'https://' + domain,
-                        'gateway': ingress is None, 'generation': generation}, public=True)
-                    if ingress:
-                        # Idempotent activation also repairs a missing or stale shared route.
-                        record = read_json(Path('/opt/ironcurtain') / self.role / 'install.json')
-                        ingress.activate(domain, generation, self.runtime, record['host'])
-                    else:
-                        run(['systemctl', 'enable', '--now', self.gateway])
+                        'gateway': True, 'generation': generation}, public=True)
+                    run(['systemctl', 'enable', '--now', self.gateway])
                     service = 'ironcurtain-local' if self.role == 'local' else 'xuanwu-admin'
                     expected = json.dumps({'service': service, 'ready': True}, separators=(',', ':')).encode()
                     for attempt in range(4):

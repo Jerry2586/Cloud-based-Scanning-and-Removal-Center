@@ -77,6 +77,8 @@ PY
   curl --noproxy '*' --fail --silent --show-error --max-time 15 --cacert "/etc/ironcurtain/$role/runtime/panel.crt" --resolve "$host:443:127.0.0.1" -H "Host: $host:$port" "https://$host:443/healthz" | jq -e --arg service "$service" '.service == $service and .ready == true'
   systemctl stop "ironcurtain-domain-$role-gateway.socket" "ironcurtain-domain-$role-gateway.service"
 done
+# Verify both real workers reject unrelated port owners without modifying them.
+python3 "$SOURCE/tests/domain-entry-conflicts.test.py"
 # Both role menus must open in a real terminal; the legacy entry still works.
 for entry in tiemu ironcurtain xuanwu; do
   [[ -f /usr/local/bin/$entry && ! -L /usr/local/bin/$entry && $(stat -c '%a:%u:%h' /usr/local/bin/$entry) == 755:0:1 ]]

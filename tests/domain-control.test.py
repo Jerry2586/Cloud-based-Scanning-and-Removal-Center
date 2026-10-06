@@ -17,7 +17,6 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 import domain_control as dc
-import shared_ingress as si
 
 class ProbeTests(unittest.TestCase):
     def serve(self, handler):
@@ -106,7 +105,7 @@ class TransactionTests(unittest.TestCase):
 
     def simulated(self, probe=None):
         stack = contextlib.ExitStack()
-        stack.enter_context(patch.object(dc, 'ingress_lock', contextlib.nullcontext))
+        stack.enter_context(patch.object(dc, 'entry_lock', contextlib.nullcontext))
         stack.enter_context(patch.object(dc, 'port_free', return_value=True))
         stack.enter_context(patch.object(dc.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)))
         stack.enter_context(patch.object(dc, 'run', return_value=b''))
@@ -151,10 +150,23 @@ class TransactionTests(unittest.TestCase):
         self.assertEqual(dc.read_json(self.controller.runtime / 'domain.json'), self.old)
         self.assertFalse((self.controller.control / 'transaction.json').exists())
 
-    def test_unmanaged_occupied_entry_never_issues_certificate(self):
-        with self.simulated(), patch.object(dc, 'port_free', return_value=False), patch.object(dc.SharedIngress, 'discover', side_effect=RuntimeError('unmanaged ingress')), patch.object(self.controller, 'issue') as issue, self.assertRaises(RuntimeError):
-            self.controller.apply()
-        issue.assert_not_called()
+    def test_occupied_ports_leave_business_services_and_old_origin_untouched(self):
+        for ports, expected in [([False], '80'), ([True, False], '443')]:
+            with self.subTest(port=expected), self.simulated(), patch.object(dc, 'port_free', side_effect=ports), patch.object(self.controller, 'issue') as issue, patch.object(dc, 'run') as command, self.assertRaises(dc.DomainError):
+                self.controller.apply()
+            issue.assert_not_called()
+            command.assert_not_called()
+            self.assertEqual(dc.read_json(self.controller.runtime / 'domain.json'), self.old)
+            self.assertFalse((self.controller.control / 'transaction.json').exists())
+            self.assertIn(expected, self.controller.status()['reason'])
+
+    def test_legacy_external_recovery_is_preserved_without_touching_business(self):
+        journal = {'previous':self.old,'gateway':False,'domain':'next.example.com','shared':{'legacy':True}}
+        dc.atomic_json(self.controller.control / 'transaction.json', journal)
+        with patch.object(dc, 'run') as command, self.assertRaises(dc.DomainError):
+            self.controller.restore()
+        command.assert_not_called()
+        self.assertEqual(dc.read_json(self.controller.control / 'transaction.json'), journal)
         self.assertEqual(dc.read_json(self.controller.runtime / 'domain.json'), self.old)
 
     def test_queue_keeps_installation_excluded_through_dispatch(self):
@@ -219,11 +231,28 @@ class MenuTests(unittest.TestCase):
         self.assertIn('后台正在验证域名并申请证书', result.stdout)
         self.assertIn('选 36', result.stdout)
 
-class SharedIngressTests(unittest.TestCase):
-    def test_role_and_container_are_fixed(self):
-        for role, identity in [('bad','a'*12), ('local','../../etc'), ('cloud','a'*64)]:
-            with self.assertRaises(RuntimeError):
-                si.SharedIngress(role, identity)
+@unittest.skipUnless(os.geteuid() == 0, 'requires isolated Linux root runner')
+class EntryLockTests(unittest.TestCase):
+    def test_actual_lock_excludes_other_role_and_releases_after_exception(self):
+        script = "import sys;sys.path.insert(0,sys.argv[1]);from domain_control import entry_lock;with_lock=entry_lock();with_lock.__enter__()"
+        with dc.entry_lock():
+            result = subprocess.run([sys.executable, '-c', script, str(Path(dc.__file__).parent)], capture_output=True, text=True, timeout=5)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('DomainError', result.stderr)
+        with self.assertRaises(ValueError):
+            with dc.entry_lock():
+                raise ValueError('fixture')
+        with dc.entry_lock():
+            pass
+
+class IndependenceTests(unittest.TestCase):
+    def test_domain_runtime_has_no_business_adapter_or_writable_business_path(self):
+        root = Path(__file__).resolve().parents[1]
+        for name in ['scripts/domain_control.py', 'scripts/lib/domain-services.sh']:
+            text = (root / name).read_text()
+            for forbidden in ['/opt/appgog', 'SharedIngress', 'appgog-ingress', 'docker restart']:
+                self.assertNotIn(forbidden, text)
+        self.assertFalse((root / 'scripts/shared_ingress.py').exists())
 
 if __name__ == '__main__':
     unittest.main()
