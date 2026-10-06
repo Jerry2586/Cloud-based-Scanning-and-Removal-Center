@@ -437,11 +437,19 @@ domain_status() {
   curl -q -sS --max-time 8 --unix-socket "/run/ironcurtain-domain-$ROLE/control.sock" http://localhost/domain | jq '{state,domain,requested_domain,reason,certificate,updated_at}'
 }
 configure_domain() {
-  local domain payload
+  local domain payload response
   IFS= read -r -p '请输入已解析到本服务器的域名（例如 tiemu.example.com）：' domain </dev/tty
   domain=$(printf '%s' "$domain" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
   payload=$(jq -nc --arg domain "$domain" '{domain:$domain}')
-  curl -q -sS --max-time 8 --unix-socket "/run/ironcurtain-domain-$ROLE/control.sock" -H 'Content-Type: application/json' -d "$payload" http://localhost/domain | jq .
+  response=$(curl -q -f -sS --max-time 8 --unix-socket "/run/ironcurtain-domain-$ROLE/control.sock" -H 'Content-Type: application/json' -d "$payload" http://localhost/domain) || {
+    echo '域名设置未受理，请检查域名格式、任务状态及服务日志。' >&2
+    return 1
+  }
+  printf '%s\n' "$response" | jq . || return 1
+  printf '%s\n' "$response" | jq -e '.state == "running"' >/dev/null || {
+    echo '域名任务未启动，请查看菜单 36 的状态。' >&2
+    return 1
+  }
   echo '后台正在验证域名并申请证书，原 IP 地址继续可用；选 36 查看实际结果。'
 }
 dispatch() {

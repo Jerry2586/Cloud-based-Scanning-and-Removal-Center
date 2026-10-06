@@ -192,6 +192,33 @@ class TransactionTests(unittest.TestCase):
         self.controller.status_write('failed', 'next.example.com', 'retry')
         self.assertEqual(self.controller.queue({'domain':'next.example.com'})[0], 429)
 
+@unittest.skipUnless(shutil.which('bash') and shutil.which('jq'), 'requires Bash and jq')
+class MenuTests(unittest.TestCase):
+    def invoke(self, response, status=0):
+        source = (Path(__file__).resolve().parents[1] / 'scripts/ironcurtain.sh').read_text()
+        function = 'configure_domain() {' + source.split('configure_domain() {', 1)[1].split('\ndispatch() {', 1)[0]
+        # Only replace terminal input in the fixture; run the actual production function.
+        function = function.replace('</dev/tty', '')
+        env = dict(os.environ, IC_TEST_RESPONSE=json.dumps(response), IC_TEST_HTTP_STATUS=str(status))
+        script = 'curl() { printf "%s" "$IC_TEST_RESPONSE"; return "$IC_TEST_HTTP_STATUS"; }; ROLE=local\n'
+        # Menu dispatch handles failures explicitly, so errexit must not hide this regression.
+        return subprocess.run(['bash', '-c', script + function + '\nconfigure_domain'], input='guard.example.com\n',
+                              text=True, capture_output=True, env=env, timeout=5)
+
+    def test_rejected_request_never_reports_background_certificate_application(self):
+        for body, status in [({'error':'invalid domain'},22), ({'state':'failed','reason':'worker unavailable'},0), ({},0)]:
+            with self.subTest(body=body):
+                result = self.invoke(body, status)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn('后台正在验证域名并申请证书', result.stdout)
+                self.assertIn('域名', result.stderr)
+
+    def test_accepted_request_reports_running_task_and_status_menu(self):
+        result = self.invoke({'state':'running','requested_domain':'guard.example.com'})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('后台正在验证域名并申请证书', result.stdout)
+        self.assertIn('选 36', result.stdout)
+
 class SharedIngressTests(unittest.TestCase):
     def test_role_and_container_are_fixed(self):
         for role, identity in [('bad','a'*12), ('local','../../etc'), ('cloud','a'*64)]:
