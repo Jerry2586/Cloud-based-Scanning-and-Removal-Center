@@ -251,7 +251,7 @@ export function createSecurityUi({ state, can, request, notify }) {
     consoleView.bind();
     updateSettings.bind(); updateSettings.start();
     void renderSecurity(); void renderLocalSecurity();
-    document.querySelectorAll('[data-security-scan], [data-security-full-scan], [data-security-checkup], [data-security-engine-update]').forEach(button => button.addEventListener('click', async () => {
+    document.querySelectorAll('[data-security-scan], [data-security-container-scan], [data-security-full-scan], [data-security-checkup], [data-security-engine-update]').forEach(button => button.addEventListener('click', async () => {
       if (scanRequested || !state.csrf || !can('system.manage')) return;
       const session = state.csrf;
       const generation = ++scanGeneration;

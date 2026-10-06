@@ -19,6 +19,8 @@ const ASSETS = new Map([
   ['/contracts/environment-status.js', [new URL('../contracts/environment-status.js', import.meta.url), 'text/javascript; charset=utf-8']],
   ['/contracts/protection-status.js', [new URL('../contracts/protection-status.js', import.meta.url), 'text/javascript; charset=utf-8']],
   ['/', ['index.html', 'text/html; charset=utf-8']],
+  ['/assets/theme.js', ['assets/theme.js', 'text/javascript; charset=utf-8']],
+  ['/assets/theme.css', ['assets/theme.css', 'text/css; charset=utf-8']],
   ['/assets/local.css', ['assets/local.css', 'text/css; charset=utf-8']],
   ['/assets/security-preview.css', ['assets/security-preview.css', 'text/css; charset=utf-8']],
   ['/assets/ironcurtain-shield.webp', ['assets/ironcurtain-shield.webp', 'image/webp']],

@@ -46,6 +46,7 @@ export function createSecurityConsole() {
   let requestBusy = false;
   let requestAction = null;
   function open(name, focus = false) {
+    if (name === 'engine') name = 'scan';
     const tab = scope?.querySelector('[data-security-tab="' + name + '"]');
     if (!tab) return;
     set("[data-iron-page-title]", name === "home" ? "安全总览" : tab.textContent.trim());
@@ -98,7 +99,8 @@ export function createSecurityConsole() {
       node.dataset.active=String(checkup.active); node.dataset.state=checkup.state;
       const bar=node.querySelector('span'); if(bar)bar.style.width=checkup.percent===null?(checkup.active?'24%':'0%'):checkup.percent+'%';
     });
-    scope.querySelectorAll('[data-security-scan]').forEach(button => { button.disabled = requestBusy || view.active || fileView.active || checkup.active; });
+    scope.querySelectorAll('[data-security-scan], [data-security-container-scan]').forEach(button => { button.disabled = requestBusy || view.active || fileView.active || checkup.active; });
+    set('[data-container-scan-button]', view.active ? view.buttonLabel : '一键检查容器');
     set('[data-scan-status]', view.status);
     set('[data-scan-progress-tag]', view.tag);
     set('[data-scan-percent]', view.percent === null ? '—' : String(view.percent));
