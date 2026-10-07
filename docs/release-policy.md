@@ -4,7 +4,7 @@
 
 候选分支 candidate/** 先运行三个质量闸门：接口与签名安装/事务测试、真实 Docker/systemd 部署、真实 ClamAV 的隔离测试库扫描。全部通过后使用 GitHub 保存的发布私钥生成六份候选附件并上传工作流制品。候选签名步骤不创建正式 Release。
 
-R023 工作区增加 Go 检测主控：候选与正式闸门包含 Go portable/Linux root/race 测试、vet 和 Linux amd64/arm64 构建。打包脚本在载荷中生成两个二进制，继续由整个载荷的签名与 SHA-256 保护；不增加第七个 Release 附件，生产服务器无需 Go 工具链。这些工作流修改本批尚未在远端执行，不能引用旧 CI 结果来证明新增闸门通过。
+v0.5.10 已集成 Go 检测主控：候选与正式闸门包含 Go portable/Linux root/race 测试、vet 和 Linux amd64/arm64 构建。打包脚本在载荷中生成两个二进制，继续由整个载荷的签名与 SHA-256 保护；不增加第七个 Release 附件，生产服务器无需 Go 工具链。这些闸门已进入正式基线；每个新候选必须对自己的提交重新执行，不能引用旧 CI 代替。
 
 六附件固定为版本化 .run、.run.sha256、.tar.gz、.tar.gz.sha256、release-manifest.json、release-manifest.json.sig。验签使用仓库固定 release-public.pem；检查清单身份、环境合同、两个真实摘要、两份校验附件、自解压头部及其载荷与 TAR 完全相同、归档路径无越界/重复/链接/特殊文件、包内版本匹配。签名私钥只在 runner 临时目录使用并清理，不进入程序或服务器。
 
@@ -13,7 +13,7 @@ R023 工作区增加 Go 检测主控：候选与正式闸门包含 Go portable/L
 发布回取命令仅用于开发/发布环境：
 
 ~~~sh
-node scripts/verify-published-release.js --tag v0.4.0 --expected-commit <已验收的40位提交> --output-dir <尚不存在的验收目录>
+node scripts/verify-published-release.js --tag v0.6.0 --expected-commit <已验收的40位提交> --output-dir <尚不存在的验收目录>
 ~~~
 
 如果签名、包内版本、标签、安装或回取验证失败，发布不能记为验收通过；修复后重新进入候选流程，不强推已发布标签。程序更新通过固定引导器，或由本地 root 菜单从玄武拉取、独立验签后安装；规则自动同步只更新数据规则，不自动运行新程序。候选与正式工作流均执行 root 文件缓存与快照边界测试，真实 Docker 部署验收包含云端菜单导入、损坏包拒绝与签名程序激活。

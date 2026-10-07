@@ -38,6 +38,17 @@ CLOUD_HOST=$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Ga
 [[ $CLOUD_HOST =~ ^[0-9.]+$ ]] || { echo 'Docker bridge gateway unavailable' >&2; exit 1; }
 bash "$SOURCE/scripts/install-independent.sh" --role cloud --host "$CLOUD_HOST" --bind "$CLOUD_HOST"
 bash "$SOURCE/scripts/install-independent.sh" --role local --antivirus skip --host 127.0.0.1 --bind 127.0.0.1
+# Real non-root cloud container storage must survive a container restart.
+node "$SOURCE/tests/helpers/cloud-deployment-probe.js" seed "$CLOUD_HOST" "$WORK/cloud-control-fixture.json"
+[[ $(stat -c '%u:%g:%a' /var/lib/ironcurtain/cloud/runtime/control.sqlite) == 10001:10001:600 ]]
+docker restart ironcurtain-cloud >/dev/null
+cloud_ready=0
+for attempt in $(seq 1 60); do
+  if curl --noproxy '*' --fail --silent --max-time 5 --cacert /etc/ironcurtain/cloud/runtime/panel.crt "https://$CLOUD_HOST:8791/healthz" >/dev/null; then cloud_ready=1; break; fi
+  sleep 1
+done
+[[ $cloud_ready == 1 ]] || { echo 'Cloud admin did not recover after restart.' >&2; exit 1; }
+node "$SOURCE/tests/helpers/cloud-deployment-probe.js" verify "$CLOUD_HOST" "$WORK/cloud-control-fixture.json"
 # Copied runner-owned source must become root-controlled before trust calibration.
 for role in local cloud; do
   release=$(readlink -f "/opt/ironcurtain/$role/current")

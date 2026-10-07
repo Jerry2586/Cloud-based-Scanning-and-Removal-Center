@@ -38,7 +38,7 @@ test('real local cloud client validates mutual TLS, per-node permissions and hon
   const missing=snapshot('unavailable');missing.files_state='unavailable';missing.files={};await client.report(missing);
   assert.equal((await client.status()).node.integrity.state,'unavailable');
   assert.equal((await other.status()).node.last_report_at,null);
-  await assert.rejects(new CloudClient({...options('node-a'),token:'wrong'}).status(),/AUTH_REJECTED/);
+  await assert.rejects(new CloudClient({...options('node-a'),token:'wrong'.padEnd(40,'x')}).status(),/AUTH_REJECTED/);
   await assert.rejects(new CloudClient({...options('node-a'),cert:read('node-b.crt'),key:read('node-b.key')}).status(),/AUTH_REJECTED/);
   await assert.rejects(new CloudClient({...options('node-a'),ca:read('node-a.crt')}).status());
   await assert.rejects(new CloudClient({...options('node-a'),endpoint:endpoint.replace('localhost','127.0.0.1')}).status(),/altname|hostname|ip address/i);

@@ -1,4 +1,5 @@
 import { request } from 'node:https';
+import { TASK_PATTERN, validateHashRequest, validateHashJob } from '../contracts/hash-intelligence.js';
 import { sanitizeRules } from '../contracts/rule-status.js';
 import { sanitizeRelease } from '../contracts/release-status.js';
 import { randomUUID } from 'node:crypto';
@@ -44,10 +45,13 @@ export class CloudClient {
   constructor({ endpoint, nodeId, ca, cert, key, token, timeout = 5000 }) {
     this.endpoint = new URL(endpoint);
     if (this.endpoint.protocol !== 'https:' || this.endpoint.username || this.endpoint.password || this.endpoint.pathname !== '/' || this.endpoint.search || this.endpoint.hash || (!genericId.test(nodeId) && !legacyIds.has(nodeId))) throw Error('INVALID_CLOUD_CONFIG');
+    if(typeof token !== 'string' || !/^[A-Za-z0-9_-]{32,256}$/.test(token)) throw Error('INVALID_NODE_TOKEN');
     this.nodeId=nodeId; this.identity={ca,cert,key}; this.token=token; this.timeout=timeout;
   }
   call(pathname, body) {
-    if (!['/v1/connectivity','/v1/node/status','/v1/policy','/v1/report'].includes(pathname) || (pathname === '/v1/report') !== (body !== undefined)) throw Error('INVALID_CLOUD_OPERATION');
+    const taskRead = typeof pathname === 'string' && pathname.startsWith('/v1/intelligence/') && TASK_PATTERN.test(pathname.slice('/v1/intelligence/'.length));
+    if ((!['/v1/connectivity','/v1/node/status','/v1/policy','/v1/report','/v1/intelligence'].includes(pathname) && !taskRead) || ['/v1/report','/v1/intelligence'].includes(pathname) !== (body !== undefined)) throw Error('INVALID_CLOUD_OPERATION');
+    if (pathname === '/v1/intelligence') body = validateHashRequest(body);
     const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
     if (payload?.length > 262144) return Promise.reject(Error('REPORT_TOO_LARGE'));
     return new Promise((resolveCall,reject) => {
@@ -58,7 +62,7 @@ export class CloudClient {
         res.on('data',chunk=>{length+=chunk.length; if(length>262144){res.destroy(Error('CLOUD_RESPONSE_LIMIT')); return;} chunks.push(chunk);});
         res.on('error',reject); res.on('aborted',()=>reject(Error('CLOUD_RESPONSE_ABORTED')));
         res.on('end',()=>{try {
-          if(res.statusCode!==200) throw Error(res.statusCode===403 ? 'CLOUD_AUTH_REJECTED' : 'CLOUD_REQUEST_REJECTED');
+          if(res.statusCode !== (pathname === '/v1/intelligence' ? 202 : 200)) throw Object.assign(Error([401,403].includes(res.statusCode) ? 'CLOUD_AUTH_REJECTED' : 'CLOUD_REQUEST_REJECTED'), {status: [404,409,429].includes(res.statusCode) ? res.statusCode : 503});
           if(!/^application\/json(?:;|$)/i.test(res.headers['content-type'] ?? '')) throw Error('INVALID_CLOUD_RESPONSE');
           const value=JSON.parse(Buffer.concat(chunks)); if(!value || Array.isArray(value) || typeof value!=='object') throw Error('INVALID_CLOUD_RESPONSE'); resolveCall(value);
         } catch(error){reject(error);}});
@@ -72,6 +76,14 @@ export class CloudClient {
     const data=await this.call('/v1/node/status');
     if(data.identity!==this.nodeId || !data.node || !data.policy || data.policy.delivery!=='pull-only' || data.policy.remote_execution!==false) throw Error('CLOUD_IDENTITY_MISMATCH');
     return {state:'connected', connected:true, generated_at:data.generated_at, node_id:this.nodeId, node:data.node, nodes:{[this.nodeId]:data.node}, policy:data.policy,rules:sanitizeRules(data.rules),releases:sanitizeRelease(data.releases)};
+  }
+  async submitHash(value) {
+    const body=validateHashRequest(value);
+    return validateHashJob(await this.call('/v1/intelligence',body),{nodeId:this.nodeId,sha256:body.sha256});
+  }
+  async hashJob(id) {
+    if (typeof id !== 'string' || !TASK_PATTERN.test(id)) throw Object.assign(Error('任务编号无效'),{status:400});
+    return validateHashJob(await this.call('/v1/intelligence/'+id),{nodeId:this.nodeId,id});
   }
   async report(snapshot) {
     if(!snapshot || !freshHostScan(snapshot.scan) || !['complete','unavailable'].includes(snapshot.files_state) || !snapshot.files || typeof snapshot.files!=='object' || Array.isArray(snapshot.files) || Object.entries(snapshot.files).some(([name,digest])=>name.length>500 || !name.startsWith('/') || name.split('/').includes('..') || !/^[a-f0-9]{64}$/.test(digest))) throw Error('INCOMPLETE_LOCAL_REPORT');
@@ -91,9 +103,13 @@ export function createCloudLink({directory, snapshot, interval=30000}) {
       if(snapshot) { const report=await snapshot(); if(report?.scan && freshHostScan(report.scan)) await client.report(report); }
       status=await client.status();
     } catch(error) {
-      status={state:error.code==='ENOENT' ? 'unpaired' : 'unavailable',connected:false,reason:error.code==='ENOENT' ? '尚未导入玄武节点身份包' : '云端证书、身份或连接验证失败；本机扫描继续运行'};
+      status={state:error.code==='ENOENT' ? 'unpaired' : error.message==='CLOUD_AUTH_REJECTED' ? 'authentication_failed' : 'unavailable',connected:false,reason:error.code==='ENOENT' ? '尚未导入玄武节点身份包' : error.message==='CLOUD_AUTH_REJECTED' ? '玄武拒绝节点身份，请检查配对或撤销状态；本机扫描继续运行' : '云端证书、身份或连接验证失败；本机扫描继续运行'};
     } finally {busy=false;checked=Date.now();} return status;
   }
   const timer=setInterval(()=>void refresh(),interval); timer.unref();
-  return {async status(){if(!checked || Date.now()-checked>=interval) await refresh(); return structuredClone(status);}, refresh, close(){stopped=true;clearInterval(timer);}};
+  async function taskClient() {
+    if(stopped) throw Object.assign(Error('云端连接已关闭'),{status:503});
+    try { return await loadCloudClient(directory); } catch { throw Object.assign(Error('尚未配置有效的玄武节点身份；本机扫描仍可独立使用'),{status:503}); }
+  }
+  return {async nodeId(){return (await taskClient()).nodeId;},async submitHash(value){validateHashRequest(value);return (await taskClient()).submitHash(value);},async hashJob(id){if(typeof id!=='string'||!TASK_PATTERN.test(id))throw Object.assign(Error('任务编号无效'),{status:400});return (await taskClient()).hashJob(id);},async status(){if(!checked || Date.now()-checked>=interval) await refresh(); return structuredClone(status);}, refresh, close(){stopped=true;clearInterval(timer);}};
 }

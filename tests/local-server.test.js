@@ -1,3 +1,4 @@
+import {createCloudControl} from '../src/cloud/control.js';
 import { request as httpRequest } from 'node:http';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -198,4 +199,71 @@ test('readiness routes require local role, session, CSRF, Origin and no custom a
  for(const asset of ['/contracts/engine-readiness.js','/assets/portal/engine-readiness.js'])assert.equal((await f.request(asset)).status,200);
  const cloud=await fixture(t,undefined,undefined,undefined,{role:'cloud',engines:async()=>{throw new Error('must not invoke');}});const cid=await cloud.login(),ch={cookie:cid.cookie,'x-csrf-token':cid.csrf};
  assert.equal((await cloud.request('/api/engines',{headers:ch})).status,404);assert.equal((await cloud.post('/api/engines/check',{},ch)).status,404);
+});
+
+test('cloud control requires admin session, matching Origin and CSRF, and remains absent from local role',async t=>{
+  const control=createCloudControl({file:':memory:',sources:()=>({}),schedule:false});t.after(()=>control.close());
+  const f=await fixture(t,undefined,undefined,()=>({nodes:{}}),{role:'cloud',control});
+  assert.equal((await f.request('/api/control')).status,401);
+  const identity=await f.login(),headers={cookie:identity.cookie,'x-csrf-token':identity.csrf};
+  assert.equal((await f.request('/api/control',{headers})).status,200);
+  const value={revision:1,malicious_threshold:4,external_hash_lookup:false};
+  assert.equal((await f.post('/api/policy',value,{cookie:identity.cookie})).status,403);
+  assert.equal((await f.post('/api/policy',value,{...headers,origin:'https://untrusted.invalid'})).status,403);
+  assert.equal((await f.post('/api/policy',value,headers)).status,200);
+  assert.equal((await f.post('/api/policy',value,headers)).status,409);
+  const input={sha256:'a'.repeat(64),request_key:'11111111-1111-4111-8111-111111111111'};
+  const submitted=await f.post('/api/intelligence',input,headers);assert.equal(submitted.status,202);const job=await submitted.json();
+  assert.equal((await f.request('/api/intelligence/'+job.id,{headers})).status,200);
+  assert.equal((await f.post('/api/plugins',{id:'remote-command',action:'install'},headers)).status,400);
+  const local=await fixture(t,undefined,undefined,undefined,{control});const localIdentity=await local.login();
+  const localHeaders={cookie:localIdentity.cookie,'x-csrf-token':localIdentity.csrf};
+  assert.equal((await local.request('/api/control',{headers:localHeaders})).status,404);
+  assert.equal((await local.post('/api/intelligence',input,localHeaders)).status,400);
+  assert.equal(control.snapshot().jobs.length,1);
+});
+
+
+test('local cloud tasks require session, Origin and CSRF, validate hash-only bodies and keep local scanning independent',async t=>{
+ const {randomUUID}=await import('node:crypto');let calls=0;const id=randomUUID(),hash='a'.repeat(64),at=new Date().toISOString();
+ const job={id,sha256:hash,requester:'node/node-one',state:'queued',created_at:at,updated_at:at,attempts:0,policy:{revision:1,malicious_threshold:3,external_hash_lookup:false},providers:[],result:null};
+ const f=await fixture(t,undefined,undefined,undefined,{cloudTasks:{nodeId:async()=> 'node-one',submitHash:async v=>{calls++;assert.equal(v.sha256,hash);return job;},hashJob:async value=>{calls++;assert.equal(value,id);return job;}}});
+ const value={sha256:hash,request_key:randomUUID()};assert.equal((await f.post('/api/intelligence',value)).status,401);
+ const login=await f.login(),headers={cookie:login.cookie,'x-csrf-token':login.csrf};
+ assert.equal((await f.post('/api/intelligence',value,{cookie:login.cookie})).status,403);
+ assert.equal((await f.post('/api/intelligence',value,{...headers,origin:'https://wrong.invalid'})).status,403);
+ assert.equal((await f.post('/api/intelligence',{...value,command:'id'},headers)).status,400);
+ assert.equal((await f.post('/api/intelligence',{...value,sha256:[hash]},headers)).status,400);assert.equal(calls,0);
+ assert.equal((await f.post('/api/intelligence',value,headers)).status,202);
+ assert.equal((await f.request('/api/intelligence/'+id,{headers})).status,200);assert.equal(calls,2);
+ for(const url of ['/assets/portal/cloud-intelligence.js','/contracts/hash-intelligence.js'])assert.equal((await f.request(url)).status,200);
+ await f.post('/api/logout',{},headers);assert.equal((await f.request('/api/intelligence/'+id,{headers})).status,401);
+});
+test('cloud authentication rejection is not a local logout; local scan survives an unpaired or malformed cloud',async t=>{
+ const {randomUUID}=await import('node:crypto');const value={sha256:'a'.repeat(64),request_key:randomUUID()};
+ const f=await fixture(t,undefined,undefined,undefined,{cloudTasks:{nodeId:async()=> 'node-one',submitHash:async()=>{throw Object.assign(Error('CLOUD_AUTH_REJECTED'),{status:503});},hashJob:async()=>({state:'safe',command:'bad'})}});
+ const login=await f.login(),headers={cookie:login.cookie,'x-csrf-token':login.csrf};
+ assert.equal((await f.post('/api/intelligence',value,headers)).status,503);
+ assert.equal((await f.request('/api/session',{headers})).status,200);
+ assert.equal((await f.request('/api/intelligence/'+randomUUID(),{headers})).status,503);
+ assert.equal((await f.post('/api/scan',{},headers)).status,202);
+});
+
+
+test('hash API boundaries reject foreign nodes and strip storage-only fields',async t=>{
+ const {randomUUID}=await import('node:crypto');const id=randomUUID(),at=new Date().toISOString(),sha256='a'.repeat(64);
+ let job={id,sha256,requester:'node/node-two',state:'queued',created_at:at,updated_at:at,attempts:0,policy:{revision:1,malicious_threshold:3,external_hash_lookup:false},providers:[],result:null,command:'never expose'};
+ const local=await fixture(t,undefined,undefined,undefined,{cloudTasks:{nodeId:async()=> 'node-one',submitHash:async()=>job,hashJob:async()=>job}});
+ const auth=await local.login(),headers={cookie:auth.cookie,'x-csrf-token':auth.csrf};
+ assert.equal((await local.post('/api/intelligence',{sha256,request_key:randomUUID()},headers)).status,503);
+ assert.equal((await local.request('/api/intelligence/'+id,{headers})).status,503);
+ job={...job,requester:'node/node-one'};
+ const valid=await local.request('/api/intelligence/'+id,{headers});assert.equal(valid.status,200);assert.equal((await valid.json()).command,undefined);
+ let enqueueCalls=0;const control={enqueue:()=>{enqueueCalls++;return {...job,requester:'admin'};},job:()=>job};
+ const cloud=await fixture(t,undefined,undefined,undefined,{role:'cloud',control});const ca=await cloud.login(),ch={cookie:ca.cookie,'x-csrf-token':ca.csrf};
+ for(const input of [{sha256,request_key:randomUUID(),path:'/etc/shadow'},{sha256:'bad',request_key:randomUUID()},{sha256,request_key:'bad'}])assert.equal((await cloud.post('/api/intelligence',input,ch)).status,400);
+ assert.equal(enqueueCalls,0);
+ const submitted=await cloud.post('/api/intelligence',{sha256,request_key:randomUUID()},ch);assert.equal(submitted.status,202);assert.equal((await submitted.json()).command,undefined);
+ const fetched=await cloud.request('/api/intelligence/'+id,{headers:ch});assert.equal(fetched.status,200);assert.equal((await fetched.json()).command,undefined);
+ job={...job,result:{verdict:'safe'}};assert.equal((await cloud.request('/api/intelligence/'+id,{headers:ch})).status,503);
 });

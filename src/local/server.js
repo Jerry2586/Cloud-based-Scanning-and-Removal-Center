@@ -1,3 +1,4 @@
+import { validateHashRequest, validateHashJob } from '../contracts/hash-intelligence.js';
 import {localEngineReadiness} from './engine-readiness-client.js';
 import {sanitizeEngineReadiness} from '../contracts/engine-readiness.js';
 import http from 'node:http';
@@ -17,6 +18,7 @@ const RUNNING_VERSION = JSON.parse(await readFile(new URL('../../package.json', 
 
 const PUBLIC = new URL('./public/', import.meta.url);
 const ASSETS = new Map([
+  ['/contracts/hash-intelligence.js', [new URL('../contracts/hash-intelligence.js', import.meta.url), 'text/javascript; charset=utf-8']],
  ['/contracts/engine-readiness.js',[new URL('../contracts/engine-readiness.js',import.meta.url),'text/javascript; charset=utf-8']],
   ['/contracts/multi-engine-status.js', [new URL('../contracts/multi-engine-status.js', import.meta.url), 'text/javascript; charset=utf-8']],
   ['/contracts/antivirus-status.js', [new URL('../contracts/antivirus-status.js', import.meta.url), 'text/javascript; charset=utf-8']],
@@ -33,7 +35,7 @@ const ASSETS = new Map([
   ['/assets/local.css', ['assets/local.css', 'text/css; charset=utf-8']],
   ['/assets/security-preview.css', ['assets/security-preview.css', 'text/css; charset=utf-8']],
   ['/assets/ironcurtain-shield.webp', ['assets/ironcurtain-shield.webp', 'image/webp']],
-  ...['app', 'security-ui', 'security-console', 'security-poller','host-workspace','update-settings','domain-settings','multi-engine','engine-readiness','engine-labels'].map(name => ['/assets/portal/' + name + '.js', ['assets/portal/' + name + '.js', 'text/javascript; charset=utf-8']]),
+  ...['app', 'security-ui', 'security-console', 'security-poller','host-workspace','update-settings','domain-settings','multi-engine','engine-readiness','engine-labels','cloud-intelligence'].map(name => ['/assets/portal/' + name + '.js', ['assets/portal/' + name + '.js', 'text/javascript; charset=utf-8']]),
 ]);
 function json(res, code, data) { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(data)); }
 async function body(req) {
@@ -44,13 +46,18 @@ async function body(req) {
   catch { throw Object.assign(Error('请求格式无效'), { status: 400 }); }
 }
 export function createLocalServer({ credentials, origin, tls, scan = localSecurityScan, updates = localUpdate, multi = localMultiEngine, engines = localEngineReadiness,
-  domains = domainRequest, domainDirectory, panelPort, role = 'local', cloudStatus = async () => ({ state: 'unpaired', connected: false, reason: '玄武引擎尚未配对' }), assets = ASSETS, publicDirectory = PUBLIC, now = Date.now } = {}) {
+  domains = domainRequest, domainDirectory, panelPort, role = 'local', control, cloudTasks, cloudStatus = async () => ({ state: 'unpaired', connected: false, reason: '玄武引擎尚未配对' }), assets = ASSETS, publicDirectory = PUBLIC, now = Date.now } = {}) {
   const target = new URL(origin);
   if (!['http:', 'https:'].includes(target.protocol) || target.pathname !== '/' || target.search || target.hash || target.username || target.password) throw Error('面板来源配置无效');
   const secure = target.protocol === 'https:';
   if (!secure && !['127.0.0.1', '[::1]', 'localhost'].includes(target.hostname)) throw Error('公网面板必须启用 HTTPS');
   const sessions = createSessions({ now }); const attempts = new Map();
   const cookie = id => 'ironcurtain_session=' + id + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=1800' + (secure ? '; Secure' : '');
+  async function taskNodeId() {
+    const id=await cloudTasks?.nodeId?.();
+    if(typeof id!=='string' || !/^(?:node-[a-z0-9][a-z0-9-]{0,63}|license-center|build-center)$/.test(id)) throw Error('INVALID_CLOUD_NODE_ID');
+    return id;
+  }
   async function handler(req, res) {
     res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer'); res.setHeader('X-Frame-Options', 'DENY');
@@ -95,6 +102,12 @@ export function createLocalServer({ credentials, origin, tls, scan = localSecuri
       if (req.method === 'POST') {
         if (!equalSecret(req.headers['x-csrf-token'], session.csrf)) return json(res, 403, { error: '会话验证失败' });
         const value = await body(req);
+        if (role === 'cloud' && control) {
+          if (url.pathname === '/api/plugins') return json(res, 200, control.pluginAction('admin', value));
+          if (url.pathname === '/api/policy') return json(res, 200, control.setPolicy('admin', value));
+          if (url.pathname === '/api/intelligence') { const input=validateHashRequest(value); return json(res,202,validateHashJob(control.enqueue('admin',input),{requester:'admin',sha256:input.sha256})); }
+        }
+        if (role === 'local' && cloudTasks && url.pathname === '/api/intelligence') { const request=validateHashRequest(value); return json(res,202,validateHashJob(await cloudTasks.submitHash(request),{nodeId:await taskNodeId(),sha256:request.sha256})); };
         if (url.pathname === '/api/domain') { const result = await domains('save', value); return json(res, result.response_status || 503, result); }
         if (Object.keys(value).length !== 0) return json(res, 400, { error: '此操作不接受路径或命令参数' });
         if (url.pathname === '/api/logout') { sessions.remove(sessionId); res.setHeader('Set-Cookie', 'ironcurtain_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0' + (secure ? '; Secure' : '')); return json(res, 200, { authenticated: false }); }
@@ -102,6 +115,15 @@ export function createLocalServer({ credentials, origin, tls, scan = localSecuri
         if (role === 'local' && url.pathname === '/api/engines/check') { const result=sanitizeEngineReadiness(await engines('check')); return json(res,[202,409,429,503].includes(result.response_status)?result.response_status:503,result); }
         if (role === 'local' && url.pathname === '/api/multi-engine') { const result = sanitizeMultiEngine(await multi('start')); return json(res, [202,409,429,503].includes(result.response_status) ? result.response_status : 503, result); }
         if (role === 'local' && ['/api/scan','/api/full-scan','/api/checkup','/api/engine/update'].includes(url.pathname)) { const result = await scan(url.pathname === '/api/engine/update' ? 'engine-update' : url.pathname === '/api/checkup' ? 'checkup' : url.pathname === '/api/full-scan' ? 'full-scan' : 'scan'); return json(res, result.state === 'running' ? 202 : [409,429,503].includes(result.response_status) ? result.response_status : 503, result); }
+      }
+      if (role === 'cloud' && control && req.method === 'GET') {
+        if (url.pathname === '/api/control') return json(res, 200, { ...control.snapshot(), running_version: RUNNING_VERSION });
+        const task = /^\/api\/intelligence\/([a-f0-9-]{36})$/.exec(url.pathname);
+        if (task) return json(res, 200, validateHashJob(control.job('admin', task[1]),{id:task[1]}));
+      }
+      if (role === 'local' && cloudTasks && req.method === 'GET') {
+        const task=/^\/api\/intelligence\/([a-f0-9-]{36})$/.exec(url.pathname);
+        if(task) return json(res,200,validateHashJob(await cloudTasks.hashJob(task[1]),{nodeId:await taskNodeId(),id:task[1]}));
       }
       if (req.method === 'GET' && url.pathname === '/api/domain') { const result = await domains('status'); return json(res, result.response_status || 503, result); }
       if (req.method === 'GET' && url.pathname === '/api/updates') return json(res, 200, { ...sanitizeUpdateStatus(await updates('status')), running_version: RUNNING_VERSION });
@@ -124,7 +146,7 @@ export async function startLocal(env = process.env) {
   if (!tls && !['127.0.0.1', '::1'].includes(host)) throw Error('公网监听必须配置独立面板 TLS 证书');
   const credentials = await loadCredentials(env.IRONCURTAIN_CONFIG_DIR || '/etc/ironcurtain', env.IRONCURTAIN_INITIAL_PASSWORD);
   const cloud = createCloudLink({ directory: env.IRONCURTAIN_CLOUD_DIR || '/etc/ironcurtain/cloud', snapshot: () => localCloudSnapshot(env) });
-  const server = createLocalServer({ credentials, origin, tls, panelPort: port, scan: action => localSecurityScan(action, env), multi: action => localMultiEngine(action, env), engines: action => localEngineReadiness(action, env), updates: action => localUpdate(action, env), cloudStatus: () => cloud.status(), domainDirectory: env.IRONCURTAIN_CONFIG_DIR || '/etc/ironcurtain', domains: (action, value) => domainRequest(action, value, env) });
+  const server = createLocalServer({ credentials, origin, tls, panelPort: port, scan: action => localSecurityScan(action, env), multi: action => localMultiEngine(action, env), engines: action => localEngineReadiness(action, env), updates: action => localUpdate(action, env), cloudStatus: () => cloud.status(), cloudTasks: cloud, domainDirectory: env.IRONCURTAIN_CONFIG_DIR || '/etc/ironcurtain', domains: (action, value) => domainRequest(action, value, env) });
   server.once('close', () => cloud.close());
   await new Promise((resolveStart, reject) => {const ready=()=>{server.off('error',reject);resolveStart();};server.once('error',reject);server.listen(port,host,ready);});
   console.log('铁幕安全独立面板已启动：' + origin);

@@ -1,3 +1,4 @@
+import { createCloudIntelligence } from './cloud-intelligence.js';
 import {engineDisplayText} from './engine-labels.js';
 import {createEngineReadiness} from './engine-readiness.js';
 import { createMultiEngine } from './multi-engine.js';
@@ -68,6 +69,7 @@ function completeReport(report, checks) {
 
 export function createSecurityUi({ state, can, request, notify }) {
   const consoleView = createSecurityConsole();
+  const cloudIntelligence = createCloudIntelligence({state,request,notify});
   const multiEngine = createMultiEngine({state,request,notify});
   const engineReadiness = createEngineReadiness({state,request,notify});
   const updateSettings = createUpdateSettings({state,request,notify});
@@ -267,6 +269,7 @@ export function createSecurityUi({ state, can, request, notify }) {
     if (bound) return;
     bound = true;
     consoleView.bind();
+    cloudIntelligence.bind();
     multiEngine.bind(); multiEngine.start(); engineReadiness.bind(); engineReadiness.start();
     updateSettings.bind(); updateSettings.start(); domainSettings.bind(); domainSettings.start();
     void renderSecurity(); void renderLocalSecurity();

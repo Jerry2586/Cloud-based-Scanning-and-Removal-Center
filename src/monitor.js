@@ -7,6 +7,8 @@ import { renderDashboard } from './dashboard.js';
 import { releaseSource } from './release-store.js';
 import { virusDatabaseSource } from './virus-db-store.js';
 import { pipeline } from 'node:stream/promises';
+import { createCloudControl } from './cloud/control.js';
+import { loadHashIntelligence } from './cloud/intelligence.js';
 
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 const equal = (left, right) => {
@@ -144,7 +146,7 @@ export function validateConfiguration(config) {
   return config;
 }
 
-export function createMonitor({ nodes, readers, policy, stateFile, now = () => Date.now(), probe = defaultProbe, rules = () => ({error:'RULE_MISSING'}), releases, virusDatabases }) {
+export function createMonitor({ nodes, readers, policy, stateFile, now = () => Date.now(), probe = defaultProbe, rules = () => ({error:'RULE_MISSING'}), releases, virusDatabases, control }) {
   const state = { probes: {}, reports: {}, reportFreshness: {}, reportIds: {}, hostReports: {}, hostReportState: {}, events: [] };
   if (stateFile) {
     try { Object.assign(state, normalizePersistedState(JSON.parse(readFileSync(stateFile, 'utf8')))); } catch (error) {
@@ -323,6 +325,24 @@ export function createMonitor({ nodes, readers, policy, stateFile, now = () => D
       if (!actor) return reply(res, 403, { error: 'AUTH_REQUIRED' });
       return reply(res, 200, { identity: actor });
     }
+    if (path === '/v1/intelligence' || path.startsWith('/v1/intelligence/')) {
+      const entry = Object.entries(nodes).find(([, config]) => identity(req, config));
+      if (!entry) return reply(res, 403, { error: 'AUTH_REQUIRED' });
+      if (!control) return reply(res, 503, { error: 'CONTROL_UNAVAILABLE' });
+      const actor = 'node/' + entry[0];
+      try {
+        if (req.method === 'POST' && path === '/v1/intelligence') {
+          if (!/^application\/json(?:;.*)?$/.test(req.headers['content-type'] || '')) return reply(res, 415, { error: 'JSON_REQUIRED' });
+          const chunks = []; let size = 0;
+          for await (const chunk of req) { size += chunk.length; if (size > 1024) return reply(res, 413, { error: 'REQUEST_TOO_LARGE' }); chunks.push(chunk); }
+          let value; try { value = JSON.parse(Buffer.concat(chunks)); } catch { return reply(res, 400, { error: 'INVALID_JSON' }); }
+          return reply(res, 202, control.enqueue(actor, value));
+        }
+        const match = /^\/v1\/intelligence\/([a-f0-9-]{36})$/.exec(path);
+        if (req.method === 'GET' && match) return reply(res, 200, control.job(actor, match[1]));
+        return reply(res, 404, { error: 'NOT_FOUND' });
+      } catch (error) { return reply(res, error.status || 503, { error: error.status ? error.message : 'CONTROL_UNAVAILABLE' }); }
+    }
     if (req.method === 'GET' && path === '/v1/rules') {
       if (!readers.some(reader=>identity(req,reader)) && !Object.values(nodes).some(node=>identity(req,node))) return reply(res,403,{error:'AUTH_REQUIRED'});
       const value=rules();
@@ -445,6 +465,16 @@ export function createMonitor({ nodes, readers, policy, stateFile, now = () => D
         state.reportFreshness[name] = 'fresh';
         if (check.state === 'changed') event('integrity.changed', name,
           { missing: missing.length, changed: changed.length, added: added.length });
+        if (control && data.files_state === 'complete' && check.state === 'changed') {
+          const hashes = [...new Set([...changed, ...added].map(path => data.files[path]))];
+          try {
+            check.intelligence = { ...control.enqueueReport('node/' + name, { report_id: data.report_id, hashes: hashes.slice(0, 8) }), omitted: Math.max(0, hashes.length - 8) };
+          } catch {
+            // Monitoring acceptance must survive an unavailable analysis queue or data source.
+            check.intelligence = { state: 'unavailable', jobs: [], reason: '摘要分析调度不可用；完整性上报已接收' };
+            event('intelligence.unavailable', name, 'authenticated report accepted without hash analysis');
+          }
+        }
         persist();
         return reply(res, 200, check);
       } catch { return reply(res, 400, { error: 'INVALID_REPORT' }); }
@@ -467,17 +497,26 @@ export function startFromEnvironment(env = process.env) {
     if (!env[field]) throw Error(`${field} is required`);
   }
   const config = validateConfiguration(JSON.parse(readFileSync(env.SECURITY_CONFIG, 'utf8')));
+  const publicKey = readFileSync(new URL('../release-public.pem', import.meta.url));
+  const rules = ruleSource(join(dirname(env.SECURITY_CONFIG), 'rules.json'), publicKey);
+  const virusDatabases = env.SECURITY_VIRUS_DB_DIR ? virusDatabaseSource(env.SECURITY_VIRUS_DB_DIR, publicKey) : undefined;
+  const control = createCloudControl({
+    file: env.SECURITY_CONTROL_FILE || join(dirname(env.SECURITY_STATE_FILE ?? './var/state.json'), 'control.sqlite'),
+    sources: () => ({ rules: rules(), virus_databases: virusDatabases?.summary() }),
+    intelligence: loadHashIntelligence(dirname(env.SECURITY_CONFIG)),
+  });
+  try {
   const monitor = createMonitor({ nodes: config.nodes ?? {}, readers: config.readers ?? [], policy: config.policy,
-    stateFile: env.SECURITY_STATE_FILE ?? './var/state.json',
-    rules: ruleSource(join(dirname(env.SECURITY_CONFIG),'rules.json'),readFileSync(new URL('../release-public.pem',import.meta.url))),
-    releases: env.SECURITY_RELEASE_DIR ? releaseSource(env.SECURITY_RELEASE_DIR,readFileSync(new URL('../release-public.pem',import.meta.url))) : undefined,
-    virusDatabases: env.SECURITY_VIRUS_DB_DIR ? virusDatabaseSource(env.SECURITY_VIRUS_DB_DIR,readFileSync(new URL('../release-public.pem',import.meta.url))) : undefined });
+    stateFile: env.SECURITY_STATE_FILE ?? './var/state.json', rules, virusDatabases, control,
+    releases: env.SECURITY_RELEASE_DIR ? releaseSource(env.SECURITY_RELEASE_DIR, publicKey) : undefined });
   const server = createServer({ key: readFileSync(env.SECURITY_TLS_KEY), cert: readFileSync(env.SECURITY_TLS_CERT),
     ca: readFileSync(env.SECURITY_CLIENT_CA), requestCert: true, rejectUnauthorized: true }, monitor.handler);
+  server.requestTimeout = 15000; server.headersTimeout = 10000; server.maxHeadersCount = 32;
   server.listen(Number(env.SECURITY_PORT ?? 9443), env.SECURITY_HOST ?? '0.0.0.0');
   const timer = setInterval(() => { void monitor.runProbes().catch(error => console.error('probe error:', error)); }, 30000);
   timer.unref();
-  server.once('close', () => clearInterval(timer));
+  server.once('close', () => { clearInterval(timer); void control.close(); });
   void monitor.runProbes().catch(error => console.error('probe error:', error));
-  return { server, monitor };
+  return { server, monitor, control };
+  } catch (error) { void control.close(); throw error; }
 }
