@@ -34,10 +34,18 @@ SOURCE=$WORK/source
 install -d -m 777 "$SOURCE/src/host/__pycache__"
 printf 'not a release input\n' > "$SOURCE/src/host/__pycache__/fixture.pyc"
 node "$SOURCE/tests/helpers/rule-deployment-fixture.js" "$SOURCE" "$WORK"
+# First-install acceptance must run the exact signed payload, not the richer checkout.
+# A checkout-only gate previously missed a Python entry omitted by the packager.
+install -d -m 700 "$WORK/first-install-assets" "$WORK/first-install-source"
+bash "$SOURCE/scripts/package-release.sh" --source-dir "$SOURCE" --output-dir "$WORK/first-install-assets" --signing-key "$WORK/rules-publisher.key"
+node "$SOURCE/scripts/verify-release.js" --dir "$WORK/first-install-assets" --public-key "$SOURCE/release-public.pem"
+version=$(jq -er .version "$SOURCE/package.json")
+tar -xzf "$WORK/first-install-assets/APPGOG-Cloud-Security-Center-$version.tar.gz" -C "$WORK/first-install-source"
+INSTALL_SOURCE=$WORK/first-install-source
 CLOUD_HOST=$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')
 [[ $CLOUD_HOST =~ ^[0-9.]+$ ]] || { echo 'Docker bridge gateway unavailable' >&2; exit 1; }
-bash "$SOURCE/scripts/install-independent.sh" --role cloud --host "$CLOUD_HOST" --bind "$CLOUD_HOST"
-bash "$SOURCE/scripts/install-independent.sh" --role local --antivirus skip --host 127.0.0.1 --bind 127.0.0.1
+bash "$INSTALL_SOURCE/scripts/install-independent.sh" --role cloud --host "$CLOUD_HOST" --bind "$CLOUD_HOST"
+bash "$INSTALL_SOURCE/scripts/install-independent.sh" --role local --antivirus skip --host 127.0.0.1 --bind 127.0.0.1
 # Real non-root cloud container storage must survive a container restart.
 node "$SOURCE/tests/helpers/cloud-deployment-probe.js" seed "$CLOUD_HOST" "$WORK/cloud-control-fixture.json"
 [[ $(stat -c '%u:%g:%a' /var/lib/ironcurtain/cloud/runtime/control.sqlite) == 10001:10001:600 ]]
@@ -213,8 +221,8 @@ systemctl start ironcurtain-agent.service
 ic_scan_wait
 [[ $(stat -c '%d:%i' /run/ironcurtain) == "$runtime_inode" ]]
 node "$SOURCE/tests/helpers/independent-deployment-probe.js"
-bash "$SOURCE/scripts/install-independent.sh" --role local --antivirus skip
-bash "$SOURCE/scripts/install-independent.sh" --role cloud
+bash "$INSTALL_SOURCE/scripts/install-independent.sh" --role local --antivirus skip
+bash "$INSTALL_SOURCE/scripts/install-independent.sh" --role cloud
 systemctl disable --now ironcurtain-rules-sync.timer
 systemctl disable --now ironcurtain-panel-check.timer
 before=$(sha256sum /etc/ironcurtain/local/runtime/panel-auth.json /etc/ironcurtain/cloud/ca.key)
@@ -224,6 +232,10 @@ node -e 'const fs=require("fs"),p=process.argv[1],v=JSON.parse(fs.readFileSync(p
 install -d -m 700 "$WORK/program-assets"
 bash "$SOURCE/scripts/package-release.sh" --source-dir "$SOURCE" --output-dir "$WORK/program-assets" --signing-key "$WORK/rules-publisher.key"
 version=$(jq -er .version "$SOURCE/package.json")
+install -d -m 700 "$WORK/upgrade-source"
+node "$SOURCE/scripts/verify-release.js" --dir "$WORK/program-assets" --public-key "$SOURCE/release-public.pem"
+tar -xzf "$WORK/program-assets/APPGOG-Cloud-Security-Center-$version.tar.gz" -C "$WORK/upgrade-source"
+UPGRADE_SOURCE=$WORK/upgrade-source
 # Report bounded public attachment metadata when the real importer rejects it.
 stat -c 'Release attachment %n: uid=%u gid=%g mode=%a links=%h bytes=%s' "$WORK/program-assets/"*
 python3 "$SOURCE/tests/helpers/release-menu-input.py" "$WORK/program-assets"
@@ -244,7 +256,14 @@ if /usr/local/bin/tiemu release-update; then echo 'Damaged cloud program accepte
 install -m 640 -o root -g 10001 "$WORK/program-valid.run" "$active_run"
 # Exercise preservation of an already activated gateway across a real signed upgrade.
 systemctl enable --now ironcurtain-domain-local-gateway.socket
+# Upgrading must recover an inactive required controller, while preserving timer preferences.
+systemctl stop ironcurtain-domain-local-control.service
+systemctl disable --now ironcurtain-domain-local-renew.timer
 /usr/local/bin/tiemu release-update
+systemctl is-active --quiet ironcurtain-domain-local-control.service
+! systemctl is-active --quiet ironcurtain-domain-local-renew.timer
+! systemctl is-enabled --quiet ironcurtain-domain-local-renew.timer
+systemctl enable --now ironcurtain-domain-local-renew.timer
 systemctl is-enabled --quiet ironcurtain-domain-local-gateway.socket
 systemctl is-active --quiet ironcurtain-domain-local-gateway.socket
 curl --noproxy '*' --fail --silent --show-error --max-time 15 --cacert /etc/ironcurtain/local/runtime/panel.crt -H 'Host: 127.0.0.1:8790' https://127.0.0.1:443/healthz | jq -e '.service == "ironcurtain-local" and .ready == true'
@@ -258,7 +277,9 @@ systemctl stop ironcurtain-domain-local-gateway.service
 IRONCURTAIN_EXPECT_RULE_SEQUENCE=1 IRONCURTAIN_EXPECT_RELEASE_VERSION="$version" node "$SOURCE/tests/helpers/independent-deployment-probe.js"
 # Same signed cloud program can be re-downloaded and safely reused.
 /usr/local/bin/tiemu release-update
-bash "$SOURCE/scripts/install-independent.sh" --role cloud
+systemctl stop ironcurtain-domain-cloud-control.service
+bash "$UPGRADE_SOURCE/scripts/install-independent.sh" --role cloud
+systemctl is-active --quiet ironcurtain-domain-cloud-control.service
 after=$(sha256sum /etc/ironcurtain/local/runtime/panel-auth.json /etc/ironcurtain/cloud/ca.key)
 [[ $before == "$after" ]] || { echo 'Upgrade replaced existing identity.' >&2; exit 1; }
 ! systemctl is-enabled --quiet ironcurtain-rules-sync.timer

@@ -84,6 +84,7 @@ VERSION=$(jq -er '.version' "$SOURCE/package.json")
 [[ $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || ic_fail '版本格式错误'
 payload_digest() { (cd "$1"; find src docker scripts -type f ! -path '*/__pycache__/*' -print0; printf 'package.json\0release-contract.json\0release-public.pem\0.dockerignore\0install.sh\0') | sort -z | while IFS= read -r -d '' file; do (cd "$1"; sha256sum "$file"); done | sha256sum | cut -d' ' -f1; }
 [[ -z $(find "$SOURCE/src" "$SOURCE/docker" "$SOURCE/scripts" -type l -print -quit) ]] || ic_fail '安装载荷含符号链接，拒绝接受'
+[[ -f $SOURCE/scripts/domain_control.py && -f $SOURCE/scripts/domain-apply.sh && -f $SOURCE/scripts/lib/domain-services.sh ]] || ic_fail '安装载荷缺少域名管理程序，请使用完整正式安装包'
 DIGEST=$(payload_digest "$SOURCE")
 OLD_VERSION=''
 if [[ -f $BASE/current/package.json ]]; then
@@ -93,6 +94,7 @@ if [[ -f $BASE/current/package.json ]]; then
     [[ $DIGEST == "$(cat "$BASE/current/.payload-sha256")" && $(payload_digest "$BASE/current") == "$DIGEST" ]] || ic_fail '相同版本源码内容不同，需发布新版本'
     ic_load
     ic_healthy || ic_fail '当前版本服务不健康，请从菜单诊断，避免自动覆盖'
+    ic_domain_wait || ic_fail '域名管理服务不可用，请运行管理菜单 doctor 检查'
     [[ $ROLE != local ]] || ic_scan_wait || ic_fail '本地扫描代理不可用，请运行 tiemu doctor'
     engine_setup
     echo "$PRODUCT_NAME v$VERSION 已安装且健康。打开 Linux 管理菜单：sudo $MENU_COMMAND"; exit 0
@@ -332,6 +334,7 @@ ic_compose config --quiet
 ic_compose up -d --wait --wait-timeout 90
 ic_wait || ic_fail '容器 HTTPS 身份健康检查未通过'
 ic_domain_gateway_resume
+ic_domain_wait || ic_fail '域名管理接口未就绪，安装未通过验收'
 if [[ $ROLE == local ]]; then
   ic_scan_wait || ic_fail '宿主扫描器或容器扫描通道不可用'
 fi

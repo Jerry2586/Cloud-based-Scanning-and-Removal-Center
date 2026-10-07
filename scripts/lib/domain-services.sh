@@ -167,7 +167,7 @@ EOF
   for unit in "$prefix-control.service" "$prefix-renew.timer"; do
     if [[ -n ${IC_TX:-} && -f $IC_TX/$unit ]]; then
       [[ ! -f $IC_TX/$unit.enabled ]] || systemctl enable "$unit"
-      [[ ! -f $IC_TX/$unit.active ]] || systemctl restart "$unit"
+      if [[ $unit == "$prefix-control.service" || -f $IC_TX/$unit.active ]]; then systemctl restart "$unit"; fi
     else
       systemctl enable --now "$unit"
     fi
@@ -183,4 +183,19 @@ ic_domain_gateway_resume() {
     [[ ! -f $IC_TX/$unit.enabled ]] || systemctl enable "$unit"
     [[ ! -f $IC_TX/$unit.active ]] || systemctl start "$unit"
   done
+}
+
+# Container health alone cannot prove that the required host controller runs.
+# Authenticate the real Unix endpoint before committing an installation.
+ic_domain_wait() {
+  local prefix=ironcurtain-domain-$ROLE attempt
+  for attempt in {1..20}; do
+    if systemctl is-active --quiet "$prefix-control.service" &&
+       curl -q --noproxy '*' --max-time 2 --silent --show-error --fail --unix-socket "/run/$prefix/control.sock" http://localhost/domain 2>/dev/null |
+         jq -e 'type == "object" and (.state | IN("idle", "running", "ready", "failed")) and (.domain | type == "string") and (.certificate | IN("not-issued", "public-ca"))' >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  return 1
 }

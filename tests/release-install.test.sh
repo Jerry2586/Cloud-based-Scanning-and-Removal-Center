@@ -41,6 +41,12 @@ package_version() {
   APPGOG_SECURITY_ALLOW_TEST_KEY=true bash "$ROOT/scripts/package-release.sh" --source-dir "$source_dir" \
     --output-dir "$output_dir" --signing-key "$WORK/release-private.pem"
   node "$ROOT/scripts/verify-release.js" --dir "$output_dir" --public-key "$WORK/release-public.pem"
+  local payload_dir
+  payload_dir=$(mktemp -d "$WORK/verified-payload.XXXXXXXX")
+  tar -xzf "$output_dir/APPGOG-Cloud-Security-Center-$version.tar.gz" -C "$payload_dir"
+  python3 -B "$payload_dir/scripts/domain_control.py" --help >/dev/null
+  bash -n "$payload_dir/scripts/domain-apply.sh"
+  bash -n "$payload_dir/scripts/lib/domain-services.sh"
   for file in "$output_dir/"*; do
     expected_mode=600
     [[ $file != *.run ]] || expected_mode=700

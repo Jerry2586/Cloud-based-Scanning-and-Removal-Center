@@ -286,5 +286,37 @@ class IndependenceTests(unittest.TestCase):
                 self.assertNotIn(forbidden, text)
         self.assertFalse((root / 'scripts/shared_ingress.py').exists())
 
+
+@unittest.skipUnless(sys.platform == 'linux' and shutil.which('jq'), 'requires Linux and real jq parser')
+class RequiredDomainHealthTests(unittest.TestCase):
+    def probe(self, active, response, curl_status=0):
+        helper = Path(__file__).resolve().parents[1] / 'scripts/lib/domain-services.sh'
+        # Mock service/network boundaries, retaining the real shell pipeline and JSON validator.
+        script = '''set -euo pipefail
+source "$1"
+ROLE=cloud
+systemctl() { [[ $2 == --quiet && $3 == ironcurtain-domain-cloud-control.service && $ACTIVE == 1 ]]; }
+curl() { printf '%s' "$RESPONSE"; return "$CURL_STATUS"; }
+sleep() { :; }
+if ic_domain_wait; then exit 0; else exit 1; fi
+'''
+        return subprocess.run(['bash', '-c', script, '--', str(helper)],
+            env=dict(os.environ, ACTIVE=str(int(active)), RESPONSE=response, CURL_STATUS=str(curl_status)),
+            capture_output=True, text=True, timeout=10)
+
+    def test_ready_control_accepts_idle_and_failed_certificate_states(self):
+        for state in ['idle', 'running', 'ready', 'failed']:
+            with self.subTest(state=state):
+                result = self.probe(True, json.dumps({'state': state, 'domain': '', 'certificate': 'not-issued'}))
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_unhealthy_service_transport_and_schema_cannot_commit_install(self):
+        valid = json.dumps({'state': 'ready', 'domain': 'security.example.com', 'certificate': 'public-ca'})
+        cases = [(False, valid, 0), (True, valid, 7), (True, '{}', 0), (True, 'not-json', 0),
+                 (True, json.dumps({'state': 'ready', 'domain': 12, 'certificate': 'public-ca'}), 0)]
+        for active, response, curl_status in cases:
+            with self.subTest(active=active, response=response, curl_status=curl_status):
+                self.assertNotEqual(self.probe(active, response, curl_status).returncode, 0)
+
 if __name__ == '__main__':
     unittest.main()
