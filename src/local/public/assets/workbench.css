@@ -86,3 +86,16 @@
 .ic-file-activity{padding:13px 15px;margin:12px 0;border:1px solid var(--line);border-radius:8px;background:var(--surface-soft);overflow-wrap:anywhere}.ic-file-activity p{margin:0 0 7px;font-size:12px;color:var(--text);line-height:1.7}.ic-file-activity small{font:10px/1.7 var(--mono);color:var(--muted)}.ic-recent-files{border:1px solid var(--line);border-radius:8px;margin:14px 0;overflow:hidden}.ic-recent-files summary{display:flex;justify-content:space-between;gap:12px;padding:12px 14px;font-size:12px;cursor:pointer;background:var(--surface-soft)}.ic-recent-files summary span{font-size:10px;color:var(--muted)}.ic-recent-files ul{list-style:none;padding:0;margin:0}.ic-recent-files li{padding:10px 14px;border-top:1px solid var(--line);font-size:11px;line-height:1.8;overflow-wrap:anywhere;color:var(--muted)}
 
 .sc-intelligence-input{display:flex;gap:12px;margin:12px 0 18px}.sc-intelligence-input input{flex:1;min-width:0;border:1px solid var(--sc-border,#64748b);border-radius:10px;padding:12px;background:var(--sc-surface,transparent);color:inherit;font:inherit}.sc-intelligence-panel strong[data-intelligence-hash],.sc-intelligence-panel strong[data-intelligence-id]{overflow-wrap:anywhere;font-size:13px}@media(max-width:680px){.sc-intelligence-input{flex-direction:column}}
+
+/* Local detection schedule: use shared light/dark theme tokens. */
+.sc-schedule-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:20px 0}
+.sc-schedule-job{min-width:0;padding:20px;border:1px solid var(--line);border-radius:14px;background:var(--surface)}
+.sc-schedule-toggle{display:flex;align-items:center;gap:10px;font-size:14px;cursor:pointer}
+.sc-schedule-toggle input{width:18px;height:18px;accent-color:var(--accent)}
+.sc-schedule-job>.sc-muted{font-size:12px;line-height:1.75;overflow-wrap:anywhere}
+.sc-schedule-interval{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:18px 0;font-size:12px;color:var(--muted)}
+.sc-schedule-interval input{width:110px;padding:10px 12px;border:1px solid var(--line);border-radius:9px;color:var(--text);background:var(--bg);font:inherit}
+.sc-schedule-interval input:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.sc-schedule-panel input:disabled{opacity:.55;cursor:not-allowed}
+.sc-schedule-panel [data-schedule-record]{padding-top:14px;border-top:1px solid var(--line);min-height:64px}
+@media(max-width:1000px){.sc-schedule-grid{grid-template-columns:1fr}.sc-schedule-job{padding:17px}.sc-schedule-panel [data-schedule-record]{min-height:0}}

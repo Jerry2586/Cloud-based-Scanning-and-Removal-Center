@@ -1,3 +1,5 @@
+import {localSchedule} from './schedule-client.js';
+import {validateScheduleConfig, sanitizeSchedule} from '../contracts/schedule.js';
 import { validateHashRequest, validateHashJob } from '../contracts/hash-intelligence.js';
 import {localEngineReadiness} from './engine-readiness-client.js';
 import {sanitizeEngineReadiness} from '../contracts/engine-readiness.js';
@@ -18,6 +20,7 @@ const RUNNING_VERSION = JSON.parse(await readFile(new URL('../../package.json', 
 
 const PUBLIC = new URL('./public/', import.meta.url);
 const ASSETS = new Map([
+  ['/contracts/schedule.js', [new URL('../contracts/schedule.js', import.meta.url), 'text/javascript; charset=utf-8']],
   ['/contracts/hash-intelligence.js', [new URL('../contracts/hash-intelligence.js', import.meta.url), 'text/javascript; charset=utf-8']],
  ['/contracts/engine-readiness.js',[new URL('../contracts/engine-readiness.js',import.meta.url),'text/javascript; charset=utf-8']],
   ['/contracts/multi-engine-status.js', [new URL('../contracts/multi-engine-status.js', import.meta.url), 'text/javascript; charset=utf-8']],
@@ -35,7 +38,7 @@ const ASSETS = new Map([
   ['/assets/local.css', ['assets/local.css', 'text/css; charset=utf-8']],
   ['/assets/security-preview.css', ['assets/security-preview.css', 'text/css; charset=utf-8']],
   ['/assets/ironcurtain-shield.webp', ['assets/ironcurtain-shield.webp', 'image/webp']],
-  ...['app', 'security-ui', 'security-console', 'security-poller','host-workspace','update-settings','domain-settings','multi-engine','engine-readiness','engine-labels','cloud-intelligence'].map(name => ['/assets/portal/' + name + '.js', ['assets/portal/' + name + '.js', 'text/javascript; charset=utf-8']]),
+  ...['app', 'security-ui', 'security-console', 'security-poller','host-workspace','update-settings','schedule-settings','domain-settings','multi-engine','engine-readiness','engine-labels','cloud-intelligence'].map(name => ['/assets/portal/' + name + '.js', ['assets/portal/' + name + '.js', 'text/javascript; charset=utf-8']]),
 ]);
 function json(res, code, data) { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(data)); }
 async function body(req) {
@@ -45,7 +48,7 @@ async function body(req) {
   try { const value = JSON.parse(Buffer.concat(chunks)); if (!value || Array.isArray(value) || typeof value !== 'object') throw Error(); return value; }
   catch { throw Object.assign(Error('请求格式无效'), { status: 400 }); }
 }
-export function createLocalServer({ credentials, origin, tls, scan = localSecurityScan, updates = localUpdate, multi = localMultiEngine, engines = localEngineReadiness,
+export function createLocalServer({ credentials, origin, tls, scan = localSecurityScan, updates = localUpdate, multi = localMultiEngine, engines = localEngineReadiness, schedule = localSchedule,
   domains = domainRequest, domainDirectory, panelPort, role = 'local', control, cloudTasks, cloudStatus = async () => ({ state: 'unpaired', connected: false, reason: '玄武引擎尚未配对' }), assets = ASSETS, publicDirectory = PUBLIC, now = Date.now } = {}) {
   const target = new URL(origin);
   if (!['http:', 'https:'].includes(target.protocol) || target.pathname !== '/' || target.search || target.hash || target.username || target.password) throw Error('面板来源配置无效');
@@ -108,6 +111,15 @@ export function createLocalServer({ credentials, origin, tls, scan = localSecuri
           if (url.pathname === '/api/intelligence') { const input=validateHashRequest(value); return json(res,202,validateHashJob(control.enqueue('admin',input),{requester:'admin',sha256:input.sha256})); }
         }
         if (role === 'local' && cloudTasks && url.pathname === '/api/intelligence') { const request=validateHashRequest(value); return json(res,202,validateHashJob(await cloudTasks.submitHash(request),{nodeId:await taskNodeId(),sha256:request.sha256})); };
+        if (role === 'local' && url.pathname === '/api/schedule') {
+          let config; try { config = validateScheduleConfig(value); } catch (error) { return json(res, 400, {error: error.message}); }
+          const result = await schedule('save', config);
+          if (result.response_status === 200) {
+            const clean = sanitizeSchedule(result.state === 'ready' ? {schema:result.schema,state:result.state,config:result.config,records:result.records} : result);
+            return json(res, clean.state === 'ready' ? 200 : 503, clean);
+          }
+          return json(res, [400,409,503].includes(result.response_status) ? result.response_status : 503, {error: result.response_status === 409 ? '配置已变化或检测正在运行，请刷新后再保存' : '本机周期配置无法保存'});
+        }
         if (url.pathname === '/api/domain') { const result = await domains('save', value); return json(res, result.response_status || 503, result); }
         if (Object.keys(value).length !== 0) return json(res, 400, { error: '此操作不接受路径或命令参数' });
         if (url.pathname === '/api/logout') { sessions.remove(sessionId); res.setHeader('Set-Cookie', 'ironcurtain_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0' + (secure ? '; Secure' : '')); return json(res, 200, { authenticated: false }); }
@@ -124,6 +136,11 @@ export function createLocalServer({ credentials, origin, tls, scan = localSecuri
       if (role === 'local' && cloudTasks && req.method === 'GET') {
         const task=/^\/api\/intelligence\/([a-f0-9-]{36})$/.exec(url.pathname);
         if(task) return json(res,200,validateHashJob(await cloudTasks.hashJob(task[1]),{nodeId:await taskNodeId(),id:task[1]}));
+      }
+      if (role === 'local' && req.method === 'GET' && url.pathname === '/api/schedule') {
+        const result = await schedule('status');
+        const clean = sanitizeSchedule(result.state === 'ready' ? {schema:result.schema,state:result.state,config:result.config,records:result.records} : result);
+        return json(res, clean.state === 'ready' ? 200 : 503, clean);
       }
       if (req.method === 'GET' && url.pathname === '/api/domain') { const result = await domains('status'); return json(res, result.response_status || 503, result); }
       if (req.method === 'GET' && url.pathname === '/api/updates') return json(res, 200, { ...sanitizeUpdateStatus(await updates('status')), running_version: RUNNING_VERSION });
@@ -146,7 +163,7 @@ export async function startLocal(env = process.env) {
   if (!tls && !['127.0.0.1', '::1'].includes(host)) throw Error('公网监听必须配置独立面板 TLS 证书');
   const credentials = await loadCredentials(env.IRONCURTAIN_CONFIG_DIR || '/etc/ironcurtain', env.IRONCURTAIN_INITIAL_PASSWORD);
   const cloud = createCloudLink({ directory: env.IRONCURTAIN_CLOUD_DIR || '/etc/ironcurtain/cloud', snapshot: () => localCloudSnapshot(env) });
-  const server = createLocalServer({ credentials, origin, tls, panelPort: port, scan: action => localSecurityScan(action, env), multi: action => localMultiEngine(action, env), engines: action => localEngineReadiness(action, env), updates: action => localUpdate(action, env), cloudStatus: () => cloud.status(), cloudTasks: cloud, domainDirectory: env.IRONCURTAIN_CONFIG_DIR || '/etc/ironcurtain', domains: (action, value) => domainRequest(action, value, env) });
+  const server = createLocalServer({ credentials, origin, tls, panelPort: port, scan: action => localSecurityScan(action, env), multi: action => localMultiEngine(action, env), engines: action => localEngineReadiness(action, env), schedule: (action, value) => localSchedule(action, value, env), updates: action => localUpdate(action, env), cloudStatus: () => cloud.status(), cloudTasks: cloud, domainDirectory: env.IRONCURTAIN_CONFIG_DIR || '/etc/ironcurtain', domains: (action, value) => domainRequest(action, value, env) });
   server.once('close', () => cloud.close());
   await new Promise((resolveStart, reject) => {const ready=()=>{server.off('error',reject);resolveStart();};server.once('error',reject);server.listen(port,host,ready);});
   console.log('铁幕安全独立面板已启动：' + origin);

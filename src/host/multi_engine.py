@@ -50,7 +50,7 @@ class Bridge:
         except (OSError,ValueError,TypeError): self.value={'schema':'ironcurtain-multi-engine/v1','state':'unavailable','reason':'上次任务记录无法核验'}
     def status(self):
         with self.agent.lock: return copy.deepcopy(self.value)
-    def trigger(self):
+    def trigger(self, lease=None):
         with self.agent.lock:
             if self.closing: return 503,{'state':'unavailable','reason':'代理正在停止'}
             if self.running: return 409,{**copy.deepcopy(self.value),'response_status':409}
@@ -64,7 +64,7 @@ class Bridge:
             except (OSError,ValueError): return 503,{'state':'unavailable','reason':'任务保存失败'}
             self.running=True;self.value=value;self.last=time.monotonic()
         try:
-            self.thread=threading.Thread(target=self.run,daemon=True)
+            self.thread=threading.Thread(target=lease.run if lease else self.run,args=(self.run,) if lease else (),daemon=True)
             self.thread.start()
         except RuntimeError:
             self.fail('检测线程无法启动')

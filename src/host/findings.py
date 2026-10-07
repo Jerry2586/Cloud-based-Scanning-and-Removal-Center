@@ -81,6 +81,17 @@ def collect(text, roots, run, scan_args, maximum=MAX_FINDINGS):
             if 'Heuristics.Limits.Exceeded' in output or re.search(r'Errors:\s*[1-9]', output):
                 raise ValueError('rescan incomplete')
             if identity(before) != identity(os.fstat(fd)): raise ValueError('file changed during scan')
+            # The descriptor pins bytes, but renaming need not change file ctime.
+            # Reopen the current absolute parent and verify the displayed path still
+            # names the scanned inode, including a replaced ancestor directory.
+            current_parent, current_leaf = parent_fd(filename)
+            try:
+                old_parent, new_parent = os.fstat(parent), os.fstat(current_parent)
+                if (old_parent.st_dev, old_parent.st_ino) != (new_parent.st_dev, new_parent.st_ino):
+                    raise ValueError('parent replaced during scan')
+                if identity(before) != identity(os.stat(current_leaf, dir_fd=current_parent, follow_symlinks=False)):
+                    raise ValueError('path replaced during scan')
+            finally: os.close(current_parent)
             observed = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
             item = dict(path=filename, signature=signature, sha256=digest, observed_at=observed, **identity(before))
             item['id'] = hashlib.sha256(canonical(item)).hexdigest()

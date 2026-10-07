@@ -1,6 +1,6 @@
 """Linux-root restart, profile, concurrency and local socket boundary acceptance."""
 import copy, importlib.util, json, os, pathlib, tempfile, threading, unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 spec=importlib.util.spec_from_file_location('agent',pathlib.Path(__file__).parents[1]/'src/host/agent.py')
 a=importlib.util.module_from_spec(spec);spec.loader.exec_module(a)
 @unittest.skipUnless(os.name=='posix' and os.geteuid()==0,'Linux root agent persistence')
@@ -9,6 +9,10 @@ class AgentRecoveryTests(unittest.TestCase):
   self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.root=pathlib.Path(self.tmp.name);self.root.chmod(0o700)
   self.scope=self.root/'site';self.scope.mkdir();self.state=self.root/'state'
   self.agent=a.Agent({'schema':'ironcurtain-profile/v1','program_roots':[str(self.scope)]},self.state)
+  # These tests control workers manually; real flock/worker lifetime has separate Linux tests.
+  self.agent.maintenance=lambda:False
+  lease_patch=patch.object(a.ManagementLease,'acquire',side_effect=lambda:Mock())
+  lease_patch.start();self.addCleanup(lease_patch.stop)
   self.engine={'installed':True,'state':'configured','database_version':7,'database_at':a.utc(),'signatures':10,'database_generation':'a'*64}
  def runner(self,args,**kw):
   os.read(kw['input_fd'],65536);return 1,'stdin: IronCurtain.Test FOUND\nScanned files: 1\nInfected files: 1\n'
@@ -102,7 +106,7 @@ class AgentRecoveryTests(unittest.TestCase):
   self.assertFalse(self.agent.full_running)
  def test_all_scan_thread_start_failures_do_not_leave_a_running_task(self):
   for name in ('trigger','trigger_full','trigger_checkup'):
-   agent=a.Agent(self.agent.profile,self.root/name)
+   agent=a.Agent(self.agent.profile,self.root/name);agent.maintenance=lambda:False
    with patch.object(a.threading,'Thread') as thread,patch.object(a.antivirus,'engine_status',return_value=self.engine):
     thread.return_value.start.side_effect=RuntimeError('fixture')
     self.assertEqual(getattr(agent,name)()[0],503);self.assertFalse(agent.full_running);self.assertNotEqual(agent.result['state'],'running')
@@ -111,7 +115,7 @@ class AgentRecoveryTests(unittest.TestCase):
   restored=a.Agent(self.agent.profile,self.state);self.assertEqual(restored.checkup['state'],'paused')
   changed=copy.deepcopy(self.agent.profile);changed['approved_tcp_ports']=[443]
   self.assertEqual(a.Agent(changed,self.state).checkup['state'],'idle')
-  restored.last=0
+  restored.last=0;restored.maintenance=lambda:False
   with patch.object(a.threading,'Thread'):self.assertEqual(restored.trigger()[0],202)
   self.assertEqual(a.Agent(self.agent.profile,self.state).checkup['state'],'idle')
  def test_finished_checkup_restart_requires_shared_task_identity(self):

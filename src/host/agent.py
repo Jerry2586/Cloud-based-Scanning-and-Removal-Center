@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Bounded host scanner and fixed local release-job bridge. No arbitrary commands."""
-import argparse, copy, importlib.util, datetime, hashlib, http.server, json, os, pathlib, re, shutil, socket, socketserver, sqlite3, stat, struct, subprocess, tempfile, threading, time, uuid, sys
+import functools, argparse, copy, importlib.util, datetime, hashlib, http.server, json, os, pathlib, re, shutil, socket, socketserver, sqlite3, stat, struct, subprocess, tempfile, threading, time, uuid, sys, signal
 
 # Installed release code stays immutable, including CLI and dynamic module loads.
 sys.dont_write_bytecode = True
@@ -29,6 +29,8 @@ multi_engine = importlib.util.module_from_spec(_multi_spec); _multi_spec.loader.
 
 _readiness_spec = importlib.util.spec_from_file_location('ironcurtain_engine_readiness', pathlib.Path(__file__).with_name('engine_readiness.py'))
 engine_readiness = importlib.util.module_from_spec(_readiness_spec); _readiness_spec.loader.exec_module(engine_readiness)
+_scheduler_spec = importlib.util.spec_from_file_location('ironcurtain_scheduler', pathlib.Path(__file__).with_name('scheduler.py'))
+scheduler = importlib.util.module_from_spec(_scheduler_spec); _scheduler_spec.loader.exec_module(scheduler)
 
 def utc(): return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00','Z')
 def canonical(value): return json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()
@@ -43,11 +45,11 @@ def atomic_json(file, value):
     finally:
         if os.path.exists(tmp): os.unlink(tmp)
 
-def secure_fd(file,root_controlled=False):
+def secure_fd(file,root_controlled=False,flags=os.O_RDONLY):
     """Walk absolute POSIX components with openat; never follow parent or leaf links."""
     if os.name != 'posix':
         if pathlib.Path(file).is_symlink(): raise ValueError('symbolic link rejected')
-        return os.open(file,os.O_RDONLY)
+        return os.open(file,flags,0o600)
     path=pathlib.PurePosixPath(file)
     if not path.is_absolute() or '..' in path.parts: raise ValueError('unsafe file path')
     directory=os.open('/',os.O_RDONLY|os.O_DIRECTORY)
@@ -59,8 +61,81 @@ def secure_fd(file,root_controlled=False):
                 if info.st_uid!=0 or (info.st_mode&0o022 and not info.st_mode&stat.S_ISVTX):
                     os.close(next_fd); raise ValueError('trust directory must be root-controlled')
             os.close(directory); directory=next_fd
-        return os.open(path.name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=directory)
+        return os.open(path.name,flags|os.O_NOFOLLOW|os.O_NONBLOCK,0o600,dir_fd=directory)
     finally: os.close(directory)
+
+def management_busy():
+    """Inspect the fixed installer lock without deleting or replacing its inode."""
+    if os.name != 'posix': return True
+    import fcntl
+    try:
+        fd = secure_fd('/run/lock/ironcurtain-local.lock', root_controlled=True)
+    except FileNotFoundError: return False
+    except (OSError, ValueError): return True
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022: return True
+        try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError: return True
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    finally: os.close(fd)
+
+def maintenance_active(status, lock_check=management_busy):
+    allowed = {'idle', 'verified', 'failed', 'finished'}
+    if not isinstance(status, dict): return True
+    for key in ('check', 'job'):
+        value = status.get(key)
+        if not isinstance(value, dict) or value.get('state') not in allowed: return True
+    return lock_check()
+
+class ManagementLease:
+    """Keep the installer's fixed inode locked until the actual worker exits."""
+    def __init__(self, fd):
+        self.fd = fd
+        self.lock = threading.Lock()
+    @classmethod
+    def acquire(cls):
+        if os.name != 'posix': raise OSError('Linux management lock required')
+        import fcntl
+        fd = secure_fd('/run/lock/ironcurtain-local.lock', root_controlled=True, flags=os.O_RDWR|os.O_CREAT)
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
+                raise ValueError('untrusted management lock')
+            fcntl.flock(fd, fcntl.LOCK_SH|fcntl.LOCK_NB)
+            return cls(fd)
+        except BaseException:
+            os.close(fd)
+            raise
+    def close(self):
+        with self.lock:
+            if self.fd is not None:
+                os.close(self.fd)
+                self.fd = None
+    def run(self, target, *args):
+        try: target(*args)
+        finally: self.close()
+
+def managed_detection(start):
+    @functools.wraps(start)
+    def dispatch(self):
+        with self.dispatch_lock:
+            if self.stop.is_set(): return 503, {'state':'unavailable','reason':'agent stopping'}
+            try: lease = self.management_lease()
+            except BlockingIOError: return 409, {'state':'unavailable','reason':'management operation active'}
+            except (OSError, ValueError): return 503, {'state':'unavailable','reason':'management lock unavailable'}
+            transferred = False
+            try:
+                # The SH lease already excludes every EX management operation.
+                # Re-probing EX here would mistake our own lease for maintenance.
+                if self.maintenance(): return 409, {'state':'unavailable','reason':'maintenance active'}
+                result = start(self, lease)
+                transferred = result[0] == 202
+                return result
+            finally:
+                if not transferred: lease.close()
+    return dispatch
 
 def private_bytes(file,maximum=2*1024*1024):
     fd=secure_fd(file,root_controlled=True)
@@ -438,6 +513,7 @@ class Agent:
     def __init__(self,profile,state_dir,interval=300,rule_path=None):
         self.rule_path=rule_path; self.rule_hits={'items':[],'total':0,'state':'unavailable'}
         self.profile=profile_validate(profile); self.state_dir=pathlib.Path(state_dir); self.interval=interval; self.lock=threading.Lock(); self.last=0; self.stop=threading.Event()
+        self.dispatch_lock=threading.Lock(); self.management_lease=ManagementLease.acquire; self.maintenance=lambda:True
         self.engine_update_last=0
         self.previous={}; self.history=[]; self.history_available=True; self.outbound=None; self.findings_bundle={'schema':'ironcurtain-findings/v1','state':'unavailable','items':[], 'total':0}
         self.inventory={'state':'unavailable'}; self.full_result={'schema':'ironcurtain-full-scan/v1','state':'idle'}; self.full_running=False; self.findings_source='quick'; self.checkup={'schema':'ironcurtain-checkup/v1','state':'idle'}
@@ -537,7 +613,8 @@ class Agent:
         try: atomic_json(self.state_dir/'checkup-report.json',value)
         except (OSError,ValueError): return False
         self.checkup=value; return True
-    def trigger(self):
+    @managed_detection
+    def trigger(self, lease):
         with self.lock:
             if (getattr(self,'multi',None) and self.multi.running) or self.full_running: return 409,{'state':'unavailable','reason':'file scan in progress'}
             if self.result['state']=='running': return 409,{**copy.deepcopy(self.result),'history':copy.deepcopy(self.history[-8:]),'history_state':'unavailable' if not self.history_available else 'truncated' if len(self.history)>8 else 'ok'}
@@ -545,7 +622,7 @@ class Agent:
             if not self.clear_checkup(): return 503,{'state':'unavailable','reason':'task persistence unavailable'}
             self.last=time.monotonic(); self.result={'state':'running','task_id':uuid.uuid4().hex,'started_at':utc(),'checks':[],'progress':{'completed':0,'total':len(IDS),'current':IDS[0]},'history':copy.deepcopy(self.history),'history_state':'ok' if self.history_available else 'unavailable'}
             result={**copy.deepcopy(self.result),'history':copy.deepcopy(self.history[-8:]),'history_state':'unavailable' if not self.history_available else 'truncated' if len(self.history)>8 else 'ok'}
-        try: threading.Thread(target=self.scan,daemon=True).start()
+        try: threading.Thread(target=lease.run,args=(self.scan,),daemon=True).start()
         except RuntimeError:
             with self.lock: self.result={'state':'failed','checks':[],'history':copy.deepcopy(self.history),'history_state':'unavailable'}
             return 503,{'state':'unavailable','reason':'task start unavailable'}
@@ -585,7 +662,8 @@ class Agent:
                 self.outbound=digest_snapshot
         except Exception:
             with self.lock: self.result={**identity,'state':'failed','checked_at':utc(),'checks':[],'history':copy.deepcopy(self.history),'history_state':'unavailable'}
-    def trigger_full(self):
+    @managed_detection
+    def trigger_full(self, lease):
         with self.lock:
             if (getattr(self,'multi',None) and self.multi.running) or self.full_running or self.result['state']=='running': return 409,{'state':'unavailable','reason':'scan already active'}
             engine=antivirus.engine_status()
@@ -596,7 +674,7 @@ class Agent:
             if not self.clear_checkup(): return 503,{'state':'unavailable','reason':'task persistence unavailable'}
             self.last=time.monotonic(); self.full_running=True
             self.full_result={'schema':'ironcurtain-full-scan/v1','state':'indexing','started_at':utc(),'task_id':uuid.uuid4().hex}
-        try: threading.Thread(target=self.scan_full,args=(engine,),daemon=True).start()
+        try: threading.Thread(target=lease.run,args=(self.scan_full,engine),daemon=True).start()
         except RuntimeError:
             with self.lock: self.full_running=False; self.full_result={'schema':'ironcurtain-full-scan/v1','state':'idle'}
             return 503,{'state':'unavailable','reason':'task start unavailable'}
@@ -625,7 +703,8 @@ class Agent:
         finally:
             with self.lock:
                 if release: self.full_running=False
-    def trigger_checkup(self):
+    @managed_detection
+    def trigger_checkup(self, lease):
         with self.lock:
             if (getattr(self,'multi',None) and self.multi.running) or self.full_running or self.result['state']=='running' or antivirus.update_status()=='running': return 409,{'state':'unavailable','reason':'scan already active'}
             if self.last and time.monotonic()-self.last<60: return 429,{'state':'unavailable','reason':'scan cooldown'}
@@ -636,7 +715,7 @@ class Agent:
             self.last=time.monotonic(); self.full_running=True; self.checkup=task
             self.full_result={'schema':'ironcurtain-full-scan/v1','state':'idle'}
             self.result={'state':'running','task_id':task_id,'started_at':started,'checks':[],'progress':{'completed':0,'total':len(IDS),'current':IDS[0]},'history':copy.deepcopy(self.history),'history_state':'ok' if self.history_available else 'unavailable'}
-        try: threading.Thread(target=self.scan_checkup,daemon=True).start()
+        try: threading.Thread(target=lease.run,args=(self.scan_checkup,),daemon=True).start()
         except RuntimeError:
             self.fail_checkup('体检任务无法启动，请检查代理日志')
             with self.lock:
@@ -678,9 +757,33 @@ class Agent:
             self.fail_checkup('体检状态保存失败，请检查受保护状态目录与代理日志')
         finally:
             with self.lock: self.full_running=False
+    @managed_detection
+    def trigger_multi(self, lease):
+        return self.multi.trigger(lease=lease)
+    def scheduled_start(self, kind):
+        if getattr(self, 'maintenance', lambda: False)(): return 409, {'state': 'unavailable'}
+        if kind == 'quick': return self.trigger()
+        if kind == 'files': return self.trigger_full()
+        if kind == 'engines': return self.trigger_multi()
+        return 400, {'state': 'unavailable'}
+    def scheduled_observe(self, kind, identity):
+        if kind == 'engines':
+            report = self.multi.status()
+            if report.get('job_id') != identity: return 'interrupted'
+            if report.get('state') == 'running': return 'running'
+            if report.get('state') in ('finished', 'partial'): return 'complete' if report.get('coverage') == 4 else 'partial'
+            return 'failed' if report.get('state') == 'failed' else 'unavailable'
+        with self.lock: report = copy.deepcopy(self.result if kind == 'quick' else self.full_result)
+        if report.get('task_id') != identity: return 'interrupted'
+        if report.get('state') in ('running', 'indexing', 'scanning'): return 'running'
+        if report.get('state') == 'finished':
+            if kind == 'quick':
+                if len(report.get('checks', [])) != len(IDS): return 'unavailable'
+                return 'partial' if any(x['state'] == 'unavailable' for x in report['checks']) else 'complete'
+            return 'complete' if report.get('index_complete') and report.get('errors') == 0 and report.get('skipped') == 0 else 'partial'
+        return 'interrupted' if report.get('state') == 'paused' else 'failed' if report.get('state') == 'failed' else 'unavailable'
     def schedule(self):
-        self.trigger()
-        while not self.stop.wait(self.interval): self.trigger()
+        self.scheduler.run(self.stop)
 
 class UnixServer(socketserver.ThreadingMixIn,getattr(socketserver,'UnixStreamServer',socketserver.TCPServer)):
     # TCP fallback permits portable unit imports only; serve() is Linux-only.
@@ -717,7 +820,9 @@ def serve(profile_file,state_dir,socket_path,allowed_uid,group):
     update_bridge=updates.Bridge(private_bytes,atomic_json)
     agent.multi=multi_engine.Bridge(agent,profile_file,{'open':secure_fd,'read':private_json,'write':atomic_json,'digest':fullscan.profile_digest,'updating':antivirus.update_status,'discover':inventory.discover,'runner':Runner})
     engine_bridge=engine_readiness.Bridge(engine_readiness.NativeProbe(secure_fd),antivirus.engine_status,
-        busy=lambda:update_bridge.status().get('state')=='running' or antivirus.update_status()=='running')
+        busy=lambda:maintenance_active(update_bridge.status()) or antivirus.update_status()=='running')
+    agent.maintenance=lambda:maintenance_active(update_bridge.status(), lambda:False) or antivirus.update_status()=='running'
+    agent.scheduler=scheduler.Scheduler(state_dir,private_json,atomic_json,agent.scheduled_start,agent.scheduled_observe)
     class Handler(http.server.BaseHTTPRequestHandler):
         def setup(self):
             self.request.settimeout(5)
@@ -732,6 +837,7 @@ def serve(profile_file,state_dir,socket_path,allowed_uid,group):
             except OSError: return False
         def do_GET(self):
             if not self.authorized(): return self.reply(403,{'state':'unavailable'})
+            if self.path=='/schedule': return self.reply(200,agent.scheduler.status())
             if self.path=='/engines': return self.reply(200,engine_bridge.status())
             if self.path=='/multi-engine': return self.reply(200,agent.multi.status())
             if self.path=='/update-status': return self.reply(200,update_bridge.status())
@@ -742,9 +848,24 @@ def serve(profile_file,state_dir,socket_path,allowed_uid,group):
             return self.reply(404,{'state':'unavailable'})
         def do_POST(self):
             if not self.authorized(): return self.reply(403,{'state':'unavailable'})
+            if self.path == '/schedule':
+                lengths = self.headers.get_all('Content-Length', [])
+                if len(lengths) != 1 or not re.fullmatch(r'[1-9][0-9]{0,3}', lengths[0]) or int(lengths[0]) > 4096 or self.headers.get('Transfer-Encoding') or self.headers.get('Content-Type') != 'application/json': return self.reply(400, {'state': 'unavailable'})
+                def unique(pairs):
+                    result = {}
+                    for key, value in pairs:
+                        if key in result: raise ValueError('duplicate JSON key')
+                        result[key] = value
+                    return result
+                try:
+                    payload = self.rfile.read(int(lengths[0]))
+                    if len(payload) != int(lengths[0]): raise ValueError('incomplete request')
+                    value = json.loads(payload, object_pairs_hook=unique)
+                except (ValueError, OSError): return self.reply(400, {'state': 'unavailable'})
+                return self.reply(*agent.scheduler.configure(value))
             if self.path not in ['/scan','/full-scan','/checkup','/engine-update','/update-check','/update','/multi-engine','/engines'] or self.headers.get('Content-Length')!='0' or self.headers.get('Transfer-Encoding'): return self.reply(400,{'state':'unavailable'})
             if self.path=='/engines': return self.reply(*engine_bridge.trigger())
-            if self.path=='/multi-engine': return self.reply(*agent.multi.trigger())
+            if self.path=='/multi-engine': return self.reply(*agent.trigger_multi())
             if self.path=='/engine-update': return self.reply(*agent.trigger_engine_update())
             if self.path in ['/update-check','/update']: return self.reply(*update_bridge.trigger('check' if self.path=='/update-check' else 'update'))
             self.reply(*(agent.trigger_checkup() if self.path=='/checkup' else agent.trigger_full() if self.path=='/full-scan' else agent.trigger()))
@@ -758,9 +879,20 @@ def serve(profile_file,state_dir,socket_path,allowed_uid,group):
         else: raise SystemExit('host agent already running')
         finally: probe.close()
     server=UnixServer(str(location),Handler); os.chown(location,0,group); os.chmod(location,0o660)
-    threading.Thread(target=agent.schedule,daemon=True).start()
+    schedule_thread=threading.Thread(target=agent.schedule,daemon=True)
+    previous_signal=None
+    if threading.current_thread() is threading.main_thread():
+        previous_signal=signal.getsignal(signal.SIGTERM)
+        def shutdown_agent(signum, frame):
+            agent.stop.set()
+            threading.Thread(target=server.shutdown,daemon=True).start()
+        signal.signal(signal.SIGTERM,shutdown_agent)
+    schedule_thread.start()
     try: server.serve_forever()
-    finally: agent.stop.set(); engine_bridge.close(); agent.multi.close(); server.server_close(); location.unlink(missing_ok=True)
+    finally:
+        agent.stop.set(); schedule_thread.join(timeout=8)
+        engine_bridge.close(); agent.multi.close(); server.server_close(); location.unlink(missing_ok=True)
+        if previous_signal is not None: signal.signal(signal.SIGTERM,previous_signal)
 
 def main():
     parser=argparse.ArgumentParser(); parser.add_argument('--profile',default='/etc/ironcurtain/profile.json'); parser.add_argument('--state',default='/var/lib/ironcurtain'); parser.add_argument('--socket',default='/run/ironcurtain/scan.sock'); parser.add_argument('--allowed-uid',type=int,default=10001); parser.add_argument('--group',type=int,default=10001); parser.add_argument('--validate-profile',action='store_true'); parser.add_argument('--once',action='store_true'); args=parser.parse_args()

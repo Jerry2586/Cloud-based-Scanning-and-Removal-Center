@@ -48,7 +48,18 @@ class FindingTests(unittest.TestCase):
             self.file.rename(self.root/'old');self.file.write_bytes(b'clean-replacement')
             self.assertEqual(os.read(kwargs['input_fd'],1024),old)
             return 1,'stdin: Test.Signature FOUND'
-        # Rename changes the old inode ctime; therefore no actionable evidence is retained.
+        # Path must still name the scanned inode, regardless of rename ctime behavior.
+        self.assertEqual(self.collect(replace),([],False))
+
+    def test_parent_replacement_never_offers_stale_path(self):
+        directory=self.root/'protected';directory.mkdir()
+        self.file=directory/'sample';self.file.write_bytes(b'test-infected-content')
+        old=self.file.read_bytes()
+        def replace(*args,**kwargs):
+            directory.rename(self.root/'old-parent');directory.mkdir()
+            self.file.write_bytes(b'clean-replacement')
+            self.assertEqual(os.read(kwargs['input_fd'],1024),old)
+            return 1,'stdin: Test.Signature FOUND'
         self.assertEqual(self.collect(replace),([],False))
 
 if __name__=='__main__':unittest.main()

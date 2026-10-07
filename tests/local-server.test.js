@@ -267,3 +267,27 @@ test('hash API boundaries reject foreign nodes and strip storage-only fields',as
  const fetched=await cloud.request('/api/intelligence/'+id,{headers:ch});assert.equal(fetched.status,200);assert.equal((await fetched.json()).command,undefined);
  job={...job,result:{verdict:'safe'}};assert.equal((await cloud.request('/api/intelligence/'+id,{headers:ch})).status,503);
 });
+
+function scheduleFixture(revision=1) {
+  return {schema:'ironcurtain-schedule/v1',state:'ready',response_status:200,config:{revision,jobs:{quick:{enabled:true,interval_seconds:300},files:{enabled:false,interval_seconds:86400},engines:{enabled:false,interval_seconds:21600}}},records:Object.fromEntries(['quick','files','engines'].map(id=>[id,{state:'idle',task_id:null,attempts:0,next_at:id==='quick'?'2026-10-07T12:00:00Z':null,last_attempt_at:null,last_started_at:null,last_finished_at:null}]))};
+}
+test('schedule API requires login, same Origin and CSRF, reads are side-effect free, logout revokes access',async t=>{
+  const actions=[],f=await fixture(t,null,null,null,{schedule:async(action,config)=>{actions.push({action,config});return scheduleFixture(action==='save'?2:1);}});
+  assert.equal((await f.request('/api/schedule')).status,401);assert.deepEqual(actions,[]);
+  const identity=await f.login(),headers={cookie:identity.cookie,'x-csrf-token':identity.csrf},config=scheduleFixture().config;
+  assert.equal((await f.request('/api/schedule',{headers})).status,200);assert.deepEqual(actions.map(x=>x.action),['status']);
+  assert.equal((await f.post('/api/schedule',config,{cookie:identity.cookie})).status,403);
+  assert.equal((await f.post('/api/schedule',config,{...headers,origin:'https://untrusted.invalid'})).status,403);
+  assert.equal((await f.post('/api/schedule',{...config,command:'shell'},headers)).status,400);assert.equal(actions.length,1);
+  const save=await f.post('/api/schedule',config,headers);assert.equal(save.status,200);assert.equal((await save.json()).config.revision,2);assert.deepEqual(actions[1],{action:'save',config});
+  await f.post('/api/logout',{},headers);assert.equal((await f.request('/api/schedule',{headers})).status,401);assert.equal((await f.post('/api/schedule',config,headers)).status,401);assert.equal(actions.length,2);
+});
+test('cloud role never exposes host schedule controls',async t=>{
+  let calls=0;const f=await fixture(t,null,null,null,{role:'cloud',schedule:async()=>{calls++;return scheduleFixture();}}),identity=await f.login(),headers={cookie:identity.cookie,'x-csrf-token':identity.csrf};
+  assert.equal((await f.request('/api/schedule',{headers})).status,404);assert.equal((await f.post('/api/schedule',{},headers)).status,404);assert.equal(calls,0);
+});
+test('schedule API rejects malformed host success and retains revision conflict',async t=>{
+  let broken=true;const f=await fixture(t,null,null,null,{schedule:async()=>broken?{...scheduleFixture(),records:{}}:{state:'unavailable',response_status:409}}),identity=await f.login(),headers={cookie:identity.cookie,'x-csrf-token':identity.csrf};
+  assert.equal((await f.request('/api/schedule',{headers})).status,503);assert.equal((await f.post('/api/schedule',scheduleFixture().config,headers)).status,503);
+  broken=false;assert.equal((await f.post('/api/schedule',scheduleFixture().config,headers)).status,409);
+});

@@ -81,6 +81,8 @@ jobs:
           sudo env "PATH=$PATH" python3 tests/host-inventory.test.py
           sudo env "PATH=$PATH" python3 tests/fullscan.test.py
           sudo env "PATH=$PATH" python3 tests/host-agent-recovery.test.py
+          sudo env "PATH=$PATH" python3 tests/host-scheduler.test.py
+          sudo env "PATH=$PATH" python3 tests/host-management-lifecycle.test.py
           sudo env "PATH=$PATH" python3 tests/host-code-cache.test.py
       - name: Test pinned findings and bounded local quarantine
         run: |

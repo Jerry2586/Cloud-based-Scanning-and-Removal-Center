@@ -83,7 +83,7 @@ export function verifyRelease({ directory, publicKey, expectedVersion } = {}) {
   }
   const tarPath = prefix + '.tar.gz';
   const invoke = args => execFileSync('tar', args, { cwd: directory, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024, timeout: 30000 });
-  const names = invoke(['-tzf', tarPath]).trimEnd().split('\n');
+  const names = invoke(['-tzf', tarPath]).trimEnd().split(/\r?\n/);
   if (new Set(names).size !== names.length || names.some(name => name !== './' && (!name.startsWith('./')
     || /[\\\r\0]/.test(name) || name.slice(2).replace(/\/$/, '').split('/').some(part => !part || part === '.' || part === '..')))) {
     throw Error('Archive paths are unsafe or duplicated');

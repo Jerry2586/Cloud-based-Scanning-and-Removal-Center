@@ -13,7 +13,7 @@ class TranscriptTest(unittest.TestCase):
         health = '正常（容器健康）' if healthy else '容器未通过健康检查，请运行环境诊断'
         return ('╔' + '═' * 58 + '╗\n' + '║' + ' ' * 58 + '║\n' +
                 '╠' + '═' * 58 + '╣\n' + '╚' + '═' * 58 + '╝\n' +
-                '安装目录：0.6.1\n运行状态：' + health + '\n登记节点：0 个\n' +
+                '安装目录：0.6.2\n运行状态：' + health + '\n登记节点：0 个\n' +
                 '打开菜单：sudo xuanwu\n更新程序：sudo xuanwu update\n' +
                 ''.join(f'{number:2}. 管理项目\n' for number in expected) +
                 '玄武引擎 · 请输入菜单编号（0 退出）：')
