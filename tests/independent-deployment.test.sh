@@ -125,6 +125,15 @@ PY
 done
 # Verify both real workers reject unrelated port owners without modifying them.
 python3 "$SOURCE/tests/domain-entry-conflicts.test.py"
+# Conflict probes must leave both real services healthy, independently of menu rendering.
+for role in local cloud; do
+  source "$SOURCE/scripts/lib/independent.sh"
+  ic_role "$role"; ic_load
+  ic_wait || {
+    docker inspect --format '{{json .State.Health}}' "$CONTAINER" >&2
+    echo "$role: container failed to recover after conflict probes" >&2; exit 1
+  }
+done
 # Both role menus must open in a real terminal; the legacy entry still works.
 for entry in tiemu ironcurtain xuanwu; do
   [[ -f /usr/local/bin/$entry && ! -L /usr/local/bin/$entry && $(stat -c '%a:%u:%h' /usr/local/bin/$entry) == 755:0:1 ]]
@@ -139,35 +148,15 @@ for entry in tiemu xuanwu; do
   grep -q "更新程序：sudo $entry update" "$WORK/$entry-menu.log"
   grep -q '请输入菜单编号（0 退出）' "$WORK/$entry-menu.log"
   printf '0\n' | NO_COLOR=1 TERM=xterm timeout 60 script -q -e -c "/usr/local/bin/$entry" "$WORK/$entry-plain-menu.log" >/dev/null
-  python3 - "$WORK/$entry-menu.log" "$entry" <<'PY'
-import re, sys, unicodedata
-with open(sys.argv[1], encoding='utf-8') as source:
-    raw = source.read()
-    assert '\x1b[1;34m' in raw
-    text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', raw)
-with open(sys.argv[1].replace('-menu.log', '-plain-menu.log'), encoding='utf-8') as source:
-    plain = source.read()
-assert '\x1b[' not in plain
-assert text[text.index('╔'):text.index('请输入菜单编号（0 退出）')] == plain[plain.index('╔'):plain.index('请输入菜单编号（0 退出）')]
-lines = text.splitlines()
-items = [line for line in lines if re.match(r'^ *\d+\. ', line)]
-expected = list(range(1, 28)) + [29, 31, 32, 33, 34, 35, 36, 37, 0] if sys.argv[2] == 'tiemu' else list(range(1, 12)) + [13, 14] + list(range(22, 31)) + [35, 36] + [0]
-actual = [int(re.match(r'^ *(\d+)\.', line)[1]) for line in items]
-assert actual == expected, (actual, expected)
-assert all(len(re.findall(r'\d+\. ', line)) == 1 for line in items)
-assert '╔' in text and '╠' in text and '╚' in text
-assert '安装目录：' in text
-assert not re.search(r'"(?:engine|installed|updater|state)"\s*:', text)
-for line in lines:
-    if line.startswith('║'):
-        width = sum(0 if unicodedata.combining(c) else 2 if unicodedata.east_asian_width(c) in ('W', 'F') else 1 for c in line)
-        assert width == 60, (width, line)
-if sys.argv[2] == 'tiemu':
-    assert '病毒引擎：未就绪' in text
-    assert '玄武连接：尚未配对' in text
-else:
-    assert '登记节点：0 个' in text
-PY
+  python3 "$SOURCE/tests/helpers/menu-transcript.py" "$WORK/$entry-menu.log" "$entry"
+done
+# A layout comparison never substitutes for convergence of both real health probes.
+for role in local cloud; do
+  ic_role "$role"; ic_load
+  ic_wait || {
+    docker inspect --format '{{json .State.Health}}' "$CONTAINER" >&2
+    echo "$role: container failed the post-menu health gate" >&2; exit 1
+  }
 done
 # Do not send acknowledgement until the real PTY proves results stay on screen.
 python3 "$SOURCE/tests/helpers/menu-result-input.py"

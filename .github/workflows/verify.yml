@@ -46,6 +46,7 @@ jobs:
         run: |
           bash tests/management-lock.test.sh
           python3 tests/management-lock.test.py
+          python3 tests/menu-transcript.test.py
       - name: Check copyable Git install commands match the tested entry
         run: node scripts/render-git-install.js --check
       - name: Validate release verifier syntax
@@ -136,6 +137,11 @@ jobs:
           sudo journalctl -u ironcurtain-rules-sync.service --no-pager -n 30 || true
           sudo stat -c '%a %u %g %F %n' /run/ironcurtain /run/ironcurtain/scan.sock || true
           sudo docker exec ironcurtain-local node --input-type=module -e 'import {localSecurityScan} from "./src/local/scan-client.js"; const s=await localSecurityScan("status"); console.log(JSON.stringify({state:s.state,reason:s.reason,progress:s.progress,protection:s.protection,full_scan:s.full_scan}));' || true
+          for container in ironcurtain-local ironcurtain-cloud; do
+            sudo docker inspect --format '{{json .State.Health}}' "$container" || true
+            sudo docker inspect --format 'running={{.State.Running}} oom={{.State.OOMKilled}} exit={{.State.ExitCode}} restarts={{.RestartCount}}' "$container" || true
+            sudo docker exec "$container" node src/healthcheck.js || true
+          done
           tail -n 45 "$RUNNER_TEMP/independent-deployment.log" || true
 
   antivirus-engine:

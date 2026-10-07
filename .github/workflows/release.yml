@@ -45,6 +45,7 @@ jobs:
           bash tests/install-image.test.sh
           bash tests/management-lock.test.sh
           python3 tests/management-lock.test.py
+          python3 tests/menu-transcript.test.py
           node scripts/render-git-install.js --check
           node --test
           sudo env "PATH=$PATH" node --test tests/release-delivery.test.js
