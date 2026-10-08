@@ -82,7 +82,7 @@ def acceptance(role, host):
         assert call('/api/account/password', {'current_password': new_password, 'new_password': next_password}, session, True)[0] == 403
         assert call('/api/account/password', {'current_password': 'wrong-password', 'new_password': next_password}, session)[0] == 400
         code, _, result = call('/api/account/password', {'current_password': new_password, 'new_password': next_password}, session)
-        assert code == 200 and result['changed'] is True
+        assert code == 200 and result.get('changed') is True, f'Password API failed: HTTP {code}, {str(result.get("error", "missing changed response"))[:200]}'
         assert call('/api/session', session=session)[2]['authenticated'] is False
         assert call('/api/login', {'username': 'admin', 'password': new_password})[0] == 401
         current = login(next_password)
