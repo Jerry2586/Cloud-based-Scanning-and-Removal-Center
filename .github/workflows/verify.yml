@@ -66,7 +66,9 @@ jobs:
       - name: Test independent root transaction recovery (simulated services)
         run: sudo env "PATH=$PATH" bash tests/independent-transactions.test.sh
       - name: Test domain transactions, routing boundaries and installation exclusion
-        run: sudo env "PATH=$PATH" python3 tests/domain-control.test.py
+        run: |
+          sudo env "PATH=$PATH" python3 tests/domain-control.test.py
+          sudo env "PATH=$PATH" python3 tests/account-control.test.py
       - name: Test authenticated independent recovery archives
         run: sudo env "PATH=$PATH" python3 tests/recovery-archive.test.py
       - name: Test signed rules, native mutual TLS pull and real hash scanning

@@ -3,12 +3,13 @@ import {validateScheduleConfig, sanitizeSchedule} from '../contracts/schedule.js
 import { validateHashRequest, validateHashJob } from '../contracts/hash-intelligence.js';
 import {localEngineReadiness} from './engine-readiness-client.js';
 import {sanitizeEngineReadiness} from '../contracts/engine-readiness.js';
+import {accountPassword} from './account-client.js';
 import http from 'node:http';
 import https from 'node:https';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
-import { createSessions, equalSecret, loadCredentials, verifyPassword } from './auth.js';
+import { createSessions, equalSecret, loadCredentials, readCredentials, verifyPassword } from './auth.js';
 import { createCloudLink } from './cloud-client.js';
 import { localSecurityScan, localCloudSnapshot } from './scan-client.js';
 import { localMultiEngine } from './multi-engine-client.js';
@@ -44,12 +45,22 @@ function json(res, code, data) { res.writeHead(code, { 'content-type': 'applicat
 async function body(req) {
   if (!/^application\/json(?:;.*)?$/.test(req.headers['content-type'] || '')) throw Object.assign(Error('请求须为 JSON'), { status: 415 });
   const chunks = []; let size = 0;
-  for await (const chunk of req) { size += chunk.length; if (size > 1024) throw Object.assign(Error('请求过大'), { status: 413 }); chunks.push(chunk); }
+  for await (const chunk of req) { size += chunk.length; if (size > 4096) throw Object.assign(Error('请求过大'), { status: 413 }); chunks.push(chunk); }
   try { const value = JSON.parse(Buffer.concat(chunks)); if (!value || Array.isArray(value) || typeof value !== 'object') throw Error(); return value; }
   catch { throw Object.assign(Error('请求格式无效'), { status: 400 }); }
 }
 export function createLocalServer({ credentials, origin, tls, scan = localSecurityScan, updates = localUpdate, multi = localMultiEngine, engines = localEngineReadiness, schedule = localSchedule,
-  domains = domainRequest, domainDirectory, panelPort, role = 'local', control, cloudTasks, cloudStatus = async () => ({ state: 'unpaired', connected: false, reason: '玄武引擎尚未配对' }), assets = ASSETS, publicDirectory = PUBLIC, now = Date.now } = {}) {
+  domains = domainRequest, credentialDirectory, changePassword = accountPassword, domainDirectory, panelPort, role = 'local', control, cloudTasks, cloudStatus = async () => ({ state: 'unpaired', connected: false, reason: '玄武引擎尚未配对' }), assets = ASSETS, publicDirectory = PUBLIC, now = Date.now } = {}) {
+  let credentialRead = Promise.resolve();
+  const refreshCredentials = () => {
+    const next = credentialRead.then(async () => {
+      if (!credentialDirectory) return;
+      const latest = await readCredentials(credentialDirectory);
+      if (latest.hash !== credentials.hash || latest.salt !== credentials.salt) {credentials = latest; sessions.clear();}
+    });
+    credentialRead = next.catch(() => {});
+    return next;
+  };
   const target = new URL(origin);
   if (!['http:', 'https:'].includes(target.protocol) || target.pathname !== '/' || target.search || target.hash || target.username || target.password) throw Error('面板来源配置无效');
   const secure = target.protocol === 'https:';
@@ -88,6 +99,7 @@ export function createLocalServer({ credentials, origin, tls, scan = localSecuri
       }
       if (!['GET', 'POST'].includes(req.method)) return json(res, 405, { error: '方法不支持' });
       if (req.method === 'POST' && req.headers.origin !== effectiveOrigin) return json(res, 403, { error: '来源验证失败' });
+      await refreshCredentials();
       const match = /(?:^|;\s*)ironcurtain_session=([a-f0-9]{64})(?:;|$)/.exec(req.headers.cookie || '');
       const sessionId = match?.[1]; const session = sessions.get(sessionId);
       if (req.method === 'POST' && url.pathname === '/api/login') {
@@ -95,7 +107,7 @@ export function createLocalServer({ credentials, origin, tls, scan = localSecuri
         for (const [key, item] of attempts) if (item.until <= time) attempts.delete(key);
         const entry = attempts.get(ip) || { count: 0, until: time + 600000 };
         if (entry.count >= 5 || (!attempts.has(ip) && attempts.size >= 1024)) return json(res, 429, { error: '登录过于频繁，请稍后重试' });
-        const value = await body(req); entry.count++; attempts.set(ip, entry);
+        const value = await body(req); await refreshCredentials(); entry.count++; attempts.set(ip, entry);
         if (Object.keys(value).some(key => !['username', 'password'].includes(key)) || value.username !== 'admin' || !verifyPassword(credentials, value.password)) return json(res, 401, { error: '账号或密码错误' });
         const created = sessions.create(); if (!created) return json(res, 503, { error: '会话数已达上限' });
         attempts.delete(ip); res.setHeader('Set-Cookie', cookie(created.id)); return json(res, 200, { authenticated: true, csrf: created.csrf, username: 'admin' });
@@ -105,6 +117,26 @@ export function createLocalServer({ credentials, origin, tls, scan = localSecuri
       if (req.method === 'POST') {
         if (!equalSecret(req.headers['x-csrf-token'], session.csrf)) return json(res, 403, { error: '会话验证失败' });
         const value = await body(req);
+        await refreshCredentials();
+        if (sessions.get(sessionId) !== session) return json(res,401,{error:'登录已失效，请重新登录'});
+        if (url.pathname === '/api/account/password') {
+          const key = 'password:' + sessionId; const at = now();
+          for (const [id, entry] of attempts) if (entry.until <= at) attempts.delete(id);
+          const entry = attempts.get(key) || {count:0, until:at+600000};
+          if (entry.count >= 5 || (!attempts.has(key) && attempts.size >= 1024)) return json(res,429,{error:'密码验证过于频繁，请稍后重试'});
+          if (Object.keys(value).length !== 2 || !Object.hasOwn(value,'current_password') || !Object.hasOwn(value,'new_password') ||
+            typeof value.new_password !== 'string' || value.new_password.length < 12 || value.new_password.length > 256 || /[\r\n\0]/.test(value.new_password)) return json(res,400,{error:'新密码须为 12–256 个字符，且不能包含换行或空字符'});
+          entry.count++; attempts.set(key,entry);
+          if (!verifyPassword(credentials,value.current_password)) return json(res,400,{error:'当前密码错误'});
+          if (verifyPassword(credentials,value.new_password)) return json(res,400,{error:'新密码不能与当前密码相同'});
+          const result = await changePassword(value);
+          if (result.response_status !== 200 || result.changed !== true) return json(res,[400,403,409,503].includes(result.response_status)?result.response_status:503,{error:result.error || '密码更改未完成'});
+          // Reload on subsequent requests, invalidating every existing session on both CLI and web changes.
+          sessions.clear(); attempts.delete(key);
+          await refreshCredentials();
+          res.setHeader('Set-Cookie','ironcurtain_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0' + (secure?'; Secure':''));
+          return json(res,200,{changed:true,authenticated:false});
+        }
         if (role === 'cloud' && control) {
           if (url.pathname === '/api/plugins') return json(res, 200, control.pluginAction('admin', value));
           if (url.pathname === '/api/policy') return json(res, 200, control.setPolicy('admin', value));
@@ -163,7 +195,7 @@ export async function startLocal(env = process.env) {
   if (!tls && !['127.0.0.1', '::1'].includes(host)) throw Error('公网监听必须配置独立面板 TLS 证书');
   const credentials = await loadCredentials(env.IRONCURTAIN_CONFIG_DIR || '/etc/ironcurtain', env.IRONCURTAIN_INITIAL_PASSWORD);
   const cloud = createCloudLink({ directory: env.IRONCURTAIN_CLOUD_DIR || '/etc/ironcurtain/cloud', snapshot: () => localCloudSnapshot(env) });
-  const server = createLocalServer({ credentials, origin, tls, panelPort: port, scan: action => localSecurityScan(action, env), multi: action => localMultiEngine(action, env), engines: action => localEngineReadiness(action, env), schedule: (action, value) => localSchedule(action, value, env), updates: action => localUpdate(action, env), cloudStatus: () => cloud.status(), cloudTasks: cloud, domainDirectory: env.IRONCURTAIN_CONFIG_DIR || '/etc/ironcurtain', domains: (action, value) => domainRequest(action, value, env) });
+  const server = createLocalServer({ credentials, credentialDirectory: env.IRONCURTAIN_CONFIG_DIR || '/etc/ironcurtain', changePassword: value => accountPassword(value, env), origin, tls, panelPort: port, scan: action => localSecurityScan(action, env), multi: action => localMultiEngine(action, env), engines: action => localEngineReadiness(action, env), schedule: (action, value) => localSchedule(action, value, env), updates: action => localUpdate(action, env), cloudStatus: () => cloud.status(), cloudTasks: cloud, domainDirectory: env.IRONCURTAIN_CONFIG_DIR || '/etc/ironcurtain', domains: (action, value) => domainRequest(action, value, env) });
   server.once('close', () => cloud.close());
   await new Promise((resolveStart, reject) => {const ready=()=>{server.off('error',reject);resolveStart();};server.once('error',reject);server.listen(port,host,ready);});
   console.log('铁幕安全独立面板已启动：' + origin);

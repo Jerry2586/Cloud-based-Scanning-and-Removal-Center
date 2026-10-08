@@ -327,6 +327,28 @@ credentials() {
   echo '仅在可信的本机终端查看：'
   cat "$CONF/credentials/initial-credentials.txt"
 }
+change_password() {
+  local new_password='' confirmation=''
+  set +x
+  read -r -s -p '请输入新面板密码（12–256 字符）：' new_password </dev/tty; echo
+  read -r -s -p '再次输入新面板密码：' confirmation </dev/tty; echo
+  [[ "$new_password" == "$confirmation" ]] || ic_fail '两次输入不一致，密码未更改'
+  lock
+  flock -u 9
+  MANAGEMENT_LOCKED=false
+  printf '%s' "$new_password" | python3 -c 'import sys,json; json.dump({"new_password":sys.stdin.read()},sys.stdout)' |
+    python3 "$SOURCE/scripts/account_control.py" --role "$ROLE" --action change
+  unset new_password confirmation
+  audit password-change
+}
+password_menu() {
+  local option=''
+  ic_menu_item 1 '设置自定义面板密码'
+  ic_menu_item 2 '生成随机密码（忘记密码时恢复）'
+  ic_menu_item 0 '返回'
+  ask '请选择密码操作：' option
+  case "$option" in 1) change_password ;; 2) reset_password ;; 0) return ;; *) ic_fail '请选择有效密码操作' ;; esac
+}
 reset_password() {
   lock; stage; ic_helper "$STAGE" init-local
   ic_admin_begin reset-password
@@ -478,7 +500,7 @@ dispatch() {
     discover) discover_scope ;; enroll) enroll_scope ;; full-scan) full_scan ;; scan-status) scan_status ;;
     pair) pair ;; cloud-status) cloud_status ;; unpair) unpair ;;
     register) register ;; revoke) revoke ;; nodes) [[ $ROLE == cloud ]] || ic_fail '仅用于玄武'; jq -r '.nodes | keys[]' "$CONF/runtime/config.json" ;;
-    reader) reader ;; credentials) credentials ;; reset-password) reset_password ;;
+    reader) reader ;; credentials) credentials ;; change-password) change_password ;; password) password_menu ;; reset-password) reset_password ;;
     *) ic_fail '未知菜单动作' ;;
   esac
 }
@@ -501,7 +523,7 @@ while true; do
     ic_menu_item 11 '检查加密连接'
     ic_menu_item 12 '解绑玄武'
     ic_menu_item 13 '查看面板凭据'
-    ic_menu_item 14 '重置面板密码'
+    ic_menu_item 14 '修改面板密码 / 随机重置'
     ic_menu_item 15 '安装病毒引擎'
     ic_menu_item 16 '更新官方病毒库'
     ic_menu_item 17 '病毒引擎状态'
@@ -515,7 +537,7 @@ while true; do
     ic_menu_item 10 '查看节点'
     ic_menu_item 11 '只读节点接口证书'
     ic_menu_item 13 '查看面板凭据'
-    ic_menu_item 14 '重置面板密码'
+    ic_menu_item 14 '修改面板密码 / 随机重置'
   fi
   ic_menu_item 22 '创建加密恢复包'
   ic_menu_item 23 '验证恢复包'
@@ -561,7 +583,7 @@ while true; do
       11) [[ $ROLE == local ]] && action=cloud-status || action=reader ;;
       12) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=unpair ;;
       13) action=credentials ;;
-      14) action=reset-password ;;
+      14) action=password ;;
       15) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=engine-install ;;
       16) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=engine-update ;;
       17) [[ $ROLE == local ]] || { echo '请选择当前角色显示的有效菜单项'; continue; }; action=engine-status ;;

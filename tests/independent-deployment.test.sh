@@ -91,6 +91,9 @@ for role in local cloud; do
   ! systemctl is-active --quiet "ironcurtain-domain-$role-gateway.socket"
   [[ $(systemctl show "ironcurtain-domain-$role-apply.service" -p ProtectSystem --value) == strict ]]
   [[ $(systemctl show "ironcurtain-domain-$role-renew.service" -p ProtectSystem --value) == strict ]]
+  systemctl is-active --quiet "ironcurtain-account-$role-control.service"
+  [[ $(systemctl show "ironcurtain-account-$role-control.service" -p ProtectSystem --value) == strict ]]
+  setpriv --reuid=10001 --regid=10001 --clear-groups curl -q --noproxy '*' --fail --silent --unix-socket "/run/ironcurtain-account-$role/control.sock" http://localhost/account | jq -e ' .ready == true' >/dev/null
   command -v certbot
   # Drive the real Unix controller as the exact non-root panel identity.
   setpriv --reuid=10001 --regid=10001 --clear-groups python3 - "$role" <<'PY'
@@ -246,10 +249,12 @@ install -m 640 -o root -g 10001 "$WORK/program-valid.run" "$active_run"
 # Exercise preservation of an already activated gateway across a real signed upgrade.
 systemctl enable --now ironcurtain-domain-local-gateway.socket
 # Upgrading must recover an inactive required controller, while preserving timer preferences.
+systemctl stop ironcurtain-account-local-control.service
 systemctl stop ironcurtain-domain-local-control.service
 systemctl disable --now ironcurtain-domain-local-renew.timer
 /usr/local/bin/tiemu release-update
 systemctl is-active --quiet ironcurtain-domain-local-control.service
+systemctl is-active --quiet ironcurtain-account-local-control.service
 ! systemctl is-active --quiet ironcurtain-domain-local-renew.timer
 ! systemctl is-enabled --quiet ironcurtain-domain-local-renew.timer
 systemctl enable --now ironcurtain-domain-local-renew.timer
@@ -266,9 +271,11 @@ systemctl stop ironcurtain-domain-local-gateway.service
 IRONCURTAIN_EXPECT_RULE_SEQUENCE=1 IRONCURTAIN_EXPECT_RELEASE_VERSION="$version" node "$SOURCE/tests/helpers/independent-deployment-probe.js"
 # Same signed cloud program can be re-downloaded and safely reused.
 /usr/local/bin/tiemu release-update
+systemctl stop ironcurtain-account-cloud-control.service
 systemctl stop ironcurtain-domain-cloud-control.service
 bash "$UPGRADE_SOURCE/scripts/install-independent.sh" --role cloud
 systemctl is-active --quiet ironcurtain-domain-cloud-control.service
+systemctl is-active --quiet ironcurtain-account-cloud-control.service
 after=$(sha256sum /etc/ironcurtain/local/runtime/panel-auth.json /etc/ironcurtain/cloud/ca.key)
 [[ $before == "$after" ]] || { echo 'Upgrade replaced existing identity.' >&2; exit 1; }
 ! systemctl is-enabled --quiet ironcurtain-rules-sync.timer
@@ -338,4 +345,5 @@ for role in local cloud; do
   unsafe=$(find "$release" \( ! -user root -o ! -group root -o -perm /022 \) -print -quit)
   [[ -z $unsafe ]] || { stat -c 'Untrusted installed code: %u:%g:%a type=%F path=%n target=%N' "$unsafe" >&2; exit 1; }
 done
+python3 "$SOURCE/tests/helpers/account-password.py" "$CLOUD_HOST"
 echo 'Real local/cloud Docker first installation, rerun and upgrade passed; identities preserved.'

@@ -1,7 +1,7 @@
 import {createDomainSettings} from '/assets/portal/domain-settings.js';
 const state = { csrf: null }; let timer, generation = 0, busy = false, policyRevision, policyDirty = false, flight, refreshPending = false, taskRequest;
 const $ = id => document.getElementById(id);
-const views = { overview: ['安全总览','可信来源、节点连接与检测裁决。'], nodes: ['节点中心','每个节点独立身份，状态来自真实上报。'], plugins: ['引擎与特征','统一玄武能力，来源与授权透明可查。'], policies: ['策略中心','控制自动调度与风险裁决边界。'], tasks: ['检测任务','真实队列、执行证据与风险结论。'], audit: ['操作审计','追溯配置变更与任务生命周期。'], settings: ['系统设置','可信发布、域名与访问配置。'] };
+const views = { overview: ['安全总览','可信来源、节点连接与检测裁决。'], nodes: ['节点中心','每个节点独立身份，状态来自真实上报。'], plugins: ['引擎与特征','统一玄武能力，来源与授权透明可查。'], policies: ['策略中心','控制自动调度与风险裁决边界。'], tasks: ['检测任务','真实队列、执行证据与风险结论。'], audit: ['操作审计','追溯配置变更与任务生命周期。'], account: ['用户中心','管理独立账号与登录密码。'], settings: ['系统设置','可信发布、域名与访问配置。'] };
 const labels = { ready:'已就绪',ok:'正常',finding:'发现风险',warning:'需要关注',stale:'已过期',missing:'未配置',unavailable:'不可用',connected:'已连接',unpaired:'未对接',idle:'待运行','not-enrolled':'尚未登记',partial:'部分完成',unknown:'证据不足',healthy:'正常',expired:'已过期',queued:'排队中',running:'检测中',complete:'已完成',failed:'执行失败',malicious:'恶意命中',suspicious:'可疑',known:'已有情报','waiting-first-report':'等待首次上报','attention-required':'需要处理',expiring:'即将到期' };
 const label = value => labels[value] || value || '未知';
 const time = value => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString('zh-CN', { hour12:false }) : '尚无记录';
@@ -12,7 +12,7 @@ async function request(url, options={}) {
   const value=await response.json(); if(!response.ok){if(response.status===401)clear();throw Object.assign(Error(value.error||'请求未完成'),{status:response.status});} return value;
 }
 const domain=createDomainSettings({state,request,notify}); domain.bind();
-function clear(){generation++;clearTimeout(timer);state.csrf=null;domain.stop();$('workspace').hidden=true;$('login').hidden=false;$('logout').hidden=true;}
+function clear(){generation++;clearTimeout(timer);state.csrf=null;domain.stop();$('workspace').hidden=true;$('login').hidden=false;$('logout').hidden=true;$('account-link').hidden=true;$('password-form').reset();for(const input of $('password-form').querySelectorAll('input[type=text]'))input.type='password';}
 function route(){const view=location.hash.slice(1);const name=Object.hasOwn(views,view)?view:'overview';for(const el of document.querySelectorAll('[data-panel]'))el.hidden=el.dataset.panel!==name;for(const el of document.querySelectorAll('[data-view]')){el.classList.toggle('active',el.dataset.view===name);if(el.dataset.view===name)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');}$('page-title').textContent=views[name][0];$('page-description').textContent=views[name][1];}
 window.addEventListener('hashchange',route);route();
 function element(tag,text,className){const el=document.createElement(tag);if(text!==undefined)el.textContent=String(text);if(className)el.className=className;return el;}
@@ -36,10 +36,22 @@ async function refresh(){
   if(flight){refreshPending=true;return flight;}const id=generation;clearTimeout(timer);
   flight=(async()=>{try{const[cloud,control]=await Promise.all([request('/api/cloud/status'),request('/api/control')]);if(id!==generation||!state.csrf)return;paint(cloud,control);}catch(error){if(id===generation){$('data-age').textContent='读取失败：以下可能为上次数据，请刷新核实。';notify(error.message,true);}}finally{flight=undefined;if(state.csrf){const immediate=refreshPending||id!==generation;refreshPending=false;timer=setTimeout(refresh,immediate?0:10000);}}})();return flight;
 }
-function enter(session){generation++;clearTimeout(timer);state.csrf=session.csrf;policyDirty=false;$('login').hidden=true;$('workspace').hidden=false;$('logout').hidden=false;notify('');domain.start();void refresh();}
+function enter(session){generation++;clearTimeout(timer);state.csrf=session.csrf;policyDirty=false;$('login').hidden=true;$('workspace').hidden=false;$('logout').hidden=false;$('account-link').hidden=false;notify('');domain.start();void refresh();}
 async function action(button,fn){if(busy||!state.csrf)return;busy=true;const session=state.csrf;button.disabled=true;try{await fn();if(session===state.csrf)notify('操作已完成，正在读取实际状态。');}catch(error){if(session===state.csrf)notify(error.message,true);}finally{busy=false;button.disabled=false;if(session===state.csrf)void refresh();}}
 $('login-form').addEventListener('submit',async event=>{event.preventDefault();const form=event.currentTarget,b=form.querySelector('button');b.disabled=true;try{const session=await request('/api/login',{method:'POST',body:{username:form.elements.username.value,password:form.elements.password.value}});form.elements.password.value='';enter(session);}catch(error){notify(error.message,true);}finally{b.disabled=false;}});
 $('logout').addEventListener('click',()=>action($('logout'),async()=>{await request('/api/logout',{method:'POST',body:{}});clear();}));
+$('password-visible').addEventListener('change',event=>{for(const id of ['current-password','new-password','confirm-password'])$(id).type=event.target.checked?'text':'password';});
+$('password-form').addEventListener('submit',async event=>{
+  event.preventDefault(); const form=event.currentTarget, button=form.querySelector('button[type=submit]'), feedback=$('password-feedback');
+  if(button.disabled || !state.csrf)return;
+  if($('new-password').value!==$('confirm-password').value){feedback.textContent='两次新密码输入不一致，请重新确认。';$('confirm-password').focus();return;}
+  button.disabled=true;feedback.textContent='正在保存新密码…';
+  try {
+    await request('/api/account/password',{method:'POST',body:{current_password:$('current-password').value,new_password:$('new-password').value}});
+    clear();feedback.textContent='';notify('密码已更改，所有旧登录会话已退出。请使用新密码登录。');$('login-form').elements.password.focus();
+  } catch(error) {feedback.textContent=error.message;}
+  finally {button.disabled=false;}
+});
 $('refresh').addEventListener('click',()=>void refresh());
 $('plugins').addEventListener('click',event=>{const b=event.target.closest('button[data-plugin]');if(b)void action(b,()=>request('/api/plugins',{method:'POST',body:{id:b.dataset.plugin,action:b.dataset.action}}));});
 $('policy-form').addEventListener('input',()=>{policyDirty=true;});

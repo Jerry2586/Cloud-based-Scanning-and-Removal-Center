@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Fixed role HTTPS services, shared by install and durable recovery.
 ic_domain_units() {
+  # Account units share the installer lifecycle snapshot; their Unix service stays independent.
+  printf "%s\n" "ironcurtain-account-$ROLE-control.service"
   local suffix
   for suffix in control.service apply.service renew.service renew.timer gateway.socket gateway.service; do
     printf "%s\n" "ironcurtain-domain-$ROLE-$suffix"
@@ -21,6 +23,7 @@ ic_domain_snapshot() {
 }
 ic_domain_quiesce() {
   local unit
+  [[ ! -f /etc/systemd/system/ironcurtain-account-$ROLE-control.service ]] || systemctl stop "ironcurtain-account-$ROLE-control.service" || return 1
   for unit in gateway.socket gateway.service control.service renew.timer; do
     [[ ! -f /etc/systemd/system/ironcurtain-domain-$ROLE-$unit ]] || systemctl stop "ironcurtain-domain-$ROLE-$unit" || return 1
   done
@@ -152,6 +155,38 @@ ProtectHome=true
 MemoryMax=32M
 TasksMax=4
 EOF
+  install -d -m 700 "$CONF/account-control"
+  install -d -m 750 -o root -g 10001 "/run/ironcurtain-account-$ROLE"
+  cat > "/etc/systemd/system/ironcurtain-account-$ROLE-control.service" <<EOF
+[Unit]
+Description=IronCurtain $ROLE fixed panel account control
+After=docker.service
+[Service]
+Type=simple
+User=root
+Group=10001
+ExecStart=/usr/bin/python3 $BASE/current/scripts/account_control.py --role $ROLE --action serve
+Restart=on-failure
+RestartSec=5
+RuntimeDirectory=ironcurtain-account-$ROLE
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+UMask=0077
+NoNewPrivileges=true
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=$CONF/account-control $CONF/runtime $CONF/credentials /run/ironcurtain-account-$ROLE /run/lock
+RestrictAddressFamilies=AF_UNIX
+MemoryMax=128M
+TasksMax=8
+[Install]
+WantedBy=multi-user.target
+EOF
   for unit in $(ic_domain_units); do chmod 644 "/etc/systemd/system/$unit"; done
   if ! command -v certbot >/dev/null; then
     if command -v apt-get >/dev/null; then
@@ -164,10 +199,10 @@ EOF
   fi
   command -v certbot >/dev/null || ic_fail "系统缺少自动证书组件 certbot"
   systemctl daemon-reload
-  for unit in "$prefix-control.service" "$prefix-renew.timer"; do
+  for unit in "$prefix-control.service" "$prefix-renew.timer" "ironcurtain-account-$ROLE-control.service"; do
     if [[ -n ${IC_TX:-} && -f $IC_TX/$unit ]]; then
       [[ ! -f $IC_TX/$unit.enabled ]] || systemctl enable "$unit"
-      if [[ $unit == "$prefix-control.service" || -f $IC_TX/$unit.active ]]; then systemctl restart "$unit"; fi
+      if [[ $unit == *-control.service || -f $IC_TX/$unit.active ]]; then systemctl restart "$unit"; fi
     else
       systemctl enable --now "$unit"
     fi
@@ -190,7 +225,9 @@ ic_domain_gateway_resume() {
 ic_domain_wait() {
   local prefix=ironcurtain-domain-$ROLE attempt
   for attempt in {1..20}; do
-    if systemctl is-active --quiet "$prefix-control.service" &&
+    if systemctl is-active --quiet "ironcurtain-account-$ROLE-control.service" &&
+       curl -q --noproxy '*' --max-time 2 --silent --fail --unix-socket "/run/ironcurtain-account-$ROLE/control.sock" http://localhost/account | jq -e '.ready == true' >/dev/null 2>&1 &&
+       systemctl is-active --quiet "$prefix-control.service" &&
        curl -q --noproxy '*' --max-time 2 --silent --show-error --fail --unix-socket "/run/$prefix/control.sock" http://localhost/domain 2>/dev/null |
          jq -e 'type == "object" and (.state | IN("idle", "running", "ready", "failed")) and (.domain | type == "string") and (.certificate | IN("not-issued", "public-ca"))' >/dev/null 2>&1; then
       return 0

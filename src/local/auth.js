@@ -14,15 +14,19 @@ export function verifyPassword(record, password) {
   if (!validCredentials(record) || typeof password !== 'string' || password.length > 256) return false;
   return timingSafeEqual(scryptSync(password, record.salt, 64), Buffer.from(record.hash, 'hex'));
 }
+export async function readCredentials(directory) {
+  const file = join(directory, 'panel-auth.json');
+  const meta = await lstat(file);
+  if (!meta.isFile() || meta.isSymbolicLink() || (process.platform !== 'win32' && (meta.mode & 0o077))) throw Error('面板凭据权限不安全');
+  const value = JSON.parse(await readFile(file, 'utf8'));
+  if (!validCredentials(value)) throw Error('面板凭据无效；拒绝重置既有身份');
+  return value;
+}
 export async function loadCredentials(directory, initialPassword) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const file = join(directory, 'panel-auth.json');
   try {
-    const meta = await lstat(file);
-    if (!meta.isFile() || meta.isSymbolicLink() || (process.platform !== 'win32' && (meta.mode & 0o077))) throw Error('面板凭据权限不安全');
-    const value = JSON.parse(await readFile(file, 'utf8'));
-    if (!validCredentials(value)) throw Error('面板凭据无效；拒绝重置既有身份');
-    return value;
+    return await readCredentials(directory);
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
   }
@@ -45,6 +49,7 @@ export function createSessions({ now = Date.now, ttl = 1800000, maximum = 128 } 
     },
     get(id) { prune(); return entries.get(id); },
     remove(id) { entries.delete(id); },
+    clear() { entries.clear(); },
   });
 }
 export function equalSecret(a, b) {

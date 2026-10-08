@@ -45,6 +45,8 @@ package_version() {
   payload_dir=$(mktemp -d "$WORK/verified-payload.XXXXXXXX")
   tar -xzf "$output_dir/APPGOG-Cloud-Security-Center-$version.tar.gz" -C "$payload_dir"
   python3 -B "$payload_dir/scripts/domain_control.py" --help >/dev/null
+  python3 -B "$payload_dir/scripts/account_control.py" --help >/dev/null
+  node --check "$payload_dir/src/local/account-client.js"
   bash -n "$payload_dir/scripts/domain-apply.sh"
   bash -n "$payload_dir/scripts/lib/domain-services.sh"
   for file in "$output_dir/"*; do

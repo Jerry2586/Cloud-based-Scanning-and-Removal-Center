@@ -1,6 +1,7 @@
 import {readFile} from 'node:fs/promises';
 import {createLocalServer} from '../local/server.js';
 import {loadCredentials} from '../local/auth.js';
+import {accountPassword} from '../local/account-client.js';
 import {domainRequest} from '../local/domain-client.js';
 const publicDirectory = new URL('./public/', import.meta.url);
 export const CLOUD_ASSETS = new Map([
@@ -16,7 +17,8 @@ export async function startCloudAdmin(monitor, env = process.env, control) {
   const origin = env.IRONCURTAIN_PUBLIC_ORIGIN;
   if (!origin) throw Error('玄武管理面板缺少公开访问地址');
   const server = createLocalServer({ role: 'cloud', control, origin, tls, assets: CLOUD_ASSETS, publicDirectory, panelPort: Number(env.IRONCURTAIN_PORT || 8791),
-    credentials: await loadCredentials(directory), domainDirectory: directory,
+    credentials: await loadCredentials(directory), credentialDirectory: directory, domainDirectory: directory,
+    changePassword: value => accountPassword(value, {...env, IRONCURTAIN_ROLE: 'cloud'}),
     domains: (action, value) => domainRequest(action, value, {...env, IRONCURTAIN_ROLE: 'cloud'}),
     cloudStatus: () => monitor.status(),
     updates: async () => ({response_status: 503, state: 'unavailable', reason: '玄武程序更新请使用 xuanwu update'}),

@@ -33,6 +33,7 @@ services:
       SECURITY_VIRUS_DB_DIR: /var/lib/xuanwu-virus-db
     volumes:
       - /run/ironcurtain-domain-cloud:/run/ironcurtain-domain-cloud:ro
+      - /run/ironcurtain-account-cloud:/run/ironcurtain-account-cloud:ro
       - ${IRONCURTAIN_CONFIG:?}/runtime:/etc/xuanwu:ro
       - ${IRONCURTAIN_DATA:?}:/var/lib/xuanwu
       - ${IRONCURTAIN_RELEASES:?}:/var/lib/xuanwu-releases:ro

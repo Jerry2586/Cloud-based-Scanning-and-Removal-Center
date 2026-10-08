@@ -25,6 +25,7 @@ services:
       IRONCURTAIN_SCAN_SOCKET: /run/ironcurtain/scan.sock
     volumes:
       - /run/ironcurtain-domain-local:/run/ironcurtain-domain-local:ro
+      - /run/ironcurtain-account-local:/run/ironcurtain-account-local:ro
       - ${IRONCURTAIN_CONFIG:?}/runtime:/etc/ironcurtain:ro
       - /run/ironcurtain:/run/ironcurtain:ro
     healthcheck:
