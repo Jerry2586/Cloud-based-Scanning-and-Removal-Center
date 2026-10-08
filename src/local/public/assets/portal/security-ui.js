@@ -294,7 +294,9 @@ export function createSecurityUi({ state, can, request, notify }) {
         const accepted=await request(action==='engine-update' ? '/api/engine/update' : button.hasAttribute('data-security-checkup') ? '/api/checkup' : button.hasAttribute('data-security-full-scan') ? '/api/full-scan' : '/api/scan', { method: 'POST', body: {} });
         if (current()) { consoleView.requestResult(accepted); await localSecurityPoller.refresh(); }
       } catch (error) { if (current()) { consoleView.requestResult({error:error.message}); notify(error.message, true); } }
-      finally { if (current()) { scanRequested = false; consoleView.setBusy(false); } }
+      // Release only this request's lock, even if its session/permission changed.
+      // Old responses still cannot render or clear a newer request after logout.
+      finally { if (generation === scanGeneration) { scanRequested = false; consoleView.setBusy(false); } }
     }));
   }
   return Object.freeze({ bind, render() { scheduleSettings.start(); engineReadiness.start(); multiEngine.start(); updateSettings.start(); domainSettings.start(); void renderSecurity(); void renderLocalSecurity(); } });

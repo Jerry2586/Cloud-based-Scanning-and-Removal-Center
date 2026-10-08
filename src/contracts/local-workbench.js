@@ -1,5 +1,5 @@
 import { describeCheckup } from './checkup-status.js';
-import { describeFullScan, sanitizeFullScan } from './protection-status.js';
+import { describeFullScan, sanitizeFullScan, sanitizeProtection } from './protection-status.js';
 import { hostScanProgress, safeTimestamp, validHostCheck } from './host-scan-contract.js';
 
 const CHECK_NAMES = Object.freeze({
@@ -33,7 +33,11 @@ export function summarizeLocalSecurity(report,{coverageComplete=false,stale=fals
  const file=sanitizeFullScan(report?.full_scan);
  const infected=Number.isSafeInteger(file.infected)?file.infected:0;
  const historicalFiles=infected>0 && (Date.parse(file.updated_at)<now-900000 || Date.parse(file.updated_at)>now+30000);
+ const protection=sanitizeProtection(report?.protection);
+ const protectionAt=Date.parse(protection.checked_at);
+ const protectionReady=protection.state==='ready' && Number.isFinite(protectionAt) && protectionAt>=now-900000 && protectionAt<=now+30000;
  const notes=[];
+ if(report && !protectionReady)notes.push(protection.issues?.length ? '防护范围尚未就绪：'+protection.issues.join('；') : '防护范围尚未完整核验');
  if(stale && report?.checked_at)notes.push('环境报告已过期或时间异常');
  if(report?.state==='finished' && !coverageComplete)notes.push('环境检查覆盖不完整');
  if(historyUnavailable)notes.push('告警历史暂不可用');
@@ -44,8 +48,8 @@ export function summarizeLocalSecurity(report,{coverageComplete=false,stale=fals
  else if(report?.state==='running' || report?.checkup?.state==='running' || ['indexing','scanning'].includes(file.state)){title='正在检查这台服务器';detail='结论将在检查结束后汇总';tone='running';}
  else if(report?.state==='unavailable' || !report){title='本机检测尚未就绪';detail=report?.reason || '尚未取得 Linux 主机代理报告';}
  else if(report?.state==='failed'){title='本次检查未完成';detail=report.reason || '请查看错误原因并重新检查';}
- else if(report?.state==='finished' && coverageComplete && !stale && !historyUnavailable && attention===0){title='检查范围内未发现异常';detail='结论仅覆盖本次有效检查范围';tone='ok';}
- else if(report?.state==='finished'){title='检查结果需要复核';detail=attention?attention+' 项需复核或不可用':notes.join('；') || '请核对检查范围';}
+ else if(report?.state==='finished' && coverageComplete && !stale && !historyUnavailable && attention===0 && known.length===Object.keys(CHECK_NAMES).length && protectionReady){title='检查范围内未发现异常';detail='结论仅覆盖本次有效检查范围';tone='ok';}
+ else if(report?.state==='finished'){title='检查结果需要复核';detail=[attention?attention+' 项需复核或不可用':'',...notes].filter(Boolean).join('；') || '请核对检查范围';}
  else {title='等待首次安全检查';detail='先检查本机环境，再扫描已纳管文件';}
  return {title,detail,tone,findings,infected,attention,notes,coverage:coverageComplete && !stale?'报告完整且有效':'尚不能确认完整覆盖'};
 }

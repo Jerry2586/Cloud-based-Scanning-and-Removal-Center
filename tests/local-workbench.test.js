@@ -4,11 +4,12 @@ import {HOST_SCAN_IDS} from '../src/contracts/host-scan-contract.js';
 import {summarizeLocalSecurity,describeWorkbenchTask} from '../src/contracts/local-workbench.js';
 const now=Date.now(),at=n=>new Date(now+n*1000).toISOString();
 const check=(id,state='ok')=>({id,name:id,detail:'observed',state,category:'host',severity:state==='finding'?'high':'info',checked_at:at(-10),scope:id,evidence_digest:'a'.repeat(64)});
+const protection=()=>({schema:'ironcurtain-protection/v1',state:'ready',checked_at:at(-10),issues:[],program_roots:1,business_roots:0,enrolled_containers:0,discovered_containers:0,unenrolled_containers:0,file_scope:'configured-directories-only',trust:'independent-signatures-required',monitor_interval_seconds:300});
 const scan=()=>({schema:'ironcurtain-full-scan/v1',profile_digest:'a'.repeat(64),state:'finished',started_at:at(-19),updated_at:at(-2),finished_at:at(-2),indexed:2,processed:2,clean:1,infected:1,skipped:0,errors:0,bytes_scanned:50,index_complete:true,scope:'enrolled-directories-only',reasons:[]});
 test('observed risks remain visible when stale, incomplete or history is unavailable',()=>{
  const r={state:'finished',checked_at:at(-1000),checks:[check(HOST_SCAN_IDS[0],'finding')]};
  const v=summarizeLocalSecurity(r,{stale:true,historyUnavailable:true,now});
- assert.equal(v.tone,'finding');assert.equal(v.findings,1);assert.equal(v.notes.length,3);
+ assert.equal(v.tone,'finding');assert.equal(v.findings,1);assert.equal(v.notes.length,4);
  assert.match(v.detail,/1 项环境风险/);assert.notEqual(v.coverage,'报告完整且有效');
 });
 test('unknown, invalid and duplicate checks cannot inflate risk totals or hide findings',()=>{
@@ -21,7 +22,7 @@ test('no agent report never claims safe status, installed engine or complete cov
  assert.match(v.coverage,/不能确认/);assert.ok(!summarizeLocalSecurity(null,{stale:true,now}).notes.some(note=>note.includes('过期')));const task=describeWorkbenchTask(null,{now});assert.equal(task.active,false);assert.equal(task.percent,null);
 });
 test('safe summary requires full fresh evidence and available history',()=>{
- const r={state:'finished',checks:HOST_SCAN_IDS.map(id=>check(id))};
+ const r={state:'finished',checks:HOST_SCAN_IDS.map(id=>check(id)),protection:protection()};
  assert.equal(summarizeLocalSecurity(r,{coverageComplete:true,stale:false,historyUnavailable:false,now}).tone,'ok');
  for(const option of [{stale:true},{coverageComplete:false},{historyUnavailable:true}])assert.notEqual(summarizeLocalSecurity(r,{coverageComplete:true,historyUnavailable:false,...option,now}).tone,'ok');
  assert.equal(summarizeLocalSecurity({...r,checks:[check(HOST_SCAN_IDS[0],'unavailable')]},{coverageComplete:true,historyUnavailable:false,now}).tone,'warning');
@@ -54,4 +55,16 @@ test('rejected and pending requests cannot reuse a previous completed task',()=>
  for(const reason of ['已有扫描正在进行','扫描请求过于频繁']){const v=describeWorkbenchTask(r,{now,trusted:true,action:'full-scan',requestIssue:reason});assert.equal(v.percent,null);assert.equal(v.active,false);assert.match(v.detail,new RegExp(reason));}
  const waiting=describeWorkbenchTask(r,{now,trusted:true,action:'full-scan',requestedTaskId:'b'.repeat(32)});assert.equal(waiting.percent,null);assert.equal(waiting.active,true);assert.match(waiting.detail,/旧报告不代表/);
  const active=describeWorkbenchTask({...r,state:'running',started_at:at(-20),progress:{completed:25,total:25,current:null}},{now});assert.equal(active.percent,99);
+});
+
+test('complete host checks cannot hide missing, empty, incomplete or stale protection',()=>{
+ const r={state:'finished',checks:HOST_SCAN_IDS.map(id=>check(id))};
+ const options={coverageComplete:true,historyUnavailable:false,now};
+ for(const p of [undefined,{...protection(),state:'incomplete',program_roots:0,issues:['尚未配置任何文件扫描目录']},{...protection(),state:'incomplete',issues:['程序目录缺少独立签名基线']},{...protection(),checked_at:at(-1000)},{...protection(),checked_at:at(60)}]){
+  const v=summarizeLocalSecurity({...r,protection:p},options);assert.equal(v.tone,'warning');assert.ok(v.notes.some(n=>n.includes('防护范围')));
+ }
+ const complete=summarizeLocalSecurity({...r,protection:protection()},options);assert.equal(complete.tone,'ok');
+ // File task completion is independent of whole-host protection readiness.
+ const files=describeWorkbenchTask({...r,protection:{...protection(),state:'incomplete'},full_scan:{...scan(),infected:0,clean:2}},{now});
+ assert.equal(files.kind,'full-scan');assert.equal(files.percent,100);
 });
