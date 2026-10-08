@@ -289,19 +289,34 @@ class IndependenceTests(unittest.TestCase):
 
 @unittest.skipUnless(sys.platform == 'linux' and shutil.which('jq'), 'requires Linux and real jq parser')
 class RequiredDomainHealthTests(unittest.TestCase):
-    def probe(self, active, response, curl_status=0):
+    def probe(self, active, response, curl_status=0, account_active=True, account_response='{"ready":true}', account_curl_status=0):
         helper = Path(__file__).resolve().parents[1] / 'scripts/lib/domain-services.sh'
         # Mock service/network boundaries, retaining the real shell pipeline and JSON validator.
         script = '''set -euo pipefail
 source "$1"
 ROLE=cloud
-systemctl() { [[ $2 == --quiet && $3 == ironcurtain-domain-cloud-control.service && $ACTIVE == 1 ]]; }
-curl() { printf '%s' "$RESPONSE"; return "$CURL_STATUS"; }
+systemctl() {
+  [[ $2 == --quiet ]] || return 1
+  case "$3" in
+    ironcurtain-account-cloud-control.service) [[ $ACCOUNT_ACTIVE == 1 ]] ;;
+    ironcurtain-domain-cloud-control.service) [[ $ACTIVE == 1 ]] ;;
+    *) return 1 ;;
+  esac
+}
+curl() {
+  case "$*" in
+    *http://localhost/account) printf '%s' "$ACCOUNT_RESPONSE"; return "$ACCOUNT_CURL_STATUS" ;;
+    *http://localhost/domain) printf '%s' "$RESPONSE"; return "$CURL_STATUS" ;;
+    *) return 1 ;;
+  esac
+}
 sleep() { :; }
 if ic_domain_wait; then exit 0; else exit 1; fi
 '''
         return subprocess.run(['bash', '-c', script, '--', str(helper)],
-            env=dict(os.environ, ACTIVE=str(int(active)), RESPONSE=response, CURL_STATUS=str(curl_status)),
+            env=dict(os.environ, ACTIVE=str(int(active)), RESPONSE=response, CURL_STATUS=str(curl_status),
+                     ACCOUNT_ACTIVE=str(int(account_active)), ACCOUNT_RESPONSE=account_response,
+                     ACCOUNT_CURL_STATUS=str(account_curl_status)),
             capture_output=True, text=True, timeout=10)
 
     def test_ready_control_accepts_idle_and_failed_certificate_states(self):
@@ -317,6 +332,15 @@ if ic_domain_wait; then exit 0; else exit 1; fi
         for active, response, curl_status in cases:
             with self.subTest(active=active, response=response, curl_status=curl_status):
                 self.assertNotEqual(self.probe(active, response, curl_status).returncode, 0)
+
+    def test_account_controller_must_be_ready_before_install_commits(self):
+        valid = json.dumps({'state': 'ready', 'domain': '', 'certificate': 'not-issued'})
+        cases = [(False, '{"ready":true}', 0), (True, '{"ready":true}', 7),
+                 (True, '{"ready":false}', 0), (True, '{}', 0), (True, 'not-json', 0)]
+        for active, response, status in cases:
+            with self.subTest(active=active, response=response, status=status):
+                self.assertNotEqual(self.probe(True, valid, account_active=active,
+                    account_response=response, account_curl_status=status).returncode, 0)
 
 if __name__ == '__main__':
     unittest.main()
