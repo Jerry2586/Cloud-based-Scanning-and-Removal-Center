@@ -31,25 +31,25 @@ if(offline) {
  assert.equal((await call('/api/checkup',{}, {'X-CSRF-Token':'invalid'})).status,403);
  assert.equal((await call('/api/engine/update',{command:'arbitrary'})).status,400);
 }
+// Restored timers may start legitimate maintenance after socket readiness.
+// Require a newly accepted scan, then follow its identity; an old report cannot pass.
 let started;
-for(let attempt=0;attempt<(offline?80:1);attempt++) {
+for(let attempt=0;attempt<120;attempt++) {
  started=await call(offline?'/api/checkup':'/api/scan',{});
- if(!offline || started.status===202) break;
- assert.ok([409,429].includes(started.status),'Expected cooldown or existing local scan: '+started.status);
+ if(started.status===202) break;
+ assert.ok([409,429].includes(started.status),'Unexpected scan rejection: HTTP '+started.status+' state='+started.data.state);
+ assert.equal(started.data.response_status,started.status);
+ assert.ok(['unavailable','running'].includes(started.data.state));
+ if(started.status===429) assert.match(started.data.reason,/频繁/);
  await new Promise(resolve=>setTimeout(resolve,1000));
 }
-if(offline) assert.equal(started.status,202,'Unpaired checkup must start after prior scan cooldown');
-assert.ok([202,429].includes(started.status), 'Expected scan start or cooldown, got HTTP '+started.status+' state='+started.data.state);
-if(started.status===202) assert.equal(started.data.state,'running');
-if(started.status===429) {
-  assert.equal(started.data.state,'unavailable');
-  assert.equal(started.data.response_status,429);
-  assert.match(started.data.reason,/频繁/);
-}
+assert.equal(started.status,202,'A fresh scan must start after bounded maintenance/cooldown wait: '+started.data.reason);
+assert.equal(started.data.state,'running');
+assert.match(started.data.task_id,/^[a-f0-9]{32}$/);
 let finished;
 for(let attempt=0;attempt<90;attempt++){
   const value=await call('/api/scan');assert.equal(value.status,200);
-  if(value.data.state==='finished' && (!offline || ['finished','partial'].includes(value.data.checkup?.state))){finished=value.data;break;}
+  if(value.data.state==='finished' && value.data.task_id===started.data.task_id && (!offline || ['finished','partial'].includes(value.data.checkup?.state))){finished=value.data;break;}
   assert.ok(['running','idle','finished'].includes(value.data.state));
   await new Promise(resolve=>setTimeout(resolve,1000));
 }
