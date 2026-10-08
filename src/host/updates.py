@@ -270,8 +270,13 @@ class Bridge:
         self.read, self.atomic, self.run, self.base, self.data = read, atomic, run, base, data
         self.lock = threading.Lock()
         self.last = -10
+        self.pending = {}
 
     def status(self):
+        with self.lock:
+            return self._status()
+
+    def _status(self):
         result = {'schema': 'ironcurtain-update-status/v1', 'check': {'state': 'idle'}, 'job': {'state': 'idle'}, 'installed_version': None}
         try:
             result['installed_version'] = receipt(self.read, self.base, self.role)[0]['version']
@@ -281,15 +286,37 @@ class Bridge:
             try:
                 value = json.loads(self.read(self.data / 'panel-update' / (key + '.json'), 8192))
                 result[key] = public_record(value, key)
-                if result[key]['state'] == 'running':
-                    unit = 'check' if key == 'check' else 'update'
-                    observed = self.run(['/usr/bin/systemctl', 'show', '--property=ActiveState', '--value', self.prefix + unit + '.service'], timeout=1, capture_output=True, text=True)
-                    if observed.returncode or observed.stdout.strip() not in ('active', 'activating', 'reloading', 'deactivating'):
-                        result[key] = {'state': 'failed', 'reason': FAILURE}
             except FileNotFoundError:
                 pass
             except Exception:
                 result[key] = {'state': 'unavailable'}
+            requested = self.pending.get(key)
+            if requested:
+                # A queued systemd job has not necessarily replaced its previous
+                # disk record yet. Never present that previous result as this job.
+                fresh = False
+                for field in ('started_at', 'checked_at', 'finished_at'):
+                    try:
+                        observed_at = datetime.datetime.fromisoformat(result[key][field].replace('Z', '+00:00'))
+                        fresh = fresh or observed_at >= requested['at']
+                    except (KeyError, ValueError, TypeError):
+                        pass
+                if fresh:
+                    self.pending.pop(key, None)
+                    requested = None
+                else:
+                    result[key] = {'state': 'running', 'started_at': requested['stamp']}
+            if result[key]['state'] == 'running':
+                unit = requested['unit'] if requested else ('check' if key == 'check' else 'update')
+                try:
+                    observed = self.run(['/usr/bin/systemctl', 'show', '--property=ActiveState', '--value', self.prefix + unit + '.service'], timeout=1, capture_output=True, text=True)
+                    active = not observed.returncode and observed.stdout.strip() in ('active', 'activating', 'reloading', 'deactivating')
+                    # start --no-block may return just before ActiveState changes.
+                    settling = requested and time.monotonic() - requested['monotonic'] < 5
+                    if not active and not settling:
+                        result[key] = {'state': 'failed', 'reason': FAILURE}
+                except (OSError, subprocess.SubprocessError):
+                    result[key] = {'state': 'unavailable'}
         return result
 
     def trigger(self, action):
@@ -303,7 +330,20 @@ class Bridge:
                     result = self.run(['/usr/bin/systemctl', 'show', '--property=ActiveState', '--value', self.prefix + unit + '.service'], timeout=1, capture_output=True, text=True)
                     if result.returncode or result.stdout.strip() not in ('inactive', 'failed'):
                         return 409 if result.stdout.strip() in ('active', 'activating', 'reloading', 'deactivating') else 503, {'state': 'running' if result.stdout.strip() in ('active', 'activating', 'reloading', 'deactivating') else 'unavailable'}
-                result = self.run(['/usr/bin/systemctl', 'start', '--no-block', self.prefix + action + '.service'], timeout=1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                requested_stamp = stamp()
+                keys = ('check',) if action == 'check' else ('check', 'job')
+                requested = {'stamp': requested_stamp, 'at': datetime.datetime.fromisoformat(requested_stamp.replace('Z', '+00:00')), 'monotonic': time.monotonic(), 'unit': action}
+                for key in keys:
+                    self.pending[key] = requested
+                try:
+                    result = self.run(['/usr/bin/systemctl', 'start', '--no-block', self.prefix + action + '.service'], timeout=1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except (OSError, subprocess.SubprocessError):
+                    for key in keys:
+                        self.pending.pop(key, None)
+                    raise
+                if result.returncode:
+                    for key in keys:
+                        self.pending.pop(key, None)
                 if result.returncode:
                     return 503, {'state': 'unavailable'}
                 self.last = time.monotonic()

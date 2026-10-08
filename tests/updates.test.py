@@ -60,6 +60,45 @@ class UpdatesTests(unittest.TestCase):
   self.assertEqual(bridge.status()['job']['state'],'failed')
   busy=u.Bridge(self.read,None,lambda *a,**kw:SimpleNamespace(returncode=0,stdout='activating'),self.base,self.base/'data')
   self.assertEqual(busy.trigger('update')[0],409)
+ def test_accepted_check_hides_previous_result_until_fresh_worker_record(self):
+  data=self.base/'data/panel-update';data.mkdir(parents=True)
+  (data/'check.json').write_text(json.dumps({'state':'verified','checked_at':'2026-10-08T00:00:00.000Z','installed_version':'0.5.4','latest_version':'0.5.5','installed_integrity':'verified','manifest_sha256':'a'*64,'package_sha256':'b'*64}))
+  run=lambda *a,**kw:SimpleNamespace(returncode=0,stdout='inactive')
+  bridge=u.Bridge(self.read,None,run,self.base,self.base/'data')
+  with patch.object(u,'stamp',return_value='2026-10-08T00:00:10.000Z'),patch.object(u.time,'monotonic',return_value=100):
+   self.assertEqual(bridge.trigger('check')[0],202)
+   pending=bridge.status()['check'];self.assertEqual(pending['state'],'running');self.assertNotIn('latest_version',pending)
+  with patch.object(u.time,'monotonic',return_value=106):
+   self.assertEqual(bridge.status()['check']['state'],'failed')
+  fresh={'state':'verified','checked_at':'2026-10-08T00:00:11.000Z','installed_version':'0.5.4','latest_version':'0.5.4','installed_integrity':'verified','manifest_sha256':'a'*64,'package_sha256':'b'*64}
+  (data/'check.json').write_text(json.dumps(fresh))
+  self.assertEqual(bridge.status()['check']['latest_version'],'0.5.4')
+ def test_accepted_update_hides_both_previous_check_and_job(self):
+  data=self.base/'data/panel-update';data.mkdir(parents=True)
+  (data/'job.json').write_text('{"state":"finished","finished_at":"2026-10-08T00:00:00.000Z","version":"0.5.4","result":"already-current"}')
+  bridge=u.Bridge(self.read,None,lambda *a,**kw:SimpleNamespace(returncode=0,stdout='inactive'),self.base,self.base/'data')
+  with patch.object(u,'stamp',return_value='2026-10-08T00:00:10.000Z'),patch.object(u.time,'monotonic',return_value=100):
+   self.assertEqual(bridge.trigger('update')[0],202)
+   state=bridge.status();self.assertEqual(state['job']['state'],'running');self.assertEqual(state['check']['state'],'running')
+ def test_update_check_tracks_update_unit_after_startup_grace(self):
+  def run(args,**kw):
+   active=args[-1]=='ironcurtain-panel-update.service' and 'show' in args
+   return SimpleNamespace(returncode=0,stdout='active' if active else 'inactive')
+  bridge=u.Bridge(self.read,None,lambda *a,**kw:SimpleNamespace(returncode=0,stdout='inactive'),self.base,self.base/'data')
+  with patch.object(u.time,'monotonic',return_value=100):self.assertEqual(bridge.trigger('update')[0],202)
+  bridge.run=run
+  with patch.object(u.time,'monotonic',return_value=160):
+   state=bridge.status();self.assertEqual(state['check']['state'],'running');self.assertEqual(state['job']['state'],'running')
+ def test_rejected_start_does_not_hide_previous_result(self):
+  data=self.base/'data/panel-update';data.mkdir(parents=True)
+  (data/'job.json').write_text('{"state":"finished","finished_at":"2026-10-08T00:00:00.000Z","version":"0.5.4","result":"already-current"}')
+  for failure in [SimpleNamespace(returncode=1,stdout=''),subprocess.TimeoutExpired('systemctl',1)]:
+   def run(args,**kw):
+    if 'start' not in args:return SimpleNamespace(returncode=0,stdout='inactive')
+    if isinstance(failure,Exception):raise failure
+    return failure
+   bridge=u.Bridge(self.read,None,run,self.base,self.base/'data')
+   self.assertEqual(bridge.trigger('update')[0],503);self.assertEqual(bridge.status()['job']['state'],'finished')
  def test_canonical_versions_and_private_status(self):
   for value in ['00.1.0','1.02.3',None,{},'1.0']:
    with self.assertRaises(ValueError):u.version(value)
