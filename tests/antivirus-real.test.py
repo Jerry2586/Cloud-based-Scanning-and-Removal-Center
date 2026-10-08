@@ -61,13 +61,27 @@ class EngineTests(unittest.TestCase):
                     args=[x for x in args if x not in ['--official-db-only=yes','--fail-if-cvd-older-than=7']]
                     args=[('--database='+str(db)) if x.startswith('--database=') else x for x in args]
                 return real_runner()(args,**kwargs)
-            with patch.object(a.threading,'Thread'):
+            # Agent dispatch fails closed until the maintenance probe is wired.
+            # This isolated fixture has no management operation; redirect only its
+            # lease inode instead of touching the host's real installation lock.
+            lockfile=root/'management.lock'; real_secure_fd=a.secure_fd
+            agent.maintenance=lambda:False
+            real_thread=a.threading.Thread; workers=[]
+            def worker(*args,**kwargs):
+                thread=real_thread(*args,**kwargs);workers.append(thread);return thread
+            def secure(file,**kwargs):
+                return real_secure_fd(str(lockfile) if str(file)=='/run/lock/ironcurtain-local.lock' else file,**kwargs)
+            # Actual worker thread, environment commands and clamscan. Only test
+            # database metadata is substituted; no cloud client or identity exists.
+            with patch.object(a,'secure_fd',side_effect=secure),patch.object(a.threading,'Thread',side_effect=worker),patch.object(a,'Runner',return_value=runner),patch.object(a.antivirus,'engine_status',return_value=engine),patch.object(a.antivirus,'database_status',return_value=engine),patch.object(a.antivirus,'DATABASE_DIR',str(db)):
                 self.assertEqual(agent.trigger_checkup()[0],202)
-            # Actual environment commands and actual clamscan; only isolated test
-            # database metadata is substituted. No cloud client or identity exists.
-            with patch.object(a,'Runner',return_value=runner),patch.object(a.antivirus,'engine_status',return_value=engine),patch.object(a.antivirus,'database_status',return_value=engine),patch.object(a.antivirus,'DATABASE_DIR',str(db)):
-                agent.scan_checkup()
+                self.assertEqual(len(workers),1);workers[0].join(30)
+                self.assertFalse(workers[0].is_alive(),'real offline checkup did not finish')
                 status=agent.status()
+            import fcntl
+            fd=os.open(lockfile,os.O_RDWR)
+            try:fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            finally:os.close(fd)
             self.assertEqual(status['state'],'finished');self.assertEqual(len(status['checks']),25)
             self.assertIn(status['checkup']['state'],['finished','partial']);self.assertEqual(status['checkup']['stage'],'complete')
             self.assertEqual(status['checkup']['environment_at'],status['checked_at'])
