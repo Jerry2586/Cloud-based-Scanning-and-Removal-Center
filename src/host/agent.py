@@ -187,24 +187,35 @@ def profile_validate(value):
     return result
 
 class Runner:
-    def __call__(self,args,seconds=12,maximum=262144,input_fd=None):
+    def __call__(self,args,seconds=12,maximum=262144,input_fd=None,pass_fds=(),stop=None,on_line=None):
         if not shutil.which(args[0]): return None,'dependency unavailable'
-        # A bounded temporary output file avoids unbounded PIPE/communicate allocation.
+        # Keep output bounded on disk; inherited descriptors name pinned input inodes.
         with tempfile.TemporaryFile() as output:
-            child=subprocess.Popen(args,stdin=input_fd if input_fd is not None else subprocess.DEVNULL,stdout=output,stderr=output,shell=False,start_new_session=os.name=='posix')
-            deadline=time.monotonic()+seconds
-            while child.poll() is None:
-                if time.monotonic()>deadline or os.fstat(output.fileno()).st_size>maximum:
+            child=subprocess.Popen(args,stdin=input_fd if input_fd is not None else subprocess.DEVNULL,stdout=output,stderr=output,shell=False,start_new_session=os.name=='posix',pass_fds=tuple(pass_fds))
+            deadline=time.monotonic()+seconds; offset=0; pending=b''
+            def notify():
+                nonlocal offset,pending
+                if on_line is None: return
+                chunk=os.pread(output.fileno(),min(maximum+1,65536),offset)
+                offset+=len(chunk); pending+=chunk
+                while b'\n' in pending:
+                    line,pending=pending.split(b'\n',1); on_line(line.decode('utf-8','replace'))
+            try:
+                while child.poll() is None:
+                    if stop is not None and stop.is_set(): return None,'scan interrupted'
+                    if time.monotonic()>deadline or os.fstat(output.fileno()).st_size>maximum: return None,'time or output budget exceeded'
+                    notify(); time.sleep(0.03)
+                if os.fstat(output.fileno()).st_size>maximum: return None,'output budget exceeded'
+                notify(); output.seek(0); data=output.read(maximum+1)
+                if len(data)>maximum: return None,'output budget exceeded'
+                return child.returncode,data.decode('utf-8','replace')
+            finally:
+                if child.poll() is None:
                     if os.name=='posix':
-                        import signal
                         try: os.killpg(child.pid,signal.SIGKILL)
                         except ProcessLookupError: pass
                     else: child.kill()
-                    child.wait(); return None,'time or output budget exceeded'
-                time.sleep(0.03)
-            output.seek(0); data=output.read(maximum+1)
-            if len(data)>maximum: return None,'output budget exceeded'
-            return child.returncode,data.decode('utf-8','replace')
+                child.wait()
 
 def digest_file(file,budget=None):
     fd=secure_fd(file); digest=hashlib.sha256()

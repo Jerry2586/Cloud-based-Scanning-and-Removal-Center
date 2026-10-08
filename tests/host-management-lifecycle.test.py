@@ -172,4 +172,33 @@ a.serve(sys.argv[2],sys.argv[3],sys.argv[4],10001,10001)
             finally:
                 if proc.poll() is None:proc.kill();proc.communicate(timeout=3)
 
+
+@unittest.skipUnless(sys.platform=='linux','requires actual descriptor inheritance and process groups')
+class RunnerTest(unittest.TestCase):
+    def test_pinned_descriptor_and_live_output(self):
+        with tempfile.TemporaryFile() as file:
+            file.write(b'pinned');file.seek(0);lines=[]
+            program='import os,sys; print(os.read(int(sys.argv[1]),64).decode(),flush=True)'
+            code,text=a.Runner()([sys.executable,'-c',program,str(file.fileno())],pass_fds=[file.fileno()],on_line=lines.append)
+            self.assertEqual((code,text),(0,'pinned\n'));self.assertEqual(lines,['pinned'])
+    def test_cancellation_reaps_actual_child(self):
+        stop=threading.Event();pids=[]
+        def line(value):pids.append(int(value));stop.set()
+        program='import os,time; print(os.getpid(),flush=True); time.sleep(30)'
+        started=time.monotonic();code,text=a.Runner()([sys.executable,'-c',program],stop=stop,on_line=line)
+        self.assertIsNone(code);self.assertIn('interrupted',text);self.assertLess(time.monotonic()-started,3);self.assertEqual(len(pids),1)
+        with self.assertRaises(ProcessLookupError):os.kill(pids[0],0)
+    def test_callback_error_reaps_child_and_does_not_hide_error(self):
+        pids=[]
+        def line(value):pids.append(int(value));raise ValueError('report failure')
+        program='import os,time; print(os.getpid(),flush=True); time.sleep(30)'
+        with self.assertRaisesRegex(ValueError,'report failure'):a.Runner()([sys.executable,'-c',program],on_line=line)
+        self.assertEqual(len(pids),1)
+        with self.assertRaises(ProcessLookupError):os.kill(pids[0],0)
+    def test_output_budget_and_timeout_stay_bounded(self):
+        code,text=a.Runner()([sys.executable,'-c','import sys; sys.stdout.write("x"*70000)'],maximum=1000)
+        self.assertIsNone(code);self.assertIn('budget',text)
+        code,text=a.Runner()([sys.executable,'-c','import time; time.sleep(30)'],seconds=.1)
+        self.assertIsNone(code);self.assertIn('budget',text)
+
 if __name__=='__main__':unittest.main()

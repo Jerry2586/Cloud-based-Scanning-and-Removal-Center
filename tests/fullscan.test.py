@@ -17,7 +17,7 @@ class QueueTests(unittest.TestCase):
   hit=b'TEST_VIRUS' in data
   return (1 if hit else 0),('stdin: IronCurtain.Test FOUND\n' if hit else '')+'Scanned files: 1\nInfected files: '+str(int(hit))+'\n'
  def task(self,run=None,publish=None,**kw):
-  return f.FullScan(self.profile,self.state,run or self.runner,a.secure_fd,dict(ENGINE),'/fixture/database',publish or (lambda r:self.published.append(copy.deepcopy(r))),**kw)
+  return f.FullScan(self.profile,self.state,run or self.runner,a.secure_fd,dict(ENGINE),'/fixture/database',publish or (lambda r:self.published.append(copy.deepcopy(r))),batch_size=kw.pop('batch_size',1),**kw)
  def files(self):
   (self.scope/'a-clean').write_bytes(b'clean');(self.scope/'b-virus').write_bytes(b'TEST_VIRUS')
  def test_clean_infected_real_counts_and_pinned_evidence(self):
@@ -130,4 +130,97 @@ class ReportTests(unittest.TestCase):
   published=[];task=f.FullScan({},'/unused',None,None,{},'/unused',published.append)
   task.report['current_file']=dict(current);task.emit();task.report['current_file']['bytes_read']=10;task.report['recent_files'].append(recent)
   self.assertEqual(published[0]['current_file']['bytes_read'],5);self.assertEqual(published[0]['recent_files'],[])
+
+@unittest.skipUnless(os.name=='posix' and os.geteuid()==0,'requires Linux pinned descriptors and private state')
+class BatchTests(unittest.TestCase):
+ setUp=QueueTests.setUp
+ files=QueueTests.files
+ def runner(self,args,**kw):
+  self.assertIn('--follow-file-symlinks=2',args);self.assertIn('--official-db-only=yes',args)
+  fds=kw['pass_fds'];self.assertLessEqual(len(fds),f.BATCH_FILES)
+  self.assertEqual(args[args.index('--')+1:],['/proc/self/fd/'+str(fd) for fd in fds])
+  records=[];hits=0
+  for fd in fds:
+   data=os.read(fd,f.MAX_SIZE+1);hit=b'TEST_VIRUS' in data;hits+=int(hit)
+   line='/proc/self/fd/'+str(fd)+(': IronCurtain.Test FOUND' if hit else ': OK')
+   records.append(line);kw['on_line'](line)
+  return int(hits>0),'\n'.join(records)+'\nScanned files: '+str(len(fds))+'\nInfected files: '+str(hits)+'\n'
+ def task(self,run=None,publish=None,**kw):
+  return f.FullScan(self.profile,self.state,run or self.runner,a.secure_fd,dict(ENGINE),'/fixture/database',publish or (lambda r:self.published.append(copy.deepcopy(r))),**kw)
+ def test_default_batch_reuses_engine_and_reports_each_file(self):
+  for n in range(130):(self.scope/f'{n:03}.bin').write_bytes(b'TEST_VIRUS' if n==128 else b'clean')
+  calls=[];fds=[]
+  def run(args,**kw):
+   calls.append(len(kw['pass_fds']));fds.extend(kw['pass_fds']);return self.runner(args,**kw)
+  r=self.task(run=run).run();self.assertEqual(calls,[128,2]);self.assertEqual((r['processed'],r['clean'],r['infected']),(130,129,1));self.assertEqual(r['state'],'finished')
+  self.assertTrue(f.valid_report(r));self.assertTrue(all(f.valid_report(x) for x in self.published))
+  self.assertTrue(f.valid_finding(r['findings'][0]))
+  for fd in fds:
+   with self.assertRaises(OSError):os.fstat(fd)
+ def test_engine_progress_never_commits_before_terminal_validation(self):
+  self.files();seen=[]
+  def run(args,**kw):
+   value=self.runner(args,**kw);seen.extend(x for x in self.published if x.get('current_file',{} ) and x['current_file']['phase']=='engine')
+   self.assertTrue(seen);self.assertTrue(all(x['processed']==0 for x in seen));return value
+  r=self.task(run=run).run();self.assertEqual(r['processed'],2)
+  self.assertEqual([x['processed'] for x in self.published if x.get('recent_files')],[1,2,2])
+ def test_mutation_and_path_replacement_are_not_clean(self):
+  for replacement in (False,True):
+   with self.subTest(replacement=replacement):
+    self.files()
+    def run(args,**kw):
+     value=self.runner(args,**kw);path=self.scope/'a-clean'
+     if replacement:path.rename(self.scope/'previous');path.write_bytes(b'clean')
+     else:path.write_bytes(b'altered')
+     return value
+    r=self.task(run=run).run();self.assertEqual((r['clean'],r['infected'],r['errors']),(0,1,1));self.assertEqual(r['state'],'partial')
+    old=self.scope/'previous'
+    if old.exists():old.unlink()
+ def test_generation_change_discards_whole_uncommitted_batch(self):
+  self.files();changed=dict(ENGINE)
+  def run(args,**kw):
+   value=self.runner(args,**kw);changed['database_generation']='b'*64;return value
+  r=self.task(run=run,database_status=lambda:changed).run();self.assertEqual(r['state'],'partial');self.assertEqual((r['processed'],r['infected']),(0,0))
+ def test_malformed_engine_results_fail_closed(self):
+  self.files()
+  for fault in ('missing','duplicate','foreign','stats','timeout','errors'):
+   with self.subTest(fault=fault):
+    def run(args,**kw):
+     code,text=self.runner(args,**kw);first=text.splitlines()[0]
+     if fault=='missing':text='\n'.join(text.splitlines()[1:])+'\n'
+     if fault=='duplicate':text=first+'\n'+text
+     if fault=='foreign':text='/proc/self/fd/999999: OK\n'+text
+     if fault=='stats':text=text.replace('Scanned files: 2','Scanned files: 3')
+     if fault=='timeout':code=None
+     if fault=='errors':text+='Errors: 1\n'
+     return code,text
+    r=self.task(run=run).run();self.assertEqual((r['processed'],r['clean'],r['infected'],r['errors']),(2,0,0,2));self.assertEqual(r['state'],'partial')
+ def test_stop_keeps_batch_pending_then_resume_finishes_once(self):
+  self.files();stop=threading.Event();fds=[]
+  def run(args,**kw):fds.extend(kw['pass_fds']);stop.set();return None,'scan interrupted'
+  first=self.task(run=run,stop=stop).run();self.assertEqual(first['state'],'paused');self.assertEqual((first['processed'],first['errors']),(0,0))
+  for fd in fds:
+   with self.assertRaises(OSError):os.fstat(fd)
+  second=self.task().run();self.assertEqual(second['state'],'finished');self.assertEqual((second['processed'],second['infected']),(2,1));self.assertEqual(second['resumed_from'],first['task_id'])
+ def test_empty_files_and_batch_byte_budget_are_explicit(self):
+  self.files();(self.scope/'empty').write_bytes(b'');calls=[]
+  def run(args,**kw):calls.append(len(kw['pass_fds']));return self.runner(args,**kw)
+  with patch.object(f,'BATCH_BYTES',6):r=self.task(run=run).run()
+  self.assertEqual(calls,[1,1]);self.assertEqual((r['processed'],r['clean'],r['infected'],r['skipped']),(3,1,1,1));self.assertEqual(r['state'],'partial')
+ def test_limit_hit_is_visible_gap_instead_of_malware_verdict(self):
+  self.files()
+  def run(args,**kw):
+   code,text=self.runner(args,**kw);return code,text.replace('IronCurtain.Test FOUND','Heuristics.Limits.Exceeded.MaxScanSize FOUND')
+  r=self.task(run=run).run();self.assertEqual((r['clean'],r['infected'],r['skipped']),(1,0,1));self.assertEqual(r['findings'],[]);self.assertEqual(r['state'],'partial')
+ def test_mutation_after_earlier_commit_rejects_remaining_verdict(self):
+  self.files()
+  def publish(r):
+   if r['processed']==1:(self.scope/'b-virus').write_bytes(b'changed-after-validation')
+  r=self.task(publish=publish).run();self.assertEqual((r['processed'],r['clean'],r['infected'],r['errors']),(2,1,0,1));self.assertEqual(r['findings'],[]);self.assertEqual(r['state'],'partial')
+ def test_database_changed_after_first_commit_stops_remaining_results(self):
+  self.files();changed=dict(ENGINE)
+  def publish(r):
+   if r['processed']==1:changed['database_generation']='b'*64
+  r=self.task(publish=publish,database_status=lambda:changed).run();self.assertEqual(r['state'],'partial');self.assertEqual(r['processed'],1)
+
 if __name__=='__main__':unittest.main()

@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Disk-backed, resumable malware scan of administrator-enrolled directories.
-Each file is pinned by openat, hashed and scanned through stdin; paths are never executed.
+Each file is pinned by openat and hashed; bounded batches reuse one engine load.
 """
 import datetime, hashlib, json, os, pathlib, re, sqlite3, stat, time, uuid, copy
 MAX_FILES = 200000
+BATCH_FILES = 128
+BATCH_BYTES = 64 * 1024 * 1024
+
+class ScanInterrupted(Exception): pass
 MAX_SIZE = 64 * 1024 * 1024
 EXCLUDED = ('/proc', '/sys', '/dev', '/run', '/etc/ironcurtain', '/var/lib/ironcurtain', '/var/lib/ironcurtain-antivirus', '/opt/ironcurtain')
 
@@ -69,10 +73,11 @@ def valid_progress(value):
     return isinstance(recent,list) and len(recent)<=8 and all(valid_file(item,True) for item in recent)
 
 class FullScan:
-    def __init__(self, profile, state_dir, run, secure_fd, engine, database_dir, publish, stop=None, maximum=MAX_FILES, database_status=None, task_id=None, started_at=None):
+    def __init__(self, profile, state_dir, run, secure_fd, engine, database_dir, publish, stop=None, maximum=MAX_FILES, database_status=None, task_id=None, started_at=None, batch_size=BATCH_FILES):
         self.profile = profile; self.directory = pathlib.Path(state_dir); self.run_command = run; self.open_file = secure_fd
         self.engine = engine; self.database_dir = database_dir; self.publish = publish; self.stop = stop; self.maximum = min(MAX_FILES, maximum)
         self.database_status = database_status
+        self.batch_size = max(1, min(BATCH_FILES, batch_size))
         self.db = None; self.report = {'schema': 'ironcurtain-full-scan/v1', 'state': 'indexing', 'started_at': started_at or utc(), 'task_id': task_id or uuid.uuid4().hex, 'current_file': None, 'recent_files': [],
             'indexed': 0, 'processed': 0, 'clean': 0, 'infected': 0, 'skipped': 0, 'errors': 0,
             'profile_digest': profile_digest(profile), 'bytes_scanned': 0, 'index_complete': True, 'reasons': [], 'findings': [], 'scope': 'enrolled-directories-only'}
@@ -194,6 +199,90 @@ class FullScan:
                 self.reason('部分命中文件不符合隔离权限/单链接要求；保留告警，由管理员人工处置')
             item['id'] = hashlib.sha256(json.dumps(item, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()).hexdigest()
             return 'infected', None, item
+    def scan_batch(self, rows):
+        """Only inherited descriptors reach the engine; no business path is reopened by it."""
+        entries = {}; outcomes = {}
+        def interrupted():
+            if self.stop and self.stop.is_set(): raise ScanInterrupted()
+        def failed(): return ('errors', '文件读取失败、变化或引擎未完成', None)
+        try:
+            for path, planned in rows:
+                interrupted(); fd = None
+                self.report['current_file'] = {'path': path, 'size': json.loads(planned)[2], 'bytes_read': 0, 'phase': 'opening'}; self.emit()
+                try:
+                    fd = self.open_file(path); before = os.fstat(fd)
+                    if not stat.S_ISREG(before.st_mode) or identity(before) != json.loads(planned): raise ValueError('file identity changed')
+                    if before.st_size > MAX_SIZE:
+                        outcomes[path] = ('skipped', '超过单文件 64 MiB 扫描上限', None); continue
+                    self.report['current_file'].update(phase='hashing'); self.emit()
+                    digest = hashlib.sha256(); total = 0; emitted = time.monotonic()
+                    while True:
+                        interrupted(); block = os.read(fd, 65536)
+                        if not block: break
+                        total += len(block)
+                        if total > MAX_SIZE or total > before.st_size: raise ValueError('file grew')
+                        digest.update(block); self.report['current_file']['bytes_read'] = total
+                        if time.monotonic() - emitted >= 1: self.emit(); emitted = time.monotonic()
+                    if total != before.st_size or identity(os.fstat(fd)) != identity(before): raise ValueError('file changed during hash')
+                    if not total:
+                        outcomes[path] = ('skipped', '引擎没有实际检查空文件', None); continue
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    entries[fd] = (path, before, digest.hexdigest()); fd = None
+                except (OSError, ValueError): outcomes[path] = failed()
+                finally:
+                    if fd is not None: os.close(fd)
+            if not entries: return [(path, outcomes[path]) for path, _ in rows]
+            descriptors = list(entries)
+            def current(fd):
+                path, before, _ = entries[fd]
+                self.report['current_file'] = {'path': path, 'size': before.st_size, 'bytes_read': before.st_size, 'phase': 'engine'}; self.emit()
+            current(descriptors[0])
+            # Live engine output only identifies the current target. Counts are committed
+            # after terminal statistics, file identity and database generation are verified.
+            def line(value):
+                match = re.fullmatch(r'/proc/self/fd/(\d+): (?:OK|[A-Za-z0-9_.:/()!+\-]{1,160} FOUND)', value)
+                if match and int(match[1]) in entries:
+                    index = descriptors.index(int(match[1]))
+                    if index + 1 < len(descriptors): current(descriptors[index + 1])
+            args = ['clamscan', '--database=' + self.database_dir, '--official-db-only=yes', '--follow-file-symlinks=2',
+                    '--max-filesize=64M', '--max-scansize=256M', '--max-files=10000', '--alert-exceeds-max=yes',
+                    '--fail-if-cvd-older-than=7', '--', *('/proc/self/fd/' + str(fd) for fd in descriptors)]
+            code, text = self.run_command(args, seconds=180, maximum=65536, pass_fds=descriptors, stop=self.stop, on_line=line)
+            interrupted()
+            results = {}; matches = re.findall(r'^/proc/self/fd/(\d+): (.+)$', text, re.M)
+            for number, result in matches:
+                fd = int(number)
+                if fd not in entries or fd in results: raise ValueError('unexpected or duplicate descriptor result')
+                if result != 'OK' and not re.fullmatch(r'[A-Za-z0-9_.:/()!+\-]{1,160} FOUND', result): raise ValueError('invalid engine result')
+                results[fd] = result
+            count = re.findall(r'^Scanned files:\s*(\d+)\s*$', text, re.M)
+            infected = re.findall(r'^Infected files:\s*(\d+)\s*$', text, re.M)
+            hits = sum(value.endswith(' FOUND') for value in results.values())
+            if code not in (0, 1) or set(results) != set(entries) or len(count) != 1 or len(infected) != 1 or int(count[0]) != len(entries) or int(infected[0]) != hits or (code == 1) != (hits > 0) or re.search(r'Errors:\s*[1-9]', text): raise ValueError('engine statistics mismatch')
+            for fd, (path, before, digest) in entries.items():
+                try:
+                    if identity(os.fstat(fd)) != identity(before): raise ValueError('pinned file changed')
+                    replacement = self.open_file(path)
+                    try:
+                        if identity(os.fstat(replacement)) != identity(before): raise ValueError('pathname replaced')
+                    finally: os.close(replacement)
+                    result = results[fd]
+                    if result == 'OK': outcomes[path] = ('clean', None, None); continue
+                    signature = result[:-6]
+                    if signature.startswith('Heuristics.Limits.Exceeded'):
+                        outcomes[path] = ('skipped', '引擎解包/文件扫描达到上限', None); continue
+                    item = {'path': path, 'signature': signature, 'sha256': digest, 'size': before.st_size, 'observed_at': utc(), **dict(zip(('device','inode','size','mtime_ns','ctime_ns'), identity(before)))}
+                    item.update(mode=stat.S_IMODE(before.st_mode), uid=before.st_uid, gid=before.st_gid, links=before.st_nlink)
+                    if before.st_uid != 0 or before.st_nlink != 1 or stat.S_IMODE(before.st_mode) & 0o022: self.reason('部分命中文件不符合隔离权限/单链接要求；保留告警，由管理员人工处置')
+                    item['id'] = hashlib.sha256(json.dumps(item, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()).hexdigest()
+                    outcomes[path] = ('infected', None, item)
+                except (OSError, ValueError): outcomes[path] = failed()
+        except (OSError, ValueError):
+            for path, _, _ in entries.values(): outcomes[path] = failed()
+        finally:
+            for fd in entries: os.close(fd)
+        return [(path, outcomes[path]) for path, _ in rows]
+
     def validate_resume(self, report):
         keys = ('indexed', 'processed', 'clean', 'infected', 'skipped', 'errors', 'bytes_scanned')
         if not valid_report(report) or report['profile_digest'] != profile_digest(self.profile) or any(type(report.get(k)) is not int or report[k] < 0 for k in keys): raise ValueError('invalid queue counters')
@@ -233,23 +322,44 @@ class FullScan:
                 self.index(roots)
             while True:
                 if self.stop and self.stop.is_set(): self.report['state'] = 'paused'; self.save(); return self.report
-                row = self.db.execute("SELECT path,identity FROM files WHERE state='pending' ORDER BY path LIMIT 1").fetchone()
-                if not row: break
-                file, planned = row
+                pending = self.db.execute("SELECT path,identity FROM files WHERE state='pending' ORDER BY path LIMIT ?", (self.batch_size,)).fetchall()
+                if not pending: break
+                rows = []; size = 0
+                for row in pending:
+                    planned_size = json.loads(row[1])[2]
+                    if rows and size + planned_size > BATCH_BYTES: break
+                    rows.append(row); size += min(planned_size, MAX_SIZE)
                 if self.database_status and not self.database_unchanged(token):
-                    self.report['current_file']=None; self.report['state'] = 'partial'; self.report['finished_at'] = utc(); self.reason('病毒库在扫描期间改变，请重新开始本次文件查杀'); self.save(); return self.report
-                self.report['current_file']={'path':file,'size':json.loads(planned)[2],'bytes_read':0,'phase':'opening'}; self.emit()
-                try: state, reason, finding = self.scan_file(file, planned)
-                except (OSError, ValueError): state, reason, finding = 'errors', '文件读取失败、变化或引擎未完成', None
-                if self.database_status and not self.database_unchanged(token):
-                    self.report['current_file']=None; self.report['state'] = 'partial'; self.report['finished_at'] = utc(); self.reason('病毒库在扫描期间改变，请重新开始本次文件查杀'); self.save(); return self.report
-                self.report['current_file']=None
-                self.report['recent_files']=(self.report.get('recent_files',[])+[{'path':file,'size':json.loads(planned)[2],'state':state,'reason':reason,'checked_at':utc()}])[-8:]
-                self.report['processed'] += 1; self.report[state] += 1
-                if state in ('clean', 'infected'): self.report['bytes_scanned'] += json.loads(planned)[2]
-                if reason: self.reason(reason)
-                if finding and len(self.report['findings']) < 32: self.report['findings'].append(finding)
-                self.db.execute('UPDATE files SET state=? WHERE path=?', (state, file)); self.save()
+                    self.report['current_file']=None; self.report['state']='partial'; self.report['finished_at']=utc(); self.reason('病毒库在扫描期间改变，请重新开始本次文件查杀'); self.save(); return self.report
+                if self.batch_size == 1:
+                    file, planned = rows[0]
+                    self.report['current_file']={'path':file,'size':json.loads(planned)[2],'bytes_read':0,'phase':'opening'}; self.emit()
+                    try: result = self.scan_file(file, planned)
+                    except (OSError, ValueError): result = ('errors', '文件读取失败、变化或引擎未完成', None)
+                    outcomes = [(file, result)]
+                else: outcomes = self.scan_batch(rows)
+                planned_sizes = {file:json.loads(planned)[2] for file, planned in rows}
+                for file, (state, reason, finding) in outcomes:
+                    if self.stop and self.stop.is_set() and self.batch_size > 1: raise ScanInterrupted()
+                    if self.database_status and not self.database_unchanged(token):
+                        self.report['current_file']=None; self.report['state']='partial'; self.report['finished_at']=utc(); self.reason('病毒库在扫描期间改变，请重新开始本次文件查杀'); self.save(); return self.report
+                    # Batch validation may precede earlier per-file commits. Recheck
+                    # the enrolled pathname immediately before committing a verdict.
+                    if self.batch_size > 1 and state in ('clean', 'infected'):
+                        verify_fd = None
+                        try:
+                            verify_fd = self.open_file(file)
+                            if identity(os.fstat(verify_fd)) != json.loads(dict(rows)[file]): raise ValueError('file changed before commit')
+                        except (OSError, ValueError): state, reason, finding = ('errors', '文件在结果提交前发生变化', None)
+                        finally:
+                            if verify_fd is not None: os.close(verify_fd)
+                    self.report['current_file']=None
+                    self.report['recent_files']=(self.report.get('recent_files',[])+[{'path':file,'size':planned_sizes[file],'state':state,'reason':reason,'checked_at':utc()}])[-8:]
+                    self.report['processed'] += 1; self.report[state] += 1
+                    if state in ('clean', 'infected'): self.report['bytes_scanned'] += planned_sizes[file]
+                    if reason: self.reason(reason)
+                    if finding and len(self.report['findings']) < 32: self.report['findings'].append(finding)
+                    self.db.execute('UPDATE files SET state=? WHERE path=?', (state, file)); self.save()
             if self.database_status and not self.database_unchanged(token):
                 self.report['current_file']=None; self.report['state'] = 'partial'; self.report['finished_at'] = utc(); self.reason('汇总前病毒库改变，请重新扫描'); self.save(); return self.report
             complete = self.report['index_complete'] and self.report['skipped'] == 0 and self.report['errors'] == 0 and self.report['indexed'] > 0
@@ -257,6 +367,8 @@ class FullScan:
             self.report['state'] = 'finished' if complete else 'partial'; self.report['finished_at'] = utc()
             if not self.report['indexed']: self.reason('范围中没有可检查的文件')
             self.save(); return self.report
+        except ScanInterrupted:
+            self.report['current_file']=None; self.report['state']='paused'; self.save(); return self.report
         except Exception:
             self.report['current_file']=None; self.report['state'] = 'failed'; self.report['finished_at'] = utc(); self.reason('范围/引擎未就绪或受保护扫描队列不可用'); self.emit(); return self.report
         finally:
