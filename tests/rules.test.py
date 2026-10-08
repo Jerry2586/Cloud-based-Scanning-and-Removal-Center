@@ -9,6 +9,15 @@ def write(path,data):
     path.write_bytes(data);path.chmod(0o600)
 def command(*args):
     result=subprocess.run([r.OPENSSL,*map(str,args)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=True);return result.stdout
+class RuleDiagnosticsTests(unittest.TestCase):
+    def test_fixed_diagnostics_preserve_fail_closed_and_hide_input(self):
+        for code,text in [('RULE_CLOUD_UNAVAILABLE','有效签名规则'),('RULE_CLOUD_AUTH','拒绝节点认证'),('RULE_CLOUD_TIMEOUT','超时')]:
+            message=client.operation_error(ValueError(code))
+            self.assertIn(text,message);self.assertIn('当前规则未被替换',message)
+        secret='token-sensitive-body-do-not-echo'
+        self.assertNotIn(secret,client.operation_error(ValueError(secret)))
+        self.assertNotIn(secret,client.operation_error(OSError(secret)))
+
 class RulesTests(unittest.TestCase):
     def setUp(self):
         self.temporary=tempfile.TemporaryDirectory(prefix='ironcurtain-rule-test-');self.root=pathlib.Path(self.temporary.name);self.root.chmod(0o700)

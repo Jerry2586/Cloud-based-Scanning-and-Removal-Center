@@ -6,6 +6,7 @@ import {domainRequest} from '../local/domain-client.js';
 const publicDirectory = new URL('./public/', import.meta.url);
 export const CLOUD_ASSETS = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
+  ['/assets/view-state.js', ['view-state.js', 'text/javascript; charset=utf-8']],
   ['/assets/admin.js', ['admin.js', 'text/javascript; charset=utf-8']],
   ['/assets/admin.css', ['admin.css', 'text/css; charset=utf-8']],
   ['/assets/theme.js', [new URL('../local/public/assets/theme.js', import.meta.url), 'text/javascript; charset=utf-8']],

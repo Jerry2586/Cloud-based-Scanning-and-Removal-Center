@@ -51,6 +51,8 @@ def _pull(directory):
                 peer=observed
                 connection.request('GET',path,headers={'Authorization':'Bearer '+token,'Accept':'application/json'})
                 response=connection.getresponse()
+                if response.status==503: raise ValueError('RULE_CLOUD_UNAVAILABLE')
+                if response.status in (401,403): raise ValueError('RULE_CLOUD_AUTH')
                 if response.status!=200 or not re.match(r'^application/json(?:;|$)',response.getheader('Content-Type',''),re.I): raise ValueError('RULE_CLOUD_REJECTED')
                 content_length=response.getheader('Content-Length')
                 if content_length and (not content_length.isdigit() or int(content_length)>maximum): raise ValueError('RULE_CLOUD_LIMIT')
@@ -83,6 +85,19 @@ def main():
     else: raise ValueError('Unsupported rule action')
     result=rules.activate(target,data,group=10001 if args.role=='cloud' else 0)
     print(json.dumps({'result':result,**rules.summary(target)},ensure_ascii=False))
+def operation_error(error):
+    # Fixed messages only: never echo remote bodies, paths, identity or secrets.
+    code=str(error) if isinstance(error,(ValueError,TimeoutError)) else ''
+    reasons={
+        'RULE_CLOUD_UNAVAILABLE':'玄武当前没有可下发的有效签名规则；请在玄武检查可信规则来源和有效期',
+        'RULE_CLOUD_AUTH':'玄武拒绝节点认证；请检查节点身份是否有效',
+        'RULE_CLOUD_TIMEOUT':'连接玄武超时；请检查网络和云端服务',
+        'RULE_CLOUD_IDENTITY':'玄武响应身份与本机登记不一致；请核对对接身份',
+        'RULE_CLOUD_REJECTED':'玄武返回了不符合规则接口要求的响应；请检查云端服务',
+    }
+    reason=reasons.get(code,'请检查签名、有效期、更新顺序、节点身份和文件权限')
+    return '规则操作失败：'+reason+'；当前规则未被替换或高水位已保留。'
+
 if __name__=='__main__':
     try: main()
-    except Exception: raise SystemExit('规则操作失败：请检查签名、有效期、更新顺序、节点身份和文件权限；当前规则未被替换或高水位已保留。')
+    except Exception as error: raise SystemExit(operation_error(error))

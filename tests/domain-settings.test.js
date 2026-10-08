@@ -75,10 +75,10 @@ test('domain UI keeps Save disabled after a failed poll and blocks duplicate sub
  t.after(()=>{globalThis.setTimeout=originalSet;globalThis.clearTimeout=originalClear;});
  const nodes=Object.fromEntries(['form','save','input','status','reason','origin','certificate'].map(k=>[k,{value:'guard.example.com',disabled:false,textContent:'',listeners:{},addEventListener(name,fn){this.listeners[name]=fn;},querySelector(){return nodes.input;}}]));
  const scope={querySelectorAll(selector){const k=/data-domain-([a-z]+)/.exec(selector)[1];return nodes[k]?[nodes[k]]:[];},addEventListener(){}};
- let poll=0,posted=0;const ui=createDomainSettings({state:{csrf:'session'},request:async(_url,options)=>{if(options){posted++;return {state:'running'};}if(poll++===0)return {state:'running'};throw Error('network down');},notify(){}},scope);
+ let poll=0,posted=0;const ui=createDomainSettings({state:{csrf:'session'},request:async(_url,options)=>{if(options){posted++;return {state:'running'};}if(poll++===0)return {state:'running'};if(poll===2)throw Error('network down');return {state:'ready',origin:'https://guard.example.com',certificate:'public-ca'};},notify(){}},scope);
  ui.bind();ui.start();await new Promise(resolve=>setImmediate(resolve));assert.equal(nodes.save.disabled,true);assert.equal(timers.at(-1).delay,2000);
- await timers.at(-1).fn();assert.equal(nodes.save.disabled,true);assert.match(nodes.status.textContent,/无法确认/);
- await nodes.form.listeners.submit({preventDefault(){},currentTarget:nodes.form});assert.equal(posted,0);ui.stop();
+ await timers.at(-1).fn();assert.equal(nodes.save.disabled,true);assert.match(nodes.status.textContent,/无法确认/);assert.match(nodes.origin.textContent,/无法读取/);assert.match(nodes.certificate.textContent,/无法确认/);
+ await nodes.form.listeners.submit({preventDefault(){},currentTarget:nodes.form});assert.equal(posted,0);await timers.at(-1).fn();assert.equal(nodes.save.disabled,false);assert.equal(nodes.origin.textContent,'https://guard.example.com');assert.equal(nodes.certificate.textContent,'已申请公共 CA 证书');ui.stop();
 });
 
 test('ACME Host is case-insensitive but never admits another host or port', async t => {
