@@ -34,3 +34,11 @@ test('cloud update client refuses failed, oversized and malformed controller res
   assert.deepEqual(await localUpdate('check',env),{state:'unavailable',response_status:503});
  }
 });
+
+
+test('update client accepts only the fixed management conflict and drops arbitrary diagnostics',{skip:process.platform==='win32'},async t=>{
+ for(const conflict of ['management-active','token=private']){
+  const f=await endpoint(t,(_req,res)=>{res.writeHead(409);res.end(JSON.stringify({state:'unavailable',conflict,reason:'secret',command:'secret'}));});
+  assert.deepEqual(await localUpdate('install',{IRONCURTAIN_SCAN_SOCKET:f.path}),conflict==='management-active'?{state:'unavailable',response_status:409,conflict:'management-active'}:{state:'unavailable',response_status:503});
+ }
+});

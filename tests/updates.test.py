@@ -99,6 +99,17 @@ class UpdatesTests(unittest.TestCase):
     return failure
    bridge=u.Bridge(self.read,None,run,self.base,self.base/'data')
    self.assertEqual(bridge.trigger('update')[0],503);self.assertEqual(bridge.status()['job']['state'],'finished')
+ def test_scan_conflict_does_not_start_update_or_consume_cooldown(self):
+  calls=[]
+  def run(args,**kw):calls.append(args);return SimpleNamespace(returncode=0,stdout='inactive')
+  bridge=u.Bridge(self.read,None,run,self.base,self.base/'data')
+  bridge.management_check=lambda:True
+  self.assertEqual(bridge.trigger('update'),(409,{'state':'unavailable','conflict':'management-active'}))
+  self.assertFalse(any('start' in args for args in calls));self.assertEqual(bridge.pending,{})
+  self.assertEqual(bridge.last,-10)
+  self.assertEqual(bridge.trigger('check')[0],202)
+  bridge.last=-10;bridge.management_check=lambda:False
+  self.assertEqual(bridge.trigger('update')[0],202)
  def test_canonical_versions_and_private_status(self):
   for value in ['00.1.0','1.02.3',None,{},'1.0']:
    with self.assertRaises(ValueError):u.version(value)

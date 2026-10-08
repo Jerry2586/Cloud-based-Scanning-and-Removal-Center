@@ -817,7 +817,8 @@ def serve(profile_file,state_dir,socket_path,allowed_uid,group):
     if os.name!='posix' or not hasattr(socketserver,'UnixStreamServer'): raise SystemExit('Linux Unix socket required')
     if os.geteuid()!=0: raise SystemExit('host agent must be started by root')
     agent=Agent(private_json(profile_file),state_dir,rule_path=pathlib.Path(profile_file).parent/'rules.json')
-    update_bridge=updates.Bridge(private_bytes,atomic_json)
+    update_bridge=updates.Bridge(private_bytes,atomic_json,dispatch_lock=agent.dispatch_lock,
+        management_check=lambda:management_busy() or antivirus.update_status()=='running')
     agent.multi=multi_engine.Bridge(agent,profile_file,{'open':secure_fd,'read':private_json,'write':atomic_json,'digest':fullscan.profile_digest,'updating':antivirus.update_status,'discover':inventory.discover,'runner':Runner})
     engine_bridge=engine_readiness.Bridge(engine_readiness.NativeProbe(secure_fd),antivirus.engine_status,
         busy=lambda:maintenance_active(update_bridge.status()) or antivirus.update_status()=='running')

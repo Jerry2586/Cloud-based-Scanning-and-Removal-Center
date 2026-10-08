@@ -307,3 +307,12 @@ test('cloud signed web updates enforce authentication and never accept installer
  for(const route of ['/api/updates/check','/api/updates/install'])assert.equal((await f.post(route,{},headers)).status,202);
  assert.deepEqual(calls,['status','check','install']);assert.equal(f.invoked(),0);
 });
+
+
+test('active host detection has an actionable update conflict without claiming an update started',async t=>{
+ const f=await fixture(t,undefined,async()=>({state:'unavailable',response_status:409,conflict:'management-active',reason:'secret',command:'secret'}));
+ const identity=await f.login(),headers={cookie:identity.cookie,'x-csrf-token':identity.csrf};
+ const response=await f.post('/api/updates/install',{},headers);
+ assert.equal(response.status,409);
+ assert.deepEqual(await response.json(),{state:'unavailable',reason:'本机检测或管理任务正在运行，程序更新尚未启动。请等待当前任务结束后重试。'});
+});

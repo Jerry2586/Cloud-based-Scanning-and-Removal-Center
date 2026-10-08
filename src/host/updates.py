@@ -263,12 +263,14 @@ def public_record(value, kind):
 
 
 class Bridge:
-    def __init__(self, read, atomic, run=subprocess.run, base=BASE, data=DATA, role='local'):
+    def __init__(self, read, atomic, run=subprocess.run, base=BASE, data=DATA, role='local', *, dispatch_lock=None, management_check=None):
         role_paths(role)
         self.role = role
         self.prefix = 'ironcurtain-panel-' if role == 'local' else 'ironcurtain-panel-cloud-'
         self.read, self.atomic, self.run, self.base, self.data = read, atomic, run, base, data
         self.lock = threading.Lock()
+        self.dispatch_lock = dispatch_lock if dispatch_lock is not None else threading.Lock()
+        self.management_check = management_check if management_check is not None else lambda: False
         self.last = -10
         self.pending = {}
 
@@ -322,7 +324,10 @@ class Bridge:
     def trigger(self, action):
         if action not in ('check', 'update'):
             return 400, {'state': 'unavailable'}
-        with self.lock:
+        # The local agent uses this same dispatch lock to start detection workers.
+        # Hold it through acceptance so no scan can acquire its SH lease between
+        # the management probe and publishing the pending update.
+        with self.dispatch_lock, self.lock:
             try:
                 if time.monotonic() - self.last < 10:
                     return 429, {'state': 'unavailable', 'reason': '请稍后再试'}
@@ -330,6 +335,8 @@ class Bridge:
                     result = self.run(['/usr/bin/systemctl', 'show', '--property=ActiveState', '--value', self.prefix + unit + '.service'], timeout=1, capture_output=True, text=True)
                     if result.returncode or result.stdout.strip() not in ('inactive', 'failed'):
                         return 409 if result.stdout.strip() in ('active', 'activating', 'reloading', 'deactivating') else 503, {'state': 'running' if result.stdout.strip() in ('active', 'activating', 'reloading', 'deactivating') else 'unavailable'}
+                if action == 'update' and self.management_check():
+                    return 409, {'state': 'unavailable', 'conflict': 'management-active'}
                 requested_stamp = stamp()
                 keys = ('check',) if action == 'check' else ('check', 'job')
                 requested = {'stamp': requested_stamp, 'at': datetime.datetime.fromisoformat(requested_stamp.replace('Z', '+00:00')), 'monotonic': time.monotonic(), 'unit': action}

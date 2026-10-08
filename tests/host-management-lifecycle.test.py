@@ -54,6 +54,39 @@ class LeaseTest(unittest.TestCase):
             deadline=time.monotonic()+2
             while not self.exclusive() and time.monotonic()<deadline:time.sleep(.01)
             self.assertTrue(self.exclusive());self.assertEqual(self.agent.checkup['state'],'finished')
+    def test_update_rejects_actual_detection_lease_without_starting_a_job(self):
+        calls=[]
+        def run(args,**kw):
+            calls.append(args)
+            return type('Result',(),{'returncode':0,'stdout':'inactive'})()
+        bridge=a.updates.Bridge(a.private_bytes,a.atomic_json,run,dispatch_lock=self.agent.dispatch_lock,management_check=a.management_busy)
+        entered,release,finished=threading.Event(),threading.Event(),threading.Event()
+        def scan(*args):
+            entered.set()
+            try:release.wait(5)
+            finally:finished.set()
+        with patch.object(self.agent,'scan',side_effect=scan):
+            self.assertEqual(self.agent.trigger()[0],202);self.assertTrue(entered.wait(2))
+            try:
+                self.assertEqual(bridge.trigger('update'),(409,{'state':'unavailable','conflict':'management-active'}))
+                self.assertFalse(any('start' in args for args in calls));self.assertEqual(bridge.pending,{})
+            finally:release.set()
+            self.assertTrue(finished.wait(2))
+        deadline=time.monotonic()+2
+        while not self.exclusive() and time.monotonic()<deadline:time.sleep(.01)
+        self.assertTrue(self.exclusive());self.assertEqual(bridge.trigger('update')[0],202)
+    def test_update_acceptance_excludes_detection_dispatch(self):
+        calls=[]
+        def run(args,**kw):
+            if 'start' in args:
+                self.assertFalse(self.agent.dispatch_lock.acquire(blocking=False))
+                self.assertEqual(bridge.pending['job']['unit'],'update')
+            calls.append(args)
+            return type('Result',(),{'returncode':0,'stdout':'inactive'})()
+        bridge=a.updates.Bridge(a.private_bytes,a.atomic_json,run,dispatch_lock=self.agent.dispatch_lock,management_check=a.management_busy)
+        self.assertEqual(bridge.trigger('update')[0],202)
+        self.agent.maintenance=lambda:a.maintenance_active(bridge.status(),lambda:False)
+        self.assertEqual(self.agent.trigger()[0],409);self.assertTrue(self.exclusive())
     def test_rejection_exception_and_start_failure_release_lease(self):
         self.agent.maintenance=lambda:True;self.assertEqual(self.agent.trigger()[0],409);self.assertTrue(self.exclusive())
         self.agent.maintenance=lambda:False
