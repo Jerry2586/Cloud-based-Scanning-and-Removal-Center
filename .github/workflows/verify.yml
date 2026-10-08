@@ -56,7 +56,7 @@ jobs:
       - name: Run monitor and real mutual TLS tests
         run: node --test
       - name: Test root-owned signed program delivery and snapshot boundaries
-        run: sudo env "PATH=$PATH" node --test tests/release-delivery.test.js
+        run: sudo env "PATH=$PATH" node --test tests/release-delivery.test.js tests/cloud-client.test.js
       - name: Verify root virus database transport and activation boundaries
         run: |
           sudo env "PATH=$PATH" node --test tests/virus-db.test.js

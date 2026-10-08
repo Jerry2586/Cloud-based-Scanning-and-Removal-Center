@@ -35,6 +35,29 @@ test('real local cloud client validates mutual TLS, per-node permissions and hon
   assert.deepEqual(Object.keys((await client.status()).nodes),['node-a']);
   assert.equal((await other.status()).node_id,'node-b');
   await client.report(snapshot());assert.equal((await client.status()).node.integrity.state,'matched');
+  if(process.platform==='win32' || process.getuid?.()===0){
+   const identity=mkdtempSync(join(process.platform==='win32' ? tmpdir() : '/root','ic-cloud-link-'));
+   let releaseReport, reportGate, reportCalls=0;
+   const link=createCloudLink({directory:identity,interval:60000,snapshot:async()=>{reportCalls++;if(reportGate){await reportGate;throw Error('REPORT_SOURCE_UNAVAILABLE');}return snapshot();}});
+   try {
+    writeFileSync(join(identity,'cloud.json'),JSON.stringify({schema:'ironcurtain-cloud/v1',endpoint,node_id:'node-a'}),{mode:0o600});
+    for(const [name,bytes] of Object.entries({'ca.crt':read('ca.crt'),'client.crt':read('node-a.crt'),'client.key':read('node-a.key'),token:'node-a'.padEnd(40,'x')}))writeFileSync(join(identity,name),bytes,{mode:0o600});
+    const initial=await Promise.all([link.refresh(),link.status(),link.status()]);
+    for(const result of initial)assert.equal(result.connected,true);
+    assert.equal(reportCalls,1,'concurrent initial requests share a single authenticated report');
+    reportGate=new Promise(resolve=>{releaseReport=resolve;});
+    const updating=link.refresh();
+    let returned=false;
+    const reading=link.status().then(result=>{returned=true;return result;});
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(returned,false,'a cached status must wait for the active refresh');
+    releaseReport();
+    const [updated,observed]=await Promise.all([updating,reading]);
+    assert.equal(updated.state,'unavailable');assert.equal(observed.state,'unavailable');
+    reportGate=undefined;
+    assert.equal((await link.refresh()).connected,true,'the link recovers after a failed report');
+   } finally {releaseReport?.();link.close();rmSync(identity,{recursive:true,force:true});}
+  }
   const missing=snapshot('unavailable');missing.files_state='unavailable';missing.files={};await client.report(missing);
   assert.equal((await client.status()).node.integrity.state,'unavailable');
   assert.equal((await other.status()).node.last_report_at,null);
@@ -65,5 +88,18 @@ test('unpaired and invalid or untrusted cloud identity expose disconnected state
   const invalid=await link.refresh();assert.equal(invalid.state,'unavailable');assert.equal(invalid.connected,false);
   rmSync(directory,{recursive:true});
   const restored=await link.refresh();assert.equal(restored.state,'unpaired');assert.equal(restored.connected,false);
+ } finally {link.close();rmSync(workspace,{recursive:true,force:true});}
+});
+
+test('concurrent cold-start status waits for verified cloud identity instead of returning default unpaired',async()=>{
+ const workspace=mkdtempSync(join(tmpdir(),'ic-cloud-concurrent-'));
+ const directory=join(workspace,'identity');
+ mkdirSync(directory);writeFileSync(join(directory,'cloud.json'),'{}');
+ const link=createCloudLink({directory,interval:60000});
+ try {
+  const results=await Promise.all([link.refresh(),link.status(),link.status(),link.refresh()]);
+  for(const result of results){assert.equal(result.state,'unavailable');assert.equal(result.connected,false);}
+  const cached=await link.status();assert.equal(cached.state,'unavailable');
+  cached.state='unpaired';assert.equal((await link.status()).state,'unavailable');
  } finally {link.close();rmSync(workspace,{recursive:true,force:true});}
 });

@@ -94,22 +94,26 @@ export class CloudClient {
   }
 }
 export function createCloudLink({directory, snapshot, interval=30000}) {
-  let client, busy=false, stopped=false, checked=0;
+  let client, inFlight, stopped=false, checked=0;
   let status={state:'unpaired',connected:false,reason:'尚未导入玄武节点身份包'};
   async function refresh() {
-    if(busy || stopped) return status; busy=true;
-    try {
-      client=await loadCloudClient(directory);
-      if(snapshot) { const report=await snapshot(); if(report?.scan && freshHostScan(report.scan)) await client.report(report); }
-      status=await client.status();
-    } catch(error) {
-      status={state:error.code==='ENOENT' ? 'unpaired' : error.message==='CLOUD_AUTH_REJECTED' ? 'authentication_failed' : 'unavailable',connected:false,reason:error.code==='ENOENT' ? '尚未导入玄武节点身份包' : error.message==='CLOUD_AUTH_REJECTED' ? '玄武拒绝节点身份，请检查配对或撤销状态；本机扫描继续运行' : '云端证书、身份或连接验证失败；本机扫描继续运行'};
-    } finally {busy=false;checked=Date.now();} return status;
+    if(stopped) return structuredClone(status);
+    if(!inFlight) inFlight=(async()=>{
+      try {
+        client=await loadCloudClient(directory);
+        if(snapshot) { const report=await snapshot(); if(report?.scan && freshHostScan(report.scan)) await client.report(report); }
+        status=await client.status();
+      } catch(error) {
+        status={state:error.code==='ENOENT' ? 'unpaired' : error.message==='CLOUD_AUTH_REJECTED' ? 'authentication_failed' : 'unavailable',connected:false,reason:error.code==='ENOENT' ? '尚未导入玄武节点身份包' : error.message==='CLOUD_AUTH_REJECTED' ? '玄武拒绝节点身份，请检查配对或撤销状态；本机扫描继续运行' : '云端证书、身份或连接验证失败；本机扫描继续运行'};
+      } finally {checked=Date.now();}
+    })().finally(()=>{inFlight=undefined;});
+    await inFlight;
+    return structuredClone(status);
   }
   const timer=setInterval(()=>void refresh(),interval); timer.unref();
   async function taskClient() {
     if(stopped) throw Object.assign(Error('云端连接已关闭'),{status:503});
     try { return await loadCloudClient(directory); } catch { throw Object.assign(Error('尚未配置有效的玄武节点身份；本机扫描仍可独立使用'),{status:503}); }
   }
-  return {async nodeId(){return (await taskClient()).nodeId;},async submitHash(value){validateHashRequest(value);return (await taskClient()).submitHash(value);},async hashJob(id){if(typeof id!=='string'||!TASK_PATTERN.test(id))throw Object.assign(Error('任务编号无效'),{status:400});return (await taskClient()).hashJob(id);},async status(){if(!checked || Date.now()-checked>=interval) await refresh(); return structuredClone(status);}, refresh, close(){stopped=true;clearInterval(timer);}};
+  return {async nodeId(){return (await taskClient()).nodeId;},async submitHash(value){validateHashRequest(value);return (await taskClient()).submitHash(value);},async hashJob(id){if(typeof id!=='string'||!TASK_PATTERN.test(id))throw Object.assign(Error('任务编号无效'),{status:400});return (await taskClient()).hashJob(id);},async status(){if(inFlight || !checked || Date.now()-checked>=interval) await refresh(); return structuredClone(status);}, refresh, close(){stopped=true;clearInterval(timer);}};
 }
