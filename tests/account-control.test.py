@@ -90,6 +90,13 @@ class AccountTests(unittest.TestCase):
         self.c.control.chmod(0o777)
         with self.assertRaises(a.AccountError):self.change()
         self.unchanged()
+    def test_sticky_root_lock_directory(self):
+        self.c.lock_path.parent.chmod(0o1777)
+        self.assertTrue(self.change()['changed'])
+        self.c.lock_path.parent.chmod(0o777)
+        with self.assertRaises(a.AccountError):
+            self.c.change({'current_password': NEW, 'new_password': OLD})
+        self.c.lock_path.parent.chmod(0o700)
     def test_lock_busy_and_installer_journal_rejected(self):
         with self.c.lock_path.open('w') as f:
             fcntl.flock(f,fcntl.LOCK_EX)

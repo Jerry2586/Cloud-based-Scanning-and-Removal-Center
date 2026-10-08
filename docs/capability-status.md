@@ -55,4 +55,4 @@ R031 为铁幕本地主机代理增加三个固定任务：快速环境体检、
 
 铁幕与玄武 Linux 菜单 14 支持隐藏输入、自定义密码二次确认和随机重置；命令 `sudo tiemu password`、`sudo xuanwu password` 可直接进入。玄武用户中心要求当前密码及新密码确认。固定宿主账号服务只允许更新本角色 admin 凭据，采用 scrypt、原子持久化与管理锁；网页要求会话、同源及 CSRF，更新后旧会话全部失效。root 菜单可恢复忘记的面板密码。
 
-Windows Node 回归 246 项（190 通过、56 平台跳过），隔离 root Linux 账号事务 12/12 通过。真实 Docker/systemd、签名载荷内服务启动、菜单 PTY、可信 TLS 改密与重启保留密码由本版本 CI 验收；正式状态以 v0.6.3 Release 与回取报告为准。
+Windows Node 回归 246 项（190 通过、56 平台跳过），隔离 root Linux 账号事务 13/13 通过。真实 Docker/systemd、签名载荷内服务启动、菜单 PTY、可信 TLS 改密与重启保留密码由本版本 CI 验收；正式状态以 v0.6.3 Release 与回取报告为准。

@@ -30,6 +30,15 @@ def trusted_dir(path):
         if not stat.S_ISDIR(meta.st_mode) or meta.st_uid != 0 or meta.st_mode & 0o022:
             raise AccountError('账号目录权限不安全')
 
+def trusted_lock_dir(path):
+    # Linux /run/lock is commonly root-owned 1777. Sticky protection plus the
+    # O_NOFOLLOW/root-owned/single-link lock-file checks prevent replacement.
+    path = Path(path)
+    trusted_dir(path.parent)
+    meta = path.lstat()
+    if not stat.S_ISDIR(meta.st_mode) or meta.st_uid != 0 or (meta.st_mode & 0o022 and not meta.st_mode & stat.S_ISVTX):
+        raise AccountError('管理锁目录权限不安全')
+
 def private_read(path, uid=0):
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, 'rb') as stream:
@@ -123,7 +132,7 @@ class AccountControl:
             raise AccountError('当前密码错误', 400)
         for directory in [self.conf, self.control, self.runtime.parent, self.recovery.parent]:
             trusted_dir(directory)
-        trusted_dir(self.lock_path.parent)
+        trusted_lock_dir(self.lock_path.parent)
         fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
         try:
             meta = os.fstat(fd)
@@ -168,7 +177,7 @@ class AccountControl:
         # Installer readiness must not reacquire the lock it already holds. A pending
         # credential journal is recovered only with the same management lease.
         if self.journal.exists() or self.journal.is_symlink():
-            trusted_dir(self.lock_path.parent)
+            trusted_lock_dir(self.lock_path.parent)
             fd = os.open(self.lock_path, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK)
             try:
                 meta = os.fstat(fd)
