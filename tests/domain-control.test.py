@@ -289,22 +289,25 @@ class IndependenceTests(unittest.TestCase):
 
 @unittest.skipUnless(sys.platform == 'linux' and shutil.which('jq'), 'requires Linux and real jq parser')
 class RequiredDomainHealthTests(unittest.TestCase):
-    def probe(self, active, response, curl_status=0, account_active=True, account_response='{"ready":true}', account_curl_status=0):
+    def probe(self, active, response, curl_status=0, account_active=True, account_response='{"ready":true}', account_curl_status=0, cloud_payload=False, update_active=True, update_response='{"schema":"ironcurtain-update-status/v1","installed_version":"0.6.6"}', update_curl_status=0):
         helper = Path(__file__).resolve().parents[1] / 'scripts/lib/domain-services.sh'
         # Mock service/network boundaries, retaining the real shell pipeline and JSON validator.
         script = '''set -euo pipefail
 source "$1"
 ROLE=cloud
+BASE=$2
 systemctl() {
   [[ $2 == --quiet ]] || return 1
   case "$3" in
     ironcurtain-account-cloud-control.service) [[ $ACCOUNT_ACTIVE == 1 ]] ;;
+    ironcurtain-update-cloud-control.service) [[ $UPDATE_ACTIVE == 1 ]] ;;
     ironcurtain-domain-cloud-control.service) [[ $ACTIVE == 1 ]] ;;
     *) return 1 ;;
   esac
 }
 curl() {
   case "$*" in
+    *http://localhost/update-status) printf '%s' "$UPDATE_RESPONSE"; return "$UPDATE_CURL_STATUS" ;;
     *http://localhost/account) printf '%s' "$ACCOUNT_RESPONSE"; return "$ACCOUNT_CURL_STATUS" ;;
     *http://localhost/domain) printf '%s' "$RESPONSE"; return "$CURL_STATUS" ;;
     *) return 1 ;;
@@ -313,17 +316,36 @@ curl() {
 sleep() { :; }
 if ic_domain_wait; then exit 0; else exit 1; fi
 '''
-        return subprocess.run(['bash', '-c', script, '--', str(helper)],
-            env=dict(os.environ, ACTIVE=str(int(active)), RESPONSE=response, CURL_STATUS=str(curl_status),
-                     ACCOUNT_ACTIVE=str(int(account_active)), ACCOUNT_RESPONSE=account_response,
-                     ACCOUNT_CURL_STATUS=str(account_curl_status)),
-            capture_output=True, text=True, timeout=10)
+        with tempfile.TemporaryDirectory() as base:
+            if cloud_payload:
+                controller = Path(base) / 'current/src/host/update_control.py'
+                controller.parent.mkdir(parents=True)
+                controller.touch()
+            return subprocess.run(['bash', '-c', script, '--', str(helper), base],
+                env=dict(os.environ, ACTIVE=str(int(active)), RESPONSE=response, CURL_STATUS=str(curl_status),
+                         ACCOUNT_ACTIVE=str(int(account_active)), ACCOUNT_RESPONSE=account_response,
+                         ACCOUNT_CURL_STATUS=str(account_curl_status), UPDATE_ACTIVE=str(int(update_active)),
+                         UPDATE_RESPONSE=update_response, UPDATE_CURL_STATUS=str(update_curl_status)),
+                capture_output=True, text=True, timeout=10)
 
     def test_ready_control_accepts_idle_and_failed_certificate_states(self):
         for state in ['idle', 'running', 'ready', 'failed']:
             with self.subTest(state=state):
                 result = self.probe(True, json.dumps({'state': state, 'domain': '', 'certificate': 'not-issued'}))
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_new_cloud_payload_requires_real_update_controller_health(self):
+        valid = json.dumps({'state': 'idle', 'domain': '', 'certificate': 'not-issued'})
+        self.assertEqual(self.probe(True, valid, cloud_payload=True).returncode, 0)
+        cases = [(False, '{"schema":"ironcurtain-update-status/v1","installed_version":"0.6.6"}', 0),
+                 (True, '{"schema":"ironcurtain-update-status/v1","installed_version":"0.6.6"}', 7),
+                 (True, '{}', 0), (True, 'not-json', 0),
+                 (True, '{"schema":"wrong","installed_version":"0.6.6"}', 0),
+                 (True, '{"schema":"ironcurtain-update-status/v1","installed_version":null}', 0)]
+        for active, response, status in cases:
+            with self.subTest(active=active, response=response, status=status):
+                self.assertNotEqual(self.probe(True, valid, cloud_payload=True, update_active=active,
+                    update_response=response, update_curl_status=status).returncode, 0)
 
     def test_unhealthy_service_transport_and_schema_cannot_commit_install(self):
         valid = json.dumps({'state': 'ready', 'domain': 'security.example.com', 'certificate': 'public-ca'})
