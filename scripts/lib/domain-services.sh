@@ -9,16 +9,16 @@ ic_domain_units() {
   done
 }
 ic_domain_snapshot() {
-  local unit
-  touch "$IC_TX/domain-units-managed"
+  local unit snapshot=${1:-$IC_TX}
+  touch "$snapshot/domain-units-managed"
   for unit in $(ic_domain_units); do
     local file=/etc/systemd/system/$unit
     if [[ -e $file || -L $file ]]; then
       [[ -f $file && ! -L $file && $(stat -c %u "$file") == 0 && $(stat -c %h "$file") == 1 ]] || ic_fail "域名服务定义不受 root 控制"
-      cp -p "$file" "$IC_TX/$unit"
+      cp -p "$file" "$snapshot/$unit"
     fi
-    systemctl is-active --quiet "$unit" && touch "$IC_TX/$unit.active" || true
-    systemctl is-enabled --quiet "$unit" && touch "$IC_TX/$unit.enabled" || true
+    systemctl is-active --quiet "$unit" && touch "$snapshot/$unit.active" || true
+    systemctl is-enabled --quiet "$unit" && touch "$snapshot/$unit.enabled" || true
   done
 }
 ic_domain_quiesce() {

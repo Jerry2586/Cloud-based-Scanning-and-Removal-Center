@@ -338,6 +338,11 @@ for recovery_role in local cloud; do
 done
 /usr/local/bin/tiemu doctor
 /usr/local/bin/xuanwu doctor
+for role in local cloud; do
+  systemctl is-active --quiet "ironcurtain-account-$role-control.service"
+  systemctl is-active --quiet "ironcurtain-domain-$role-control.service"
+  setpriv --reuid=10001 --regid=10001 --clear-groups curl -q --noproxy '*' --fail --silent --unix-socket "/run/ironcurtain-account-$role/control.sock" http://localhost/account | jq -e ' .ready == true' >/dev/null
+done
 echo 'Real encrypted local/cloud recovery passed; current identity and revocation state retained.'
 for role in local cloud; do
   release=$(readlink -f "/opt/ironcurtain/$role/current")

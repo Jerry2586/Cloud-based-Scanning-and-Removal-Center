@@ -16,9 +16,17 @@ ic_admin_begin() {
   jq -n --arg role "$ROLE" --arg action "$1" --arg snapshot "$IC_ADMIN_TX" '{schema:1,role:$role,action:$action,snapshot:$snapshot}' > "$BASE/admin-transaction.json.new"
   chmod 600 "$BASE/admin-transaction.json.new"
   mv -f "$BASE/admin-transaction.json.new" "$BASE/admin-transaction.json"
+  if declare -F ic_domain_snapshot >/dev/null; then
+    ic_domain_snapshot "$IC_ADMIN_TX" || return 1
+    ic_domain_quiesce || return 1
+  fi
   touch "$IC_ADMIN_TX/mutating"
 }
 ic_admin_finish() {
+  if declare -F ic_domain_resume >/dev/null; then
+    ic_domain_resume "$IC_ADMIN_TX" || return 1
+    if [[ -f $IC_ADMIN_TX/ironcurtain-account-$ROLE-control.service.active && -f $IC_ADMIN_TX/ironcurtain-domain-$ROLE-control.service.active ]]; then ic_domain_wait || return 1; fi
+  fi
   touch "$IC_ADMIN_TX/committed"
   rm -f -- "$BASE/admin-transaction.json" || return 1
   IC_ADMIN_TX=''
@@ -40,6 +48,7 @@ ic_admin_recover() {
     ic_check_dir "$CONF"
     echo '发现未完成的管理操作，正在恢复原配置和身份。' >&2
     # Recreate the container: restart alone would keep a bind mount attached to the retired directory inode.
+    if declare -F ic_domain_quiesce >/dev/null; then ic_domain_quiesce || return 1; fi
     ic_compose down || return 1
     if [[ $ROLE == local ]]; then systemctl stop ironcurtain-agent.service || return 1; fi
     displaced=$snapshot/failed-config-$(date -u +%s)-$RANDOM
@@ -61,6 +70,10 @@ ic_admin_recover() {
       if [[ $ROLE == local && -f $snapshot/agent-active ]]; then ic_scan_wait || result=1; fi
     fi
     (( result == 0 )) || { echo '旧配置恢复未通过健康检查，恢复记录保留。' >&2; return 1; }
+  fi
+  if declare -F ic_domain_resume >/dev/null; then
+    ic_domain_resume "$snapshot" || return 1
+    if [[ -f $snapshot/ironcurtain-account-$ROLE-control.service.active && -f $snapshot/ironcurtain-domain-$ROLE-control.service.active ]]; then ic_domain_wait || return 1; fi
   fi
   rm -f -- "$BASE/admin-transaction.json" || return 1
   IC_ADMIN_TX=''

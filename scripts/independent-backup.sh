@@ -4,6 +4,7 @@ set -euo pipefail
 umask 077
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$ROOT/scripts/lib/independent.sh"
+source "$ROOT/scripts/lib/domain-services.sh"
 source "$ROOT/scripts/lib/install-transaction.sh"
 source "$ROOT/scripts/lib/management-transaction.sh"
 [[ $EUID == 0 ]] || ic_fail '请用 sudo 运行'
@@ -112,6 +113,8 @@ case "$ACTION" in
       ic_compose up -d; ic_wait
       [[ $ROLE != local || ! -f $IC_TX/agent-active ]] || ic_scan_wait
     fi
+    ic_domain_resume "$IC_TX"
+    if [[ -f $IC_TX/ironcurtain-account-$ROLE-control.service.active && -f $IC_TX/ironcurtain-domain-$ROLE-control.service.active ]]; then ic_domain_wait; fi
     ic_tx_finish
     echo '同机恢复完成；当前密码、证书、节点允许名单与解绑状态保留。被替换状态保留在 root 私有目录。'
     ;;
