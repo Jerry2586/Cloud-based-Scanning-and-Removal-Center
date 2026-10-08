@@ -15,7 +15,11 @@ class AgentRecoveryTests(unittest.TestCase):
   lease_patch.start();self.addCleanup(lease_patch.stop)
   self.engine={'installed':True,'state':'configured','database_version':7,'database_at':a.utc(),'signatures':10,'database_generation':'a'*64}
  def runner(self,args,**kw):
-  os.read(kw['input_fd'],65536);return 1,'stdin: IronCurtain.Test FOUND\nScanned files: 1\nInfected files: 1\n'
+  fds=kw['pass_fds'];self.assertEqual(args[args.index('--')+1:],['/proc/self/fd/'+str(fd) for fd in fds])
+  records=[]
+  for fd in fds:
+   os.read(fd,65536);line='/proc/self/fd/'+str(fd)+': IronCurtain.Test FOUND';records.append(line);kw['on_line'](line)
+  return 1,'\n'.join(records)+'\nScanned files: '+str(len(fds))+'\nInfected files: '+str(len(fds))+'\n'
  def scan(self,stop=None):
   (self.scope/'bad.txt').write_bytes(b'test fixture')
   def publish(r):a.atomic_json(self.state/'full-scan-report.json',r)
@@ -122,7 +126,9 @@ class AgentRecoveryTests(unittest.TestCase):
   (self.scope/'clean.txt').write_bytes(b'clean')
   patches=self.environment()
   def clean(args,**kw):
-   os.read(kw['input_fd'],65536);return 0,'Scanned files: 1\nInfected files: 0\n'
+   fds=kw['pass_fds'];self.assertEqual(len(fds),1)
+   os.read(fds[0],65536);line='/proc/self/fd/'+str(fds[0])+': OK';kw['on_line'](line)
+   return 0,line+'\nScanned files: 1\nInfected files: 0\n'
   with patch.object(a.threading,'Thread'):self.assertEqual(self.agent.trigger_checkup()[0],202)
   with patches[0],patches[1],patch.object(a.antivirus,'engine_status',return_value=self.engine),patch.object(a.antivirus,'DATABASE_DIR','/fixture/db'),patch.object(a.antivirus,'database_status',return_value=self.engine),patch.object(a,'Runner',return_value=clean):self.agent.scan_checkup()
   self.assertEqual(self.agent.checkup['state'],'finished')

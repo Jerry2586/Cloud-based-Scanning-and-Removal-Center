@@ -35,7 +35,11 @@ class EngineTests(unittest.TestCase):
             engine={'installed':True,'state':'configured','database_version':1,'database_at':a.utc(),'signatures':1,'database_generation':'a'*64}
             reports=[]
             def runner(args,**kwargs):
-                self.assertIn('--official-db-only=yes',args); self.assertIn('--fail-if-cvd-older-than=7',args); self.assertEqual(args[-2:],['--','-']); self.assertIn('input_fd',kwargs)
+                self.assertIn('--official-db-only=yes',args); self.assertIn('--fail-if-cvd-older-than=7',args)
+                self.assertIn('--follow-file-symlinks=2',args)
+                fds=kwargs['pass_fds']; self.assertEqual(len(fds),2)
+                self.assertEqual(args[args.index('--')+1:],['/proc/self/fd/'+str(fd) for fd in fds])
+                self.assertNotIn('input_fd',kwargs)
                 fixture=[x for x in args if x not in ['--official-db-only=yes','--fail-if-cvd-older-than=7']]
                 fixture=[('--database='+str(db)) if x.startswith('--database=') else x for x in fixture]
                 return a.Runner()(fixture,**kwargs)
