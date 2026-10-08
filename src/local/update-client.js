@@ -4,7 +4,7 @@ export function localUpdate(action='status',env=process.env){
  if(!['status','check','install'].includes(action))return Promise.resolve({state:'unavailable',response_status:400});
  return new Promise(resolve=>{
   const fail=()=>resolve(action==='status'?sanitizeUpdateStatus(null):{state:'unavailable',response_status:503});
-  const req=request({socketPath:env.IRONCURTAIN_SCAN_SOCKET||'/run/ironcurtain/scan.sock',path:{status:'/update-status',check:'/update-check',install:'/update'}[action],method:action==='status'?'GET':'POST',headers:{'Content-Length':'0'},timeout:5000},res=>{
+  const req=request({socketPath:env.IRONCURTAIN_ROLE==='cloud'?(env.IRONCURTAIN_UPDATE_SOCKET||'/run/ironcurtain-update-cloud/control.sock'):(env.IRONCURTAIN_SCAN_SOCKET||'/run/ironcurtain/scan.sock'),path:{status:'/update-status',check:'/update-check',install:'/update'}[action],method:action==='status'?'GET':'POST',headers:{'Content-Length':'0'},timeout:5000},res=>{
    let bytes=0;const chunks=[];
    res.on('data',chunk=>{bytes+=chunk.length;if(bytes>16384){fail();res.destroy();req.destroy();}else chunks.push(chunk);});
    res.on('error',fail);res.on('aborted',fail);

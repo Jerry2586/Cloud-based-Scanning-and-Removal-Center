@@ -3,6 +3,9 @@
 ic_domain_units() {
   # Account units share the installer lifecycle snapshot; their Unix service stays independent.
   printf "%s\n" "ironcurtain-account-$ROLE-control.service"
+  if [[ $ROLE == cloud ]]; then
+    printf "%s\n" ironcurtain-update-cloud-control.service ironcurtain-panel-cloud-check.service ironcurtain-panel-cloud-update.service ironcurtain-panel-cloud-check.timer
+  fi
   local suffix
   for suffix in control.service apply.service renew.service renew.timer gateway.socket gateway.service; do
     printf "%s\n" "ironcurtain-domain-$ROLE-$suffix"
@@ -23,6 +26,11 @@ ic_domain_snapshot() {
 }
 ic_domain_quiesce() {
   local unit
+  if [[ $ROLE == cloud ]]; then
+    for unit in ironcurtain-update-cloud-control.service ironcurtain-panel-cloud-check.timer; do
+      [[ ! -f /etc/systemd/system/$unit ]] || systemctl stop "$unit" || return 1
+    done
+  fi
   [[ ! -f /etc/systemd/system/ironcurtain-account-$ROLE-control.service ]] || systemctl stop "ironcurtain-account-$ROLE-control.service" || return 1
   for unit in gateway.socket gateway.service control.service renew.timer; do
     [[ ! -f /etc/systemd/system/ironcurtain-domain-$ROLE-$unit ]] || systemctl stop "ironcurtain-domain-$ROLE-$unit" || return 1
@@ -35,7 +43,8 @@ ic_domain_restore() {
   for unit in $(ic_domain_units); do
     file=/etc/systemd/system/$unit
     if [[ -f $file ]]; then
-      systemctl stop "$unit" || return 1
+      # A signed update may be installing itself; keep the executing worker alive.
+      if [[ $unit != ironcurtain-panel-cloud-check.service && $unit != ironcurtain-panel-cloud-update.service ]]; then systemctl stop "$unit" || return 1; fi
       systemctl disable "$unit" >/dev/null 2>&1 || true
     fi
     if [[ -f $snapshot/$unit ]]; then cp -p "$snapshot/$unit" "$file" || return 1; else rm -f -- "$file" || return 1; fi
@@ -49,6 +58,7 @@ ic_domain_resume() {
   local snapshot=$1 unit
   [[ -f $snapshot/domain-units-managed ]] || return 0
   for unit in $(ic_domain_units); do
+    [[ $unit != ironcurtain-panel-cloud-check.service && $unit != ironcurtain-panel-cloud-update.service ]] || continue
     [[ ! -f $snapshot/$unit.active ]] || systemctl start "$unit" || return 1
   done
 }
@@ -220,10 +230,24 @@ ic_domain_gateway_resume() {
   done
 }
 
+ic_cloud_update_wait() {
+  local attempt
+  for attempt in {1..20}; do
+    if systemctl is-active --quiet ironcurtain-update-cloud-control.service &&
+       curl -q --noproxy '*' --max-time 2 --silent --fail --unix-socket /run/ironcurtain-update-cloud/control.sock http://localhost/update-status |
+         jq -e '.schema == "ironcurtain-update-status/v1" and (.installed_version | type == "string")' >/dev/null 2>&1; then return 0; fi
+    sleep 0.5
+  done
+  return 1
+}
+
 # Container health alone cannot prove that the required host controller runs.
 # Authenticate the real Unix endpoint before committing an installation.
 ic_domain_wait() {
   local prefix=ironcurtain-domain-$ROLE attempt
+  if [[ $ROLE == cloud && -f $BASE/current/src/host/update_control.py ]]; then
+    ic_cloud_update_wait || return 1
+  fi
   for attempt in {1..20}; do
     if systemctl is-active --quiet "ironcurtain-account-$ROLE-control.service" &&
        curl -q --noproxy '*' --max-time 2 --silent --fail --unix-socket "/run/ironcurtain-account-$ROLE/control.sock" http://localhost/account | jq -e '.ready == true' >/dev/null 2>&1 &&

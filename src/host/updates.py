@@ -1,4 +1,4 @@
-"""Bounded signed-release checks and fixed systemd jobs for the local panel."""
+"""Bounded signed-release checks and fixed systemd jobs for either role."""
 import argparse
 import base64
 import datetime
@@ -46,12 +46,19 @@ def version(value):
     return tuple(int(x) for x in value.split('.'))
 
 
-def receipt(read, base=BASE):
+def role_paths(role):
+    if role not in ('local', 'cloud'):
+        raise ValueError('role invalid')
+    return (BASE, DATA) if role == 'local' else (pathlib.Path('/opt/ironcurtain/cloud'), pathlib.Path('/var/lib/ironcurtain/cloud'))
+
+
+def receipt(read, base=BASE, role='local'):
+    role_paths(role)
     saved = json.loads(read(base / 'install.json', 8192))
     version(saved.get('version'))
-    if saved.get('schema') != 1 or saved.get('role') != 'local':
+    if saved.get('schema') != 1 or saved.get('role') != role:
         raise ValueError('receipt invalid')
-    if not re.fullmatch('ironcurtain-security:' + re.escape(saved['version']) + '-local-[a-f0-9]{64}', saved.get('image', '')):
+    if not re.fullmatch('ironcurtain-security:' + re.escape(saved['version']) + '-' + role + '-[a-f0-9]{64}', saved.get('image', '')):
         raise ValueError('image invalid')
     host = saved.get('host', '')
     if not isinstance(host, str) or len(host) > 253:
@@ -165,8 +172,8 @@ def git_commit(get, reference):
     raise ValueError('Git tag depth invalid')
 
 
-def check_release(read, base=BASE, get=None, verify=signed_manifest):
-    saved, current = receipt(read, base)
+def check_release(read, base=BASE, get=None, verify=signed_manifest, role='local'):
+    saved, current = receipt(read, base, role)
     expected = saved['image'].rsplit('-', 1)[1]
     result = {'schema': 'ironcurtain-update/v1', 'state': 'failed', 'checked_at': stamp(), 'installed_version': saved['version'], 'installed_integrity': 'unavailable', 'update_available': False, 'source': {'state': 'unavailable'}}
     if read(current / '.payload-sha256', 80).decode().strip() != expected or payload_digest(current, read) != expected:
@@ -256,7 +263,10 @@ def public_record(value, kind):
 
 
 class Bridge:
-    def __init__(self, read, atomic, run=subprocess.run, base=BASE, data=DATA):
+    def __init__(self, read, atomic, run=subprocess.run, base=BASE, data=DATA, role='local'):
+        role_paths(role)
+        self.role = role
+        self.prefix = 'ironcurtain-panel-' if role == 'local' else 'ironcurtain-panel-cloud-'
         self.read, self.atomic, self.run, self.base, self.data = read, atomic, run, base, data
         self.lock = threading.Lock()
         self.last = -10
@@ -264,7 +274,7 @@ class Bridge:
     def status(self):
         result = {'schema': 'ironcurtain-update-status/v1', 'check': {'state': 'idle'}, 'job': {'state': 'idle'}, 'installed_version': None}
         try:
-            result['installed_version'] = receipt(self.read, self.base)[0]['version']
+            result['installed_version'] = receipt(self.read, self.base, self.role)[0]['version']
         except Exception:
             pass
         for key in ('check', 'job'):
@@ -273,7 +283,7 @@ class Bridge:
                 result[key] = public_record(value, key)
                 if result[key]['state'] == 'running':
                     unit = 'check' if key == 'check' else 'update'
-                    observed = self.run(['/usr/bin/systemctl', 'show', '--property=ActiveState', '--value', 'ironcurtain-panel-' + unit + '.service'], timeout=1, capture_output=True, text=True)
+                    observed = self.run(['/usr/bin/systemctl', 'show', '--property=ActiveState', '--value', self.prefix + unit + '.service'], timeout=1, capture_output=True, text=True)
                     if observed.returncode or observed.stdout.strip() not in ('active', 'activating', 'reloading', 'deactivating'):
                         result[key] = {'state': 'failed', 'reason': FAILURE}
             except FileNotFoundError:
@@ -290,10 +300,10 @@ class Bridge:
                 if time.monotonic() - self.last < 10:
                     return 429, {'state': 'unavailable', 'reason': '请稍后再试'}
                 for unit in ('check', 'update'):
-                    result = self.run(['/usr/bin/systemctl', 'show', '--property=ActiveState', '--value', 'ironcurtain-panel-' + unit + '.service'], timeout=1, capture_output=True, text=True)
+                    result = self.run(['/usr/bin/systemctl', 'show', '--property=ActiveState', '--value', self.prefix + unit + '.service'], timeout=1, capture_output=True, text=True)
                     if result.returncode or result.stdout.strip() not in ('inactive', 'failed'):
                         return 409 if result.stdout.strip() in ('active', 'activating', 'reloading', 'deactivating') else 503, {'state': 'running' if result.stdout.strip() in ('active', 'activating', 'reloading', 'deactivating') else 'unavailable'}
-                result = self.run(['/usr/bin/systemctl', 'start', '--no-block', 'ironcurtain-panel-' + action + '.service'], timeout=1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                result = self.run(['/usr/bin/systemctl', 'start', '--no-block', self.prefix + action + '.service'], timeout=1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 if result.returncode:
                     return 503, {'state': 'unavailable'}
                 self.last = time.monotonic()
@@ -302,11 +312,14 @@ class Bridge:
             except (OSError, subprocess.SubprocessError):
                 return 503, {'state': 'unavailable'}
 
-def work(action):
+def work(action, role='local'):
+    base, data = role_paths(role)
+    if action not in ('check', 'update'):
+        raise ValueError('action invalid')
     spec = importlib.util.spec_from_file_location('update_host', pathlib.Path(__file__).with_name('agent.py'))
     host = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(host)
-    folder = DATA / 'panel-update'
+    folder = data / 'panel-update'
     folder.mkdir(mode=0o700, exist_ok=True)
     for directory in (folder, *folder.parents):
         info = directory.lstat()
@@ -314,8 +327,8 @@ def work(action):
             raise ValueError('update directory invalid')
     if stat.S_IMODE(folder.stat().st_mode) != 0o700:
         raise ValueError('update directory permissions invalid')
-    host.private_bytes(BASE / 'install.json', 8192)
-    lock = os.open('/run/lock/ironcurtain-panel-update.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    host.private_bytes(base / 'install.json', 8192)
+    lock = os.open('/run/lock/ironcurtain-panel-' + ('cloud-' if role == 'cloud' else '') + 'update.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     with os.fdopen(lock, 'a') as handle:
         info = os.fstat(handle.fileno())
         if info.st_uid != 0 or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_mode & 0o077:
@@ -324,13 +337,13 @@ def work(action):
         target = folder / ('check.json' if action == 'check' else 'job.json')
         host.atomic_json(target, {'state': 'running', 'started_at': stamp()})
         try:
-            checked = check_release(host.private_bytes)
+            checked = check_release(host.private_bytes, base=base, role=role)
             host.atomic_json(folder / 'check.json', checked)
             if checked['state'] != 'verified':
                 raise ValueError('check failed')
             if action == 'check':
                 return
-            saved, current = receipt(host.private_bytes)
+            saved, current = receipt(host.private_bytes, base, role)
             if not checked['update_available']:
                 host.atomic_json(target, {'state': 'finished', 'finished_at': stamp(), 'version': saved['version'], 'result': 'already-current'})
                 return
@@ -345,8 +358,8 @@ def work(action):
                 info = os.fstat(log.fileno())
                 if info.st_uid != 0 or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_mode & 0o077:
                     raise ValueError('log invalid')
-                result = subprocess.run(['/bin/sh', str(current / 'install.sh'), '--role', 'local', '--host', saved['host'], '--bind', saved['bind'], '--version', checked['latest_version']], env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
-            actual = receipt(host.private_bytes)[0]['version']
+                result = subprocess.run(['/bin/sh', str(current / 'install.sh'), '--role', role, '--host', saved['host'], '--bind', saved['bind'], '--version', checked['latest_version']], env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
+            actual = receipt(host.private_bytes, base, role)[0]['version']
             if result.returncode or actual != checked['latest_version']:
                 raise ValueError('update unsuccessful')
             host.atomic_json(target, {'state': 'finished', 'finished_at': stamp(), 'version': actual, 'result': 'updated'})
@@ -368,7 +381,8 @@ def work(action):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('action', choices=['check', 'update'])
+    parser.add_argument('--role', choices=['local', 'cloud'], default='local')
     args = parser.parse_args()
     if os.geteuid() != 0:
         raise SystemExit('root required')
-    work(args.action)
+    work(args.action, args.role)

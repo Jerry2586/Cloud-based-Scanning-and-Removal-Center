@@ -1,4 +1,5 @@
 import {replaceKeyedItems, nodeDiagnostics, auditPresentation} from '/assets/view-state.js';
+import {createUpdateSettings} from '/assets/portal/update-settings.js';
 import {createDomainSettings} from '/assets/portal/domain-settings.js';
 const state = { csrf: null }; let timer, generation = 0, busy = false, policyRevision, policyDirty = false, flight, refreshPending = false, taskRequest;
 const $ = id => document.getElementById(id);
@@ -12,8 +13,9 @@ async function request(url, options={}) {
   const response=await fetch(url,{method:options.method||'GET',credentials:'same-origin',signal:AbortSignal.timeout(12000),headers,...(options.body?{body:JSON.stringify(options.body)}:{})});
   const value=await response.json(); if(!response.ok){if(response.status===401)clear();throw Object.assign(Error(value.error||'请求未完成'),{status:response.status});} return value;
 }
+const updates=createUpdateSettings({state,request,notify}); updates.bind();
 const domain=createDomainSettings({state,request,notify}); domain.bind();
-function clear(){generation++;clearTimeout(timer);state.csrf=null;domain.stop();$('workspace').hidden=true;$('login').hidden=false;$('logout').hidden=true;$('account-link').hidden=true;$('password-form').reset();for(const input of $('password-form').querySelectorAll('input[type=text]'))input.type='password';}
+function clear(){generation++;clearTimeout(timer);state.csrf=null;updates.stop();domain.stop();$('workspace').hidden=true;$('login').hidden=false;$('logout').hidden=true;$('account-link').hidden=true;$('password-form').reset();for(const input of $('password-form').querySelectorAll('input[type=text]'))input.type='password';}
 function route(){const view=location.hash.slice(1);const name=Object.hasOwn(views,view)?view:'overview';for(const el of document.querySelectorAll('[data-panel]'))el.hidden=el.dataset.panel!==name;for(const el of document.querySelectorAll('[data-view]')){el.classList.toggle('active',el.dataset.view===name);if(el.dataset.view===name)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');}$('page-title').textContent=views[name][0];$('page-description').textContent=views[name][1];}
 window.addEventListener('hashchange',route);route();
 function element(tag,text,className){const el=document.createElement(tag);if(text!==undefined)el.textContent=String(text);if(className)el.className=className;return el;}
@@ -46,7 +48,7 @@ async function refresh(){
   if(flight){refreshPending=true;return flight;}const id=generation;clearTimeout(timer);
   flight=(async()=>{try{const[cloud,control]=await Promise.all([request('/api/cloud/status'),request('/api/control')]);if(id!==generation||!state.csrf)return;paint(cloud,control);}catch(error){if(id===generation){$('data-age').textContent='读取失败：以下可能为上次数据，请刷新核实。';notify(error.message,true);}}finally{flight=undefined;if(state.csrf){const immediate=refreshPending||id!==generation;refreshPending=false;timer=setTimeout(refresh,immediate?0:10000);}}})();return flight;
 }
-function enter(session){generation++;clearTimeout(timer);state.csrf=session.csrf;policyDirty=false;$('login').hidden=true;$('workspace').hidden=false;$('logout').hidden=false;$('account-link').hidden=false;notify('');domain.start();void refresh();}
+function enter(session){generation++;clearTimeout(timer);state.csrf=session.csrf;policyDirty=false;$('login').hidden=true;$('workspace').hidden=false;$('logout').hidden=false;$('account-link').hidden=false;notify('');updates.start();domain.start();void refresh();}
 async function action(button,fn){if(busy||!state.csrf)return;busy=true;const session=state.csrf;button.disabled=true;try{await fn();if(session===state.csrf)notify('操作已完成，正在读取实际状态。');}catch(error){if(session===state.csrf)notify(error.message,true);}finally{busy=false;button.disabled=false;if(session===state.csrf)void refresh();}}
 $('login-form').addEventListener('submit',async event=>{event.preventDefault();const form=event.currentTarget,b=form.querySelector('button');b.disabled=true;try{const session=await request('/api/login',{method:'POST',body:{username:form.elements.username.value,password:form.elements.password.value}});form.elements.password.value='';enter(session);}catch(error){notify(error.message,true);}finally{b.disabled=false;}});
 $('logout').addEventListener('click',()=>action($('logout'),async()=>{await request('/api/logout',{method:'POST',body:{}});clear();}));

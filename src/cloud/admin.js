@@ -2,9 +2,13 @@ import {readFile} from 'node:fs/promises';
 import {createLocalServer} from '../local/server.js';
 import {loadCredentials} from '../local/auth.js';
 import {accountPassword} from '../local/account-client.js';
+import {localUpdate} from '../local/update-client.js';
 import {domainRequest} from '../local/domain-client.js';
 const publicDirectory = new URL('./public/', import.meta.url);
 export const CLOUD_ASSETS = new Map([
+  ['/contracts/host-scan-contract.js', [new URL('../contracts/host-scan-contract.js', import.meta.url), 'text/javascript; charset=utf-8']],
+  ['/contracts/update-status.js', [new URL('../contracts/update-status.js', import.meta.url), 'text/javascript; charset=utf-8']],
+  ['/assets/portal/update-settings.js', [new URL('../local/public/assets/portal/update-settings.js', import.meta.url), 'text/javascript; charset=utf-8']],
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/assets/view-state.js', ['view-state.js', 'text/javascript; charset=utf-8']],
   ['/assets/admin.js', ['admin.js', 'text/javascript; charset=utf-8']],
@@ -22,7 +26,7 @@ export async function startCloudAdmin(monitor, env = process.env, control) {
     changePassword: value => accountPassword(value, {...env, IRONCURTAIN_ROLE: 'cloud'}),
     domains: (action, value) => domainRequest(action, value, {...env, IRONCURTAIN_ROLE: 'cloud'}),
     cloudStatus: () => monitor.status(),
-    updates: async () => ({response_status: 503, state: 'unavailable', reason: '玄武程序更新请使用 xuanwu update'}),
+    updates: action => localUpdate(action, {...env, IRONCURTAIN_ROLE: 'cloud'}),
   });
   await new Promise((resolve, reject) => {server.once('error', reject); server.listen(Number(env.IRONCURTAIN_PORT || 8791), env.IRONCURTAIN_LISTEN_HOST || '0.0.0.0', () => {server.off('error',reject);resolve();});});
   console.log('玄武引擎管理面板已启动：' + origin);

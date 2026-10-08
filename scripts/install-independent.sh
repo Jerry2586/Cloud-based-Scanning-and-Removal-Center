@@ -5,6 +5,7 @@ SOURCE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$SOURCE/scripts/lib/independent.sh"
 source "$SOURCE/scripts/lib/install-transaction.sh"
 source "$SOURCE/scripts/lib/domain-services.sh"
+source "$SOURCE/scripts/lib/update-services.sh"
 source "$SOURCE/scripts/lib/management-transaction.sh"
 source "$SOURCE/scripts/lib/install-environment.sh"
 source "$SOURCE/scripts/lib/install-host.sh"
@@ -329,6 +330,7 @@ if [[ $ROLE == local ]]; then
     if [[ -f $IC_TX/rules-timer-active ]]; then systemctl start ironcurtain-rules-sync.timer; fi
   fi
 fi
+ic_cloud_update_install
 ic_domain_install
 ic_compose config --quiet
 ic_compose up -d --wait --wait-timeout 90

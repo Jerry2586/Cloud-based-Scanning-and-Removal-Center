@@ -291,3 +291,19 @@ test('schedule API rejects malformed host success and retains revision conflict'
   assert.equal((await f.request('/api/schedule',{headers})).status,503);assert.equal((await f.post('/api/schedule',scheduleFixture().config,headers)).status,503);
   broken=false;assert.equal((await f.post('/api/schedule',scheduleFixture().config,headers)).status,409);
 });
+
+test('cloud signed web updates enforce authentication and never accept installer arguments',async t=>{
+ const calls=[],f=await fixture(t,undefined,async action=>{calls.push(action);return action==='status'?{schema:'ironcurtain-update-status/v1',installed_version:'0.6.6',check:{state:'unavailable'},job:{state:'idle'}}:{state:'running',response_status:202};},undefined,{role:'cloud'});
+ assert.equal((await f.request('/api/updates')).status,401);
+ const id=await f.login(),headers={cookie:id.cookie,'x-csrf-token':id.csrf};
+ for(const route of ['/api/updates/check','/api/updates/install']){
+  assert.equal((await f.post(route,{})).status,401);
+  assert.equal((await f.post(route,{},{cookie:id.cookie})).status,403);
+  assert.equal((await f.post(route,{},{...headers,origin:'https://untrusted.invalid'})).status,403);
+  assert.equal((await f.post(route,{version:'99.0.0',role:'local',command:'sh'},headers)).status,400);
+ }
+ assert.deepEqual(calls,[]);
+ const status=await(await f.request('/api/updates',{headers})).json();assert.equal(status.installed_version,'0.6.6');assert.equal(status.check.state,'unavailable');
+ for(const route of ['/api/updates/check','/api/updates/install'])assert.equal((await f.post(route,{},headers)).status,202);
+ assert.deepEqual(calls,['status','check','install']);assert.equal(f.invoked(),0);
+});

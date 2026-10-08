@@ -70,6 +70,13 @@ for action in check update; do
   [[ $(systemctl show "ironcurtain-panel-$action.service" -p ExecStart --value) == *"python3 -B "* ]]
 done
 [[ $(systemctl show ironcurtain-agent.service -p ExecStart --value) == *"python3 -B "* ]]
+# Cloud has its own bounded update bridge and signed worker; no scan socket or Docker API.
+systemctl is-active --quiet ironcurtain-update-cloud-control.service
+[[ $(systemctl show ironcurtain-update-cloud-control.service -p ProtectSystem --value) == strict ]]
+for action in check update; do
+  [[ $(systemctl show "ironcurtain-panel-cloud-$action.service" -p ExecStart --value) == *"updates.py $action --role cloud"* ]]
+done
+setpriv --reuid=10001 --regid=10001 --clear-groups curl -q --noproxy '*' --fail --silent --unix-socket /run/ironcurtain-update-cloud/control.sock http://localhost/update-status | jq -e --arg version "$version" ' .installed_version == $version' >/dev/null
 # Signed manager executables survive root-owned install normalization and are runnable.
 manager_dir=$(readlink -f /opt/ironcurtain/local/current)/src/manager/bin
 for arch in amd64 arm64; do

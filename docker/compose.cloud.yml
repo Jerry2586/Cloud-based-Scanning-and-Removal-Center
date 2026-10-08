@@ -22,6 +22,7 @@ services:
       IRONCURTAIN_PUBLIC_ORIGIN: "https://${IRONCURTAIN_PUBLIC_HOST}:8791"
       IRONCURTAIN_TLS_CERT: /etc/xuanwu/panel.crt
       IRONCURTAIN_TLS_KEY: /etc/xuanwu/panel.key
+      IRONCURTAIN_UPDATE_SOCKET: /run/ironcurtain-update-cloud/control.sock
       IRONCURTAIN_DOMAIN_SOCKET: /run/ironcurtain-domain-cloud/control.sock
       IRONCURTAIN_PUBLIC_HOST: ${IRONCURTAIN_PUBLIC_HOST:?}
       SECURITY_TLS_KEY: /etc/xuanwu/server.key
@@ -32,6 +33,7 @@ services:
       SECURITY_RELEASE_DIR: /var/lib/xuanwu-releases
       SECURITY_VIRUS_DB_DIR: /var/lib/xuanwu-virus-db
     volumes:
+      - /run/ironcurtain-update-cloud:/run/ironcurtain-update-cloud:ro
       - /run/ironcurtain-domain-cloud:/run/ironcurtain-domain-cloud:ro
       - /run/ironcurtain-account-cloud:/run/ironcurtain-account-cloud:ro
       - ${IRONCURTAIN_CONFIG:?}/runtime:/etc/xuanwu:ro

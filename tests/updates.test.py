@@ -28,6 +28,18 @@ class UpdatesTests(unittest.TestCase):
     return json.dumps(release or self.release()).encode()
    return b'fixture'
   return u.check_release(self.read,self.base,get,verify=lambda *a:{'run_sha256':'a'*64})
+ def test_cloud_receipt_and_jobs_never_use_local_role(self):
+  saved=json.loads((self.base/'install.json').read_bytes());saved['role']='cloud';saved['image']=saved['image'].replace('-local-','-cloud-');(self.base/'install.json').write_text(json.dumps(saved))
+  self.assertEqual(u.receipt(self.read,self.base,'cloud')[0]['role'],'cloud')
+  with self.assertRaises(ValueError):u.receipt(self.read,self.base)
+  calls=[]
+  def run(args,**kw):calls.append(args);return SimpleNamespace(returncode=0,stdout='inactive')
+  bridge=u.Bridge(self.read,None,run,self.base,self.base/'data',role='cloud')
+  self.assertEqual(bridge.status()['installed_version'],'0.5.4')
+  self.assertEqual(bridge.trigger('update')[0],202)
+  self.assertEqual(calls[-1],['/usr/bin/systemctl','start','--no-block','ironcurtain-panel-cloud-update.service'])
+  self.assertFalse(any(arg in ('ironcurtain-panel-update.service','ironcurtain-panel-check.service') for args in calls for arg in args))
+  with self.assertRaises(ValueError):u.Bridge(None,None,role='../../local')
  def test_check_real_digest_and_source_survives_failed_release(self):
   good=self.check();self.assertEqual(good['state'],'verified');self.assertTrue(good['update_available']);self.assertTrue(good['source']['has_unreleased_changes'])
   failed=self.check(fail=True);self.assertEqual(failed['state'],'failed');self.assertEqual(failed['source']['commit'],'c'*40);self.assertFalse(failed['update_available'])
@@ -90,6 +102,23 @@ class FixedJobTests(unittest.TestCase):
    self.assertEqual(record['state'],'failed');self.assertTrue(record['checked_at']);self.assertEqual(record['installed_integrity'],'unavailable');self.assertFalse(record['update_available'])
    self.assertNotIn('secret-token',diagnostics.getvalue());self.assertIn('ValueError',diagnostics.getvalue())
    self.assertEqual((base/'panel-update/check.json').stat().st_mode & 0o777,0o600)
+ def test_cloud_upgrade_validates_its_own_installed_receipt(self):
+  with tempfile.TemporaryDirectory(prefix='ironcurtain-cloud-job-test-',dir='/etc') as temporary:
+   base=pathlib.Path(temporary);(base/'install.json').write_text('{}');(base/'install.json').chmod(0o600)
+   checked={'state':'verified','update_available':True,'latest_version':'0.6.6'}
+   saved={'version':'0.6.5','host':'192.0.2.1','bind':'0.0.0.0'}
+   def read_receipt(read,actual_base,actual_role):
+    self.assertEqual(actual_base,base);self.assertEqual(actual_role,'cloud')
+    return ({**saved,'version':'0.6.6'} if read_receipt.called else saved,base)
+   read_receipt.called=False
+   def install(args,**kwargs):
+    self.assertEqual(args[args.index('--role')+1],'cloud');read_receipt.called=True
+    return SimpleNamespace(returncode=0)
+   with patch.object(u,'role_paths',return_value=(base,base)),patch.object(u,'check_release',return_value=checked) as check,patch.object(u,'receipt',side_effect=read_receipt),patch.object(u.subprocess,'run',side_effect=install):
+    u.work('update','cloud')
+   self.assertEqual(check.call_args.kwargs['role'],'cloud')
+   record=json.loads((base/'panel-update/job.json').read_text())
+   self.assertEqual(record['state'],'finished');self.assertEqual(record['version'],'0.6.6');self.assertEqual(record['result'],'updated')
 class BoundaryTests(unittest.TestCase):
  def test_canonical_versions_without_filesystem(self):
   for value in ['00.1.0','1.02.3',None,{},'1.0']:
