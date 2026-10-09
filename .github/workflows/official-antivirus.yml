@@ -6,12 +6,20 @@ permissions:
 jobs:
   official-database:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Build manager and install signed local/cloud services on disposable Linux
+        run: |
+          bash scripts/build-manager.sh
+          sudo env "PATH=$PATH" IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER=1 bash tests/independent-deployment.test.sh
       - name: Download, cloud-stream, activate official signed databases and scan clean/EICAR samples
         run: sudo env "PATH=$PATH" GITHUB_ACTIONS=true IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER=1 bash tests/antivirus-official-db.test.sh
       - name: Diagnose public database or engine failures

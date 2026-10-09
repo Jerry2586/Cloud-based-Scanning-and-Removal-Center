@@ -91,7 +91,7 @@ print(json.dumps(items,sort_keys=True))
 ''')
 PY
 python3 "$WORK/snapshot.py" > "$WORK/before-repair.json"
-bash "$ROOT/scripts/antivirus-engine.sh" install
+python3 "$ROOT/tests/helpers/engine-maintenance-official-probe.py"
 python3 "$WORK/snapshot.py" > "$WORK/after-repair.json"
 cmp "$WORK/before-repair.json" "$WORK/after-repair.json"
 ! systemctl is-enabled --quiet ironcurtain-antivirus-update.timer
