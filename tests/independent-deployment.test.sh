@@ -46,6 +46,7 @@ CLOUD_HOST=$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Ga
 [[ $CLOUD_HOST =~ ^[0-9.]+$ ]] || { echo 'Docker bridge gateway unavailable' >&2; exit 1; }
 bash "$INSTALL_SOURCE/scripts/install-independent.sh" --role cloud --host "$CLOUD_HOST" --bind "$CLOUD_HOST"
 bash "$INSTALL_SOURCE/scripts/install-independent.sh" --role local --antivirus skip --host 127.0.0.1 --bind 127.0.0.1
+python3 "$SOURCE/tests/helpers/operations-deployment-probe.py" policy
 # Real non-root cloud container storage must survive a container restart.
 node "$SOURCE/tests/helpers/cloud-deployment-probe.js" seed "$CLOUD_HOST" "$WORK/cloud-control-fixture.json"
 [[ $(stat -c '%u:%g:%a' /var/lib/ironcurtain/cloud/runtime/control.sqlite) == 10001:10001:600 ]]
@@ -258,10 +259,12 @@ systemctl enable --now ironcurtain-domain-local-gateway.socket
 # Upgrading must recover an inactive required controller, while preserving timer preferences.
 systemctl stop ironcurtain-account-local-control.service
 systemctl stop ironcurtain-domain-local-control.service
+systemctl stop ironcurtain-operations-local-control.service
 systemctl disable --now ironcurtain-domain-local-renew.timer
 /usr/local/bin/tiemu release-update
 systemctl is-active --quiet ironcurtain-domain-local-control.service
 systemctl is-active --quiet ironcurtain-account-local-control.service
+python3 "$SOURCE/tests/helpers/operations-deployment-probe.py" ready
 ! systemctl is-active --quiet ironcurtain-domain-local-renew.timer
 ! systemctl is-enabled --quiet ironcurtain-domain-local-renew.timer
 systemctl enable --now ironcurtain-domain-local-renew.timer
@@ -332,6 +335,7 @@ for recovery_role in local cloud; do
     systemctl is-enabled --quiet ironcurtain-panel-check.timer
     systemctl is-active --quiet ironcurtain-panel-check.timer
     ic_scan_wait
+    python3 "$SOURCE/tests/helpers/operations-deployment-probe.py" ready
     IRONCURTAIN_EXPECT_RULE_SEQUENCE=2 node "$SOURCE/tests/helpers/independent-deployment-probe.js"
   fi
   if [[ $ROLE == cloud ]]; then jq -e '.nodes | has("node-ci") | not' "$CONF/runtime/config.json" >/dev/null; fi

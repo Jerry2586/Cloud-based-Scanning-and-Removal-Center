@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Root-only recovery for configuration changes. Contains private, plaintext snapshots.
 ic_admin_begin() {
+  if declare -F ic_operations_recover >/dev/null; then ic_operations_recover || return 1; fi
   [[ ! -e $BASE/admin-transaction.json && ! -L $BASE/admin-transaction.json ]] || ic_fail '尚有未恢复的管理事务'
   ic_trusted_dir "$BASE/backups"
   IC_ADMIN_TX=$(mktemp -d "$BASE/backups/admin.XXXXXXXX")

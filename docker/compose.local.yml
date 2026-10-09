@@ -26,6 +26,7 @@ services:
     volumes:
       - /run/ironcurtain-domain-local:/run/ironcurtain-domain-local:ro
       - /run/ironcurtain-account-local:/run/ironcurtain-account-local:ro
+      - /run/ironcurtain-operations-local:/run/ironcurtain-operations-local:ro
       - ${IRONCURTAIN_CONFIG:?}/runtime:/etc/ironcurtain:ro
       - /run/ironcurtain:/run/ironcurtain:ro
     healthcheck:

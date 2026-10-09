@@ -316,3 +316,36 @@ test('active host detection has an actionable update conflict without claiming a
  assert.equal(response.status,409);
  assert.deepEqual(await response.json(),{state:'unavailable',reason:'本机检测或管理任务正在运行，程序更新尚未启动。请等待当前任务结束后重试。'});
 });
+
+
+test('local operations requires session, origin, CSRF and fixed evidence-bound fields',async t=>{
+ const {operationStatus,operationJob,revision}=await import('./fixtures/operations.js');
+ const calls=[];const f=await fixture(t,null,null,null,{operations:async(action,value)=>{calls.push({action,value});return action==='status'?operationStatus():{schema:'ironcurtain-operations/v1',state:'running',job:operationJob(),response_status:202};}});
+ assert.equal((await f.request('/api/operations')).status,401);
+ const identity=await f.login(),headers={cookie:identity.cookie,'x-csrf-token':identity.csrf};
+ const input={action:'ports',revision,tcp:[443,22],udp:[]};
+ assert.equal((await f.post('/api/operations',input,{cookie:identity.cookie})).status,403);
+ assert.equal((await f.post('/api/operations',input,{...headers,origin:'https://invalid.example'})).status,403);
+ assert.equal((await f.post('/api/operations',{...input,command:'sh'},headers)).status,400);
+ assert.equal((await f.post('/api/operations',{action:'quarantine',id:revision,confirm:'yes'},headers)).status,400);
+ assert.equal(calls.length,0);
+ assert.equal((await f.request('/api/operations',{headers})).status,200);
+ assert.equal((await f.post('/api/operations',input,headers)).status,202);
+ assert.deepEqual(calls,[{action:'status',value:undefined},{action:'apply',value:{...input,tcp:[22,443]}}]);
+ await f.post('/api/logout',{},headers);
+ assert.equal((await f.post('/api/operations',input,headers)).status,401);assert.equal(calls.length,2);
+});
+test('cloud panel cannot access the local operations controller',async t=>{
+ const f=await fixture(t,null,null,null,{role:'cloud',operations:async()=>assert.fail('cloud must not call local controller')});
+ const identity=await f.login(),headers={cookie:identity.cookie,'x-csrf-token':identity.csrf};
+ assert.equal((await f.request('/api/operations',{headers})).status,404);
+ assert.equal((await f.post('/api/operations',{},headers)).status,404);
+});
+test('operations rejects malformed status and an acknowledgement for a different action',async t=>{
+ const {operationJob,revision}=await import('./fixtures/operations.js');
+ const f=await fixture(t,null,null,null,{operations:async action=>action==='status'?{state:'ready'}:{schema:'ironcurtain-operations/v1',state:'running',job:{...operationJob(),action:'restore'},response_status:202}});
+ const identity=await f.login(),headers={cookie:identity.cookie,'x-csrf-token':identity.csrf};
+ assert.equal((await f.request('/api/operations',{headers})).status,503);
+ const res=await f.post('/api/operations',{action:'ports',revision,tcp:[],udp:[]},headers);
+ assert.equal(res.status,503);assert.ok((await res.json()).error);
+});

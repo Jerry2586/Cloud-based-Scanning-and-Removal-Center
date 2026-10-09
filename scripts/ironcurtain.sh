@@ -49,6 +49,7 @@ lock() {
   ic_wait_management_lock 9 "/run/lock/ironcurtain-$ROLE.lock"
   MANAGEMENT_LOCKED=true
   ic_admin_recover || ic_fail '原管理事务尚未恢复，停止新操作'
+  ic_operations_recover || ic_fail '端口策略事务尚未恢复，停止新操作'
 }
 if [[ -e $BASE/admin-transaction.json || -L $BASE/admin-transaction.json ]]; then
   lock
@@ -484,9 +485,9 @@ configure_domain() {
 dispatch() {
   case "$1" in
     status) status ;; logs) ic_compose logs --tail 100 ;;
-    start) lock; [[ $ROLE != local ]] || systemctl start ironcurtain-agent.service ironcurtain-rules-sync.timer ironcurtain-panel-check.timer; ic_compose up -d --wait --wait-timeout 90 ;;
-    stop) lock; ic_compose stop; [[ $ROLE != local ]] || systemctl stop ironcurtain-agent.service ironcurtain-rules-sync.timer ironcurtain-panel-check.timer ;;
-    restart) lock; [[ $ROLE != local ]] || systemctl restart ironcurtain-agent.service; ic_compose restart; ic_wait ;;
+    start) lock; [[ $ROLE != local ]] || systemctl start ironcurtain-agent.service ironcurtain-operations-local-control.service ironcurtain-rules-sync.timer ironcurtain-panel-check.timer; ic_compose up -d --wait --wait-timeout 90; ic_operations_wait ;;
+    stop) lock; ic_compose stop; [[ $ROLE != local ]] || systemctl stop ironcurtain-agent.service ironcurtain-operations-local-control.service ironcurtain-rules-sync.timer ironcurtain-panel-check.timer ;;
+    restart) lock; [[ $ROLE != local ]] || systemctl restart ironcurtain-agent.service ironcurtain-operations-local-control.service; ic_compose restart; ic_wait; ic_operations_wait ;;
     engine-install|engine-update|engine-status) [[ $ROLE == local ]] || ic_fail '病毒引擎仅用于铁幕'; lock; bash "$SOURCE/scripts/antivirus-engine.sh" "${1#engine-}" ;;
     findings|quarantine-list) response "$([[ $1 == findings ]] && echo findings || echo list)" ;;
     quarantine|restore-file) response "$([[ $1 == quarantine ]] && echo quarantine || echo restore)" ;;

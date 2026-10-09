@@ -3,6 +3,9 @@
 ic_domain_units() {
   # Account units share the installer lifecycle snapshot; their Unix service stays independent.
   printf "%s\n" "ironcurtain-account-$ROLE-control.service"
+  if [[ $ROLE == local ]]; then
+    printf "%s\n" ironcurtain-operations-local-control.service
+  fi
   if [[ $ROLE == cloud ]]; then
     printf "%s\n" ironcurtain-update-cloud-control.service ironcurtain-panel-cloud-check.service ironcurtain-panel-cloud-update.service ironcurtain-panel-cloud-check.timer
   fi
@@ -26,6 +29,9 @@ ic_domain_snapshot() {
 }
 ic_domain_quiesce() {
   local unit
+  if [[ $ROLE == local && -f /etc/systemd/system/ironcurtain-operations-local-control.service ]]; then
+    systemctl stop ironcurtain-operations-local-control.service || return 1
+  fi
   if [[ $ROLE == cloud ]]; then
     for unit in ironcurtain-update-cloud-control.service ironcurtain-panel-cloud-check.timer; do
       [[ ! -f /etc/systemd/system/$unit ]] || systemctl stop "$unit" || return 1
@@ -197,6 +203,37 @@ TasksMax=8
 [Install]
 WantedBy=multi-user.target
 EOF
+  if [[ $ROLE == local ]]; then
+    install -d -m 750 -o root -g 10001 /run/ironcurtain-operations-local
+    cat > /etc/systemd/system/ironcurtain-operations-local-control.service <<EOF
+[Unit]
+Description=IronCurtain evidence-bound local operations
+After=ironcurtain-agent.service
+[Service]
+Type=simple
+User=root
+Group=10001
+ExecStart=/usr/bin/python3 -B $BASE/current/src/host/operations.py
+Restart=on-failure
+RestartSec=5
+RuntimeDirectory=ironcurtain-operations-local
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+UMask=0077
+NoNewPrivileges=true
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=$CONF $DATA/agent /run/ironcurtain-operations-local /run/lock
+RestrictAddressFamilies=AF_UNIX
+MemoryMax=256M
+TasksMax=16
+[Install]
+WantedBy=multi-user.target
+EOF
+  fi
   for unit in $(ic_domain_units); do chmod 644 "/etc/systemd/system/$unit"; done
   if ! command -v certbot >/dev/null; then
     if command -v apt-get >/dev/null; then
@@ -209,7 +246,9 @@ EOF
   fi
   command -v certbot >/dev/null || ic_fail "系统缺少自动证书组件 certbot"
   systemctl daemon-reload
-  for unit in "$prefix-control.service" "$prefix-renew.timer" "ironcurtain-account-$ROLE-control.service"; do
+  local controllers=("$prefix-control.service" "$prefix-renew.timer" "ironcurtain-account-$ROLE-control.service")
+  [[ $ROLE != local ]] || controllers+=(ironcurtain-operations-local-control.service)
+  for unit in "${controllers[@]}"; do
     if [[ -n ${IC_TX:-} && -f $IC_TX/$unit ]]; then
       [[ ! -f $IC_TX/$unit.enabled ]] || systemctl enable "$unit"
       if [[ $unit == *-control.service || -f $IC_TX/$unit.active ]]; then systemctl restart "$unit"; fi
@@ -241,10 +280,36 @@ ic_cloud_update_wait() {
   return 1
 }
 
+# Caller owns the EX management lease. Resolve a previous port transaction before
+# snapshotting config or restarting a controller which would contend for that lease.
+ic_operations_recover() {
+  [[ $ROLE == local ]] || return 0
+  local journal=$DATA/agent/operations/port-transaction.json controller=$BASE/current/src/host/operations.py was_active=false
+  [[ -e $journal || -L $journal ]] || return 0
+  ic_private_file "$journal"
+  [[ -f $controller && ! -L $controller && $(stat -c %u "$controller") == 0 ]] || ic_fail '端口事务存在但可信恢复程序缺失，请保留现场'
+  systemctl is-active --quiet ironcurtain-operations-local-control.service && was_active=true || true
+  [[ ! -f /etc/systemd/system/ironcurtain-operations-local-control.service ]] || systemctl stop ironcurtain-operations-local-control.service || return 1
+  python3 -B "$controller" recover || return 1
+  if $was_active; then systemctl start ironcurtain-operations-local-control.service || return 1; fi
+}
+ic_operations_wait() {
+  [[ $ROLE == local && -f $BASE/current/src/host/operations.py ]] || return 0
+  local attempt
+  for attempt in {1..20}; do
+    if systemctl is-active --quiet ironcurtain-operations-local-control.service &&
+       curl -q --noproxy '*' --max-time 2 --silent --fail --unix-socket /run/ironcurtain-operations-local/control.sock http://localhost/operations |
+         jq -e '.schema == "ironcurtain-operations/v1" and .state == "ready" and (.policy.revision | type == "string")' >/dev/null 2>&1; then return 0; fi
+    sleep 0.5
+  done
+  return 1
+}
+
 # Container health alone cannot prove that the required host controller runs.
 # Authenticate the real Unix endpoint before committing an installation.
 ic_domain_wait() {
   local prefix=ironcurtain-domain-$ROLE attempt
+  ic_operations_wait || return 1
   if [[ $ROLE == cloud && -f $BASE/current/src/host/update_control.py ]]; then
     ic_cloud_update_wait || return 1
   fi

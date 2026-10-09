@@ -50,7 +50,7 @@ export function createSecurityConsole() {
   let requestAction = null;
   let requestIssue = null, requestedTaskId = null;
   function open(name, focus = false) {
-    name = ({engine:'scan',containers:'environment',logs:'quarantine',recovery:'quarantine',backup:'settings',cloud:'settings',security:'home'})[name] || name;
+    name = ({engine:'scan',containers:'environment',logs:'quarantine',backup:'recovery',cloud:'settings',security:'home'})[name] || name;
     const tab = scope?.querySelector('[data-security-tab="' + name + '"]');
     if (!tab) return;
     const changed = !tab.classList.contains('active');
@@ -246,28 +246,9 @@ export function createSecurityConsole() {
       node.dataset.active=String(task.active);node.dataset.indeterminate=String(task.active && task.percent===null);
       const bar=node.querySelector('span');if(bar)bar.style.width=task.percent===null?task.active?'24%':'0%':task.percent+'%';
     });
-    renderRisks(summary);
+
   }
-  function renderRisks(summary) {
-    const checks=Array.isArray(latestReport?.checks)?latestReport.checks:[];
-    const levels={critical:0,high:1,medium:2,low:3,info:4,unknown:5};
-    const risks=checks.filter(item=>item && item.id!=='host.history' && ['finding','warning','unavailable'].includes(item.state))
-      .sort((a,b)=>(a.state==='finding'?0:1)-(b.state==='finding'?0:1) || (levels[a.severity]??5)-(levels[b.severity]??5));
-    set('[data-risk-state]',summary.findings || summary.infected?'风险需要处理':latestContext.trusted?'查看检查结果':'等待有效检查结果');
-    set('[data-risk-detail]',checks.length ? summary.findings+' 项环境风险 · '+summary.attention+' 项复核项；文件命中与隔离记录单独核对。' : '尚未取得有效环境报告，风险数量暂不可核验；文件命中与隔离记录单独核对。');
-    const list=scope?.querySelector('[data-risk-list]');list?.replaceChildren();
-    if(!risks.length){const li=document.createElement('li');li.className='sc-empty-row';li.textContent=latestContext.trusted?'本次环境检查未记录风险；文件查杀结果见下方。':'尚无可核验的环境风险记录，先执行一次检查。';list?.append(li);}
-    for(const item of risks.slice(0,25)){
-      const li=document.createElement('li');li.className='ic-risk-item';li.dataset.state=item.state;
-      const head=document.createElement('div');head.className='ic-risk-heading';
-      const title=document.createElement('strong');title.textContent=item.name || checkName(item.id);
-      const badge=document.createElement('span');badge.className='ic-tag';badge.textContent=(LABELS[item.state]||'需复核')+' · '+(({critical:'严重',high:'高',medium:'中',low:'低',info:'信息',unknown:'待评估'})[item.severity] || '待评估');
-      head.append(title,badge);
-      const detail=document.createElement('p');detail.textContent=item.detail || '暂无详细证据';
-      const meta=document.createElement('small');meta.textContent=(item.scope || '范围未报告')+' · '+(item.checked_at || '时间未报告')+(latestContext.trusted?'':' · 历史或不完整记录，请重新核验');
-      li.append(head,detail,meta);list?.append(li);
-    }
-  }
+
   function setBusy(busy, action = null) {
     requestBusy = Boolean(busy);
     if (requestBusy && action) { requestAction=action; requestIssue=null; requestedTaskId=null; }

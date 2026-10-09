@@ -60,6 +60,7 @@ HOST=$REQUESTED_HOST BIND=$REQUESTED_BIND
 if [[ -e $BASE/install.json || -L $BASE/install.json ]]; then
   ic_load
   ic_admin_recover || ic_fail '上次管理操作尚未恢复，请先运行菜单诊断'
+  ic_operations_recover || ic_fail '端口策略事务尚未恢复，停止安装'
   if ! $ENGINE_REQUESTED; then ENGINE_MODE=$(jq -er '.antivirus // "auto"' "$BASE/install.json"); fi
   [[ $ENGINE_MODE == auto || $ENGINE_MODE == skip ]] || ic_fail '已保存的病毒引擎模式无效'
   old_host=$(jq -er '.host' "$BASE/install.json"); old_bind=$(jq -er '.bind' "$BASE/install.json")

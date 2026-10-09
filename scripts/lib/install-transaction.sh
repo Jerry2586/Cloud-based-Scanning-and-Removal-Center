@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Durable root-only installation recovery. Caller supplies fixed role paths.
 ic_tx_begin() {
+  if declare -F ic_operations_recover >/dev/null; then ic_operations_recover || return 1; fi
   ic_trusted_dir "$BASE/backups"
   IC_TX=$(mktemp -d "$BASE/backups/install.XXXXXXXX")
   chmod 700 "$IC_TX"

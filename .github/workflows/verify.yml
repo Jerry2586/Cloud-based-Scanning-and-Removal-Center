@@ -91,6 +91,7 @@ jobs:
         run: |
           sudo env "PATH=$PATH" python3 tests/findings.test.py
           sudo env "PATH=$PATH" python3 tests/response.test.py
+          sudo env "PATH=$PATH" python3 tests/operations.test.py
       - name: Test bounded AppArmor updater integration
         run: sudo bash tests/antivirus-apparmor.test.sh
       - name: Test managed antivirus metadata

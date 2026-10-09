@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Root-only, bounded, explicit quarantine. No web/cloud response endpoint."""
+"""Root-only bounded quarantine; local fixed-action controller or CLI, no cloud commands."""
 import argparse, contextlib, datetime, hashlib, importlib.util, json, os, pathlib, re, stat, sys, time
 sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location('response_agent', pathlib.Path(__file__).with_name('agent.py'))

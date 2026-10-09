@@ -1,3 +1,4 @@
+import {createOperationsWorkspace} from './operations-workspace.js';
 import {createScheduleSettings} from './schedule-settings.js';
 import { createCloudIntelligence } from './cloud-intelligence.js';
 import {engineDisplayText} from './engine-labels.js';
@@ -70,6 +71,7 @@ function completeReport(report, checks) {
 
 export function createSecurityUi({ state, can, request, notify }) {
   const consoleView = createSecurityConsole();
+  const operationsWorkspace = createOperationsWorkspace({state,request,notify});
   const cloudIntelligence = createCloudIntelligence({state,request,notify});
   const multiEngine = createMultiEngine({state,request,notify});
   const engineReadiness = createEngineReadiness({state,request,notify});
@@ -81,13 +83,19 @@ export function createSecurityUi({ state, can, request, notify }) {
   let scanGeneration = 0;
   let bound = false;
   const localStateLabels = { ok: '正常', warning: '需复核', finding: '发现问题', unavailable: '不可用' };
+  let findingsSignature=null,latestFindingsReport=null;
+  document.addEventListener('focusout',()=>queueMicrotask(()=>{if(latestFindingsReport)renderFileFindings(latestFindingsReport);}));
   function renderFileFindings(report) {
+    latestFindingsReport=report;
     const list = $('security-malware-findings'), status = $('security-malware-findings-state');
-    list?.replaceChildren();
+    const signature=JSON.stringify([report.state,report.findings_source,report.findings_state,report.findings_total,report.findings]);
+    if(signature===findingsSignature){operationsWorkspace.sync();return;}
+    if(list?.contains(document.activeElement) && state.csrf)return;
+    findingsSignature=signature;list?.replaceChildren();
     const visible = (report.state === 'finished' || report.findings_source === 'full') && ['complete','partial'].includes(report.findings_state);
     if (status) status.textContent = !visible ? '等候本次扫描的可核验文件证据' : report.findings_total > (report.findings?.length || 0)
       ? '特征命中 '+report.findings_total+'；页面仅展示已复核的 '+(report.findings?.length || 0)+' 条，完整记录请在 Linux 菜单查看'
-      : report.findings_state === 'partial' ? '部分文件证据未完成复核；扫描告警继续保留' : '本次命中 '+report.findings_total+' 个文件；隔离请在可信 Linux 菜单执行';
+      : report.findings_state === 'partial' ? '部分文件证据未完成复核；扫描告警继续保留' : '本次命中 '+report.findings_total+' 个文件；可在本页核对后隔离，系统再次验证证据';
     if (visible && status) status.textContent = (report.findings_source==='full'?'文件深度查杀：':'环境与范围核验：')+status.textContent;
     if (!visible) return;
     for (const item of report.findings || []) {
@@ -96,22 +104,10 @@ export function createSecurityUi({ state, can, request, notify }) {
       const path = document.createElement('p'); path.textContent = item.path;
       const evidence = document.createElement('p'); evidence.className = 'sc-muted';
       evidence.textContent = '证据编号 '+item.id+' · SHA-256 '+item.sha256+' · '+item.size+' 字节';
-      row.append(title, path, evidence); list?.append(row);
+      const action=document.createElement('button');action.type='button';action.className='sc-outline';action.textContent='隔离命中文件';action.dataset.quarantineId=item.id;action.disabled=true;
+      row.append(title, path, evidence, action); list?.append(row);
     }
-  }
-  function renderQuarantine(report) {
-    const list=$('security-quarantine-records'), status=$('security-quarantine-state');
-    list?.replaceChildren();
-    const value=report.quarantine;
-    if(status) status.textContent = !value || value.state==='unavailable' ? '本机隔离记录不可用，等待代理状态' : value.state==='empty' ? '暂无本机隔离记录' : '处置记录 '+value.count+' 项 · 待人工核查 '+value.pending+' 项；页面最多显示 8 项';
-    const labels={preparing:'副本准备中，尚未隔离',captured:'已保存副本，移除尚未确认',quarantined:'已完成路径隔离',restoring:'恢复未完成，需人工核查',restored:'已取回，副本仍保留'};
-    for(const item of value?.items || []) {
-      const row=document.createElement('li');row.dataset.state=['preparing','captured','restoring'].includes(item.state)?'warning':'ok';
-      const title=document.createElement('strong');title.textContent=labels[item.state] || '记录状态未知';
-      const path=document.createElement('p');path.textContent=item.path;
-      const evidence=document.createElement('p');evidence.className='sc-muted';evidence.textContent='证据编号 '+item.id+' · '+item.signature+' · '+item.size+' 字节';
-      row.append(title,path,evidence);list?.append(row);
-    }
+    operationsWorkspace.sync();
   }
   function ruleLabel(value) {
     return value?.state==='ready' ? 'v'+value.version+' · 序号 '+value.sequence+' · '+value.indicators+' 条 · 有效至 '+new Date(value.expires_at*1000).toLocaleString() : value?.state==='missing' ? '尚未安装签名规则' : '规则不可用 / 未核验';
@@ -128,7 +124,6 @@ export function createSecurityUi({ state, can, request, notify }) {
   function renderLocalReport(report) {
     renderRules(report);
     renderFileFindings(report);
-    renderQuarantine(report);
     const engine = $('security-antivirus-state');
     if (engine) {
       const value=report.antivirus;
@@ -185,8 +180,7 @@ export function createSecurityUi({ state, can, request, notify }) {
       if (status) { status.textContent = '本机代理不可用'; status.dataset.state = 'warning'; }
       if ($('security-local-time')) $('security-local-time').textContent = error.message;
       renderFileFindings({state:'unavailable'});
-      renderQuarantine({state:'unavailable'});
-    renderRules({state:'unavailable'});
+      renderRules({state:'unavailable'});
       $('security-local-checks')?.replaceChildren(); $('security-local-history')?.replaceChildren();
       if ($('security-local-history-state')) $('security-local-history-state').textContent = '告警历史读取失败';
     },
@@ -206,7 +200,6 @@ export function createSecurityUi({ state, can, request, notify }) {
     const status = $('security-local-state');
     if (status) { status.textContent = '请登录后查看'; status.dataset.state = 'warning'; }
     renderFileFindings({state:'unavailable'});
-    renderQuarantine({state:'unavailable'});
     for (const id of ['security-local-time', 'security-local-checks', 'security-local-history', 'security-local-history-state']) $(id)?.replaceChildren();
   });
   document.addEventListener('visibilitychange', () => {
@@ -270,7 +263,7 @@ export function createSecurityUi({ state, can, request, notify }) {
   function bind() {
     if (bound) return;
     bound = true;
-    consoleView.bind();
+    consoleView.bind(); operationsWorkspace.bind(); operationsWorkspace.start();
     cloudIntelligence.bind();
     multiEngine.bind(); multiEngine.start(); engineReadiness.bind(); engineReadiness.start();
     scheduleSettings.bind(); scheduleSettings.start();
@@ -299,5 +292,5 @@ export function createSecurityUi({ state, can, request, notify }) {
       finally { if (generation === scanGeneration) { scanRequested = false; consoleView.setBusy(false); } }
     }));
   }
-  return Object.freeze({ bind, render() { scheduleSettings.start(); engineReadiness.start(); multiEngine.start(); updateSettings.start(); domainSettings.start(); void renderSecurity(); void renderLocalSecurity(); } });
+  return Object.freeze({ bind, render() { operationsWorkspace.start(); scheduleSettings.start(); engineReadiness.start(); multiEngine.start(); updateSettings.start(); domainSettings.start(); void renderSecurity(); void renderLocalSecurity(); } });
 }
