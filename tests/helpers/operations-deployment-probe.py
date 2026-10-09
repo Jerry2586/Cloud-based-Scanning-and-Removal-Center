@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Probe the installed systemd controller, real profile writes and container mount."""
 import http.client
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,10 @@ import time
 ADDRESS = '/run/ironcurtain-operations-local/control.sock'
 PROFILE = Path('/etc/ironcurtain/local/profile.json')
 SERVICE = 'ironcurtain-operations-local-control.service'
+# Match the installed agent's defaults: fresh profiles contain only the schema.
+_spec = importlib.util.spec_from_file_location('operations_probe_agent', Path(__file__).resolve().parents[2] / 'src/host/agent.py')
+agent = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(agent)
 
 
 def request(method, value=None, uid=10001):
@@ -81,7 +86,7 @@ else:
     assert request('GET', uid=10002)[0] == 403
     assert request('POST', {'action': 'shell', 'command': 'id'})[0] == 400
     if sys.argv[1] == 'policy':
-        original = json.loads(PROFILE.read_text())
+        original = agent.profile_validate(json.loads(PROFILE.read_text()))
         tcp = original['approved_tcp_ports']; udp = original['approved_udp_ports']
         extra = next(port for port in range(54000, 54129) if port not in tcp)
         assert len(tcp) < 128
