@@ -6,7 +6,9 @@ a=importlib.util.module_from_spec(spec);spec.loader.exec_module(a)
 m=a.engine_maintenance
 b=m.Bridge(a.private_bytes,a.atomic_json,busy=lambda:False)
 assert b.unit()['KillMode']=='control-group'
-assert subprocess.run(['systemctl','is-enabled','--quiet',m.UNIT]).returncode!=0
+# Static oneshot units report success from is-enabled without being enabled.
+enablement=subprocess.run(['systemctl','show','--property=UnitFileState','--value',m.UNIT],check=True,text=True,capture_output=True).stdout.strip()
+assert enablement=='static',enablement
 assert subprocess.run(['systemctl','is-active','--quiet',m.UNIT]).returncode!=0
 if len(sys.argv)>2 and sys.argv[2]=='ready':
  print('Installed maintenance unit after upgrade/recovery: verified, inactive and not enabled.')
