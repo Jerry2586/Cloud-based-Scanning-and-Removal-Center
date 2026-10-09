@@ -10,6 +10,8 @@ import subprocess
 import sys
 import time
 
+import ci_credentials
+
 if os.geteuid() != 0 or os.environ.get('IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER') != '1':
     raise SystemExit('Requires disposable root CI')
 spec = importlib.util.spec_from_file_location('menu_input', Path(__file__).with_name('menu-result-input.py'))
@@ -107,6 +109,9 @@ def acceptance(role, host):
     finally:
         cli_password(original)
     login(original)
+    assert original not in (conf / 'credentials/initial-credentials.txt').read_text(), 'Initial plaintext password was republished'
+    if role == 'local' and ci_credentials.enabled():
+        ci_credentials.save('admin', original)
     print(role + ': original fixture password restored; no secret emitted.')
 
 acceptance('local', '127.0.0.1')

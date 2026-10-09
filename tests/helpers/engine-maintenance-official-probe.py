@@ -7,12 +7,14 @@ import ssl
 import subprocess
 import time
 
+import ci_credentials
+
 if os.geteuid() != 0 or os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER') != '1':
     raise SystemExit('Requires explicit disposable root Linux CI')
 conf = Path('/etc/ironcurtain/local')
 origin = 'https://127.0.0.1:8790'
 context = ssl.create_default_context(cafile=str(conf / 'runtime/panel.crt'))
-credentials = (conf / 'credentials/initial-credentials.txt').read_text().splitlines()
+credentials = ci_credentials.consume()
 cookie = csrf = ''
 
 def call(path, body=None, *, bad_csrf=False):
@@ -34,7 +36,7 @@ def call(path, body=None, *, bad_csrf=False):
 
 assert call('/api/engines/maintenance')[0] == 401
 assert call('/api/engines/install', {})[0] == 401
-code, headers, result = call('/api/login', {'username': credentials[0], 'password': credentials[1]})
+code, headers, result = call('/api/login', credentials)
 assert code == 200, 'Disposable panel credentials rejected'
 cookie = headers['Set-Cookie'].split(';')[0]
 csrf = result['csrf']

@@ -18,10 +18,11 @@ jobs:
           cache: false
       - name: Build manager and install signed local/cloud services on disposable Linux
         run: |
+          sudo python3 tests/ci-credentials.test.py
           bash scripts/build-manager.sh
-          sudo env "PATH=$PATH" IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER=1 bash tests/independent-deployment.test.sh
+          sudo env "PATH=$PATH" GITHUB_ACTIONS=true IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER=1 IRONCURTAIN_ACCEPT_OFFICIAL_MAINTENANCE=1 bash tests/independent-deployment.test.sh
       - name: Download, cloud-stream, activate official signed databases and scan clean/EICAR samples
-        run: sudo env "PATH=$PATH" GITHUB_ACTIONS=true IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER=1 bash tests/antivirus-official-db.test.sh
+        run: sudo env "PATH=$PATH" GITHUB_ACTIONS=true IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER=1 IRONCURTAIN_ACCEPT_OFFICIAL_MAINTENANCE=1 bash tests/antivirus-official-db.test.sh
       - name: Diagnose public database or engine failures
         if: failure()
         run: |
@@ -33,3 +34,6 @@ jobs:
           sudo runuser -u ironcurtain-av -- clamconf --config-dir=/etc/ironcurtain-antivirus --non-default || true
           sudo aa-status || true
           sudo cat /etc/apparmor.d/usr.bin.freshclam || true
+      - name: Remove disposable credential handoff on every outcome
+        if: always()
+        run: sudo rm -f -- /run/ironcurtain-ci-acceptance/local-credentials.json
