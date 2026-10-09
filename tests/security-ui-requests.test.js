@@ -8,10 +8,10 @@ async function harness(){
  const state={csrf:'first'};let allowed=true;
  const pending=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
  const consoleView={bind(){},clear(){busy.push(false);},update(){},setBusy:value=>busy.push(value),requestResult:value=>results.push(value)};
- const widget=()=>({bind(){},start(){},sync(){}});
+ const widget=()=>({bind(){},start(){},sync(){},refresh(){}});
  let source=await readFile(new URL('../src/local/public/assets/portal/security-ui.js',import.meta.url),'utf8');
  source=source.replace(/^import[^\n]+\n/gm,'').replace('export function','function');
- const ctx=vm.createContext({Date,document:{hidden:false,getElementById:()=>null,querySelectorAll:selector=>selector.includes('data-security-scan')?[button]:[],addEventListener:(event,fn)=>events.set(event,fn)},window:{addEventListener(){}},createSecurityConsole:()=>consoleView,createCloudIntelligence:widget,createMultiEngine:widget,createEngineReadiness:widget,createScheduleSettings:widget,createOperationsWorkspace:widget,createUpdateSettings:widget,createDomainSettings:widget,createSecurityPoller:()=>({run(){},stop(){},refresh:async()=>{}}),summarizeLocalSecurity(){},engineDisplayText:value=>value});
+ const ctx=vm.createContext({Date,document:{hidden:false,getElementById:()=>null,querySelectorAll:selector=>selector.includes('data-security-scan')?[button]:[],addEventListener:(event,fn)=>events.set(event,fn)},window:{addEventListener(){}},createSecurityConsole:()=>consoleView,createCloudIntelligence:widget,createMultiEngine:widget,createEngineReadiness:widget,createEngineMaintenance:widget,createScheduleSettings:widget,createOperationsWorkspace:widget,createUpdateSettings:widget,createDomainSettings:widget,createSecurityPoller:()=>({run(){},stop(){},refresh:async()=>{}}),summarizeLocalSecurity(){},engineDisplayText:value=>value});
  vm.runInContext(source,ctx);
  const ui=ctx.createSecurityUi({state,can:()=>allowed,notify:()=>assert.fail('Stale request notified the new session'),request:(url,options)=>{if(options?.method==='POST'){const p=pending();requests.push({url,...p});return p.promise;}return Promise.resolve({state:'unpaired',connected:false});}});
  ui.bind();

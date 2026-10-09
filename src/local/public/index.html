@@ -98,6 +98,8 @@
             <div class="sc-section-head"><div><span class="sc-eyebrow">LOCAL ENGINE MAINTENANCE</span><h4 id="engine-readiness-heading">玄武引擎与数据就绪</h4></div><button type="button" class="sc-outline" id="engine-readiness-check">重新检查引擎</button></div>
             <strong id="engine-readiness-state" role="status">等待可信主机检查</strong><p id="engine-readiness-detail" class="sc-muted">检查版本、数据期限与实际依赖，缺项会明确显示。</p>
             <ul id="engine-readiness-list" class="ic-readiness-grid" aria-label="四项检测能力就绪与维护"></ul>
+            <div class="sc-section-head"><div><strong id="engine-maintenance-state" role="status">服务未就绪</strong><p id="engine-maintenance-detail" class="sc-muted">正在核验文件引擎维护服务。</p></div><button type="button" class="sc-primary" id="engine-maintenance-install" disabled>安装 / 修复文件引擎</button></div>
+            <p class="sc-muted">从本机系统软件源补齐文件查杀依赖；保留已有玄武签名病毒库。维护期间检测与程序更新互斥，失败会保留结果供重试。</p>
             <div class="ic-readiness-commands"><span>Linux 维护入口</span><code>sudo tiemu engines</code><span>安装本机病毒引擎</span><code>sudo tiemu engine-install</code><span>更新官方病毒库</span><code>sudo tiemu engine-update</code></div>
             <p class="sc-muted">依赖可用不等于服务器安全，也不代表本次扫描完整。实际文件、镜像、端口与行为覆盖请查看检测报告。文件病毒库沿用病毒查杀页的维护入口。</p>
           </article>

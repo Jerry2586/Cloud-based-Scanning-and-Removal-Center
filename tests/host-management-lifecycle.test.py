@@ -75,6 +75,54 @@ class LeaseTest(unittest.TestCase):
         deadline=time.monotonic()+2
         while not self.exclusive() and time.monotonic()<deadline:time.sleep(.01)
         self.assertTrue(self.exclusive());self.assertEqual(bridge.trigger('update')[0],202)
+    def maintenance_bridge(self):
+        m=a.engine_maintenance;calls=[]
+        expected='/usr/bin/python3 -B '+str(m.BASE/'current/src/host/engine_maintenance.py')
+        def read(file,maximum):
+            if str(file).endswith(m.UNIT):return ('[Service]\nExecStart='+expected+'\n').encode()
+            return a.private_bytes(file,maximum)
+        def run(args,**kw):
+            calls.append(args)
+            if 'start' in args:return type('Result',(),{'returncode':0})()
+            props=dict(LoadState='loaded',FragmentPath='/etc/systemd/system/'+m.UNIT,DropInPaths='',User='root',Type='oneshot',ExecStart='{ path=/usr/bin/python3 ; argv[]='+expected+' ; ignore_errors=no ; pid=0 ; status=0/0 }',ActiveState='inactive',Result='success',KillMode='control-group',TimeoutStartUSec='12min',TimeoutStopUSec='15s')
+            return type('Result',(),{'returncode':0,'stdout':'\n'.join(k+'='+v for k,v in props.items())})()
+        return m.Bridge(read,a.atomic_json,data=self.root/'maintenance',run=run,dispatch_lock=self.agent.dispatch_lock,busy=a.management_busy),calls
+    def test_maintenance_acceptance_excludes_all_detection_and_writers(self):
+        bridge,calls=self.maintenance_bridge()
+        self.assertEqual(bridge.trigger()[0],202)
+        self.agent.maintenance=bridge.busy_status
+        readiness=a.engine_readiness.Bridge(lambda:[],lambda:self.engine,busy=bridge.busy_status,dispatch_lock=self.agent.dispatch_lock)
+        update_calls=[]
+        def run(args,**kw):
+            update_calls.append(args);return type('Result',(),{'returncode':0,'stdout':'inactive'})()
+        updater=a.updates.Bridge(a.private_bytes,a.atomic_json,run,dispatch_lock=self.agent.dispatch_lock,management_check=bridge.busy_status)
+        with patch.object(a.antivirus,'request_official_update') as official:
+            for name in ('trigger','trigger_full','trigger_checkup','trigger_multi','trigger_engine_update'):
+                self.assertEqual(getattr(self.agent,name)()[0],409,name)
+            official.assert_not_called()
+        self.assertEqual(readiness.trigger()[0],409)
+        self.assertEqual(updater.trigger('update')[0],409)
+        self.assertFalse(any('start' in args for args in update_calls))
+        self.assertTrue(self.exclusive())
+        # Concurrent polling / blocked writer dispatch must terminate with a consistent pending identity.
+        results=[];threads=[]
+        for operation in (bridge.status,readiness.status,lambda:updater.trigger('update'),self.agent.trigger_engine_update):
+            thread=threading.Thread(target=lambda op=operation:results.append(op()),daemon=True);threads.append(thread);thread.start()
+        for thread in threads:thread.join(3);self.assertFalse(thread.is_alive(),'maintenance lock-order deadlock')
+        self.assertEqual(len(results),4);self.assertEqual(bridge.status()['state'],'queued')
+    def test_maintenance_rejects_actual_scan_lease_without_package_dispatch(self):
+        bridge,calls=self.maintenance_bridge();entered=threading.Event();release=threading.Event();finished=threading.Event()
+        def scan(*args):
+            entered.set()
+            try:release.wait(5)
+            finally:finished.set()
+        with patch.object(self.agent,'scan',side_effect=scan):
+            self.assertEqual(self.agent.trigger()[0],202);self.assertTrue(entered.wait(2))
+            try:
+                self.assertEqual(bridge.trigger()[0],409);self.assertFalse(any('start' in args for args in calls))
+                self.assertEqual(bridge.status()['state'],'idle')
+            finally:release.set()
+            self.assertTrue(finished.wait(2))
     def test_update_acceptance_excludes_detection_dispatch(self):
         calls=[]
         def run(args,**kw):

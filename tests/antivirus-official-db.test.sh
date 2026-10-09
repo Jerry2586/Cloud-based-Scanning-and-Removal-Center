@@ -73,3 +73,34 @@ PY
 rm -f -- "$WORK/publisher-private.pem"
 IRONCURTAIN_OFFICIAL_DB_WORK="$WORK" node --test "$ROOT/tests/virus-db-official.accept.js"
 python3 "$ROOT/src/host/antivirus.py" | python3 -c 'import json,sys;v=json.load(sys.stdin);assert v["installed"] and v["state"]=="configured" and v["updater"]=="disabled" and v["source"]=="xuanwu-signed",json.dumps(v);print("Cloud-activated official database metadata: configured, updater disabled")'
+
+# Repair genuine cloud-activated databases through the real trusted package manager.
+# Engine maintenance must not rewrite signatures, database bytes, ownership or provenance.
+python3 - "$WORK/snapshot.py" <<'PY'
+import pathlib,sys
+pathlib.Path(sys.argv[1]).write_text('''import hashlib,json,pathlib,stat
+items={}
+for base in (pathlib.Path('/etc/ironcurtain-antivirus'),pathlib.Path('/var/lib/ironcurtain-antivirus')):
+ for p in sorted(base.rglob('*')):
+  s=p.lstat()
+  if stat.S_ISREG(s.st_mode):
+   items[str(p)]={'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'uid':s.st_uid,'gid':s.st_gid,'mode':stat.S_IMODE(s.st_mode)}
+  elif not stat.S_ISDIR(s.st_mode):
+   raise AssertionError('Unexpected artifact type: '+str(p))
+print(json.dumps(items,sort_keys=True))
+''')
+PY
+python3 "$WORK/snapshot.py" > "$WORK/before-repair.json"
+bash "$ROOT/scripts/antivirus-engine.sh" install
+python3 "$WORK/snapshot.py" > "$WORK/after-repair.json"
+cmp "$WORK/before-repair.json" "$WORK/after-repair.json"
+! systemctl is-enabled --quiet ironcurtain-antivirus-update.timer
+! systemctl is-active --quiet ironcurtain-antivirus-update.timer
+! systemctl is-active --quiet ironcurtain-antivirus-update.service
+python3 "$ROOT/src/host/antivirus.py" | python3 -c 'import json,sys;v=json.load(sys.stdin);assert v["installed"] and v["state"]=="configured" and v["source"]=="xuanwu-signed" and v["updater"]=="disabled",json.dumps(v)'
+clamscan --database="$DATABASE" --no-summary "$WORK/clean.txt" > "$WORK/repair-clean.log" 2>&1
+result=0
+clamscan --database="$DATABASE" --no-summary "$WORK/eicar.txt" > "$WORK/repair-eicar.log" 2>&1 || result=$?
+[[ $result == 1 ]]
+grep -qi 'Eicar.*FOUND' "$WORK/repair-eicar.log"
+echo 'Real signed-source package repair: provenance/bytes/ownership retained; clean and EICAR scans passed.'

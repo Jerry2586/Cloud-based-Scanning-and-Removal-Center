@@ -29,6 +29,8 @@ multi_engine = importlib.util.module_from_spec(_multi_spec); _multi_spec.loader.
 
 _readiness_spec = importlib.util.spec_from_file_location('ironcurtain_engine_readiness', pathlib.Path(__file__).with_name('engine_readiness.py'))
 engine_readiness = importlib.util.module_from_spec(_readiness_spec); _readiness_spec.loader.exec_module(engine_readiness)
+_maintenance_spec = importlib.util.spec_from_file_location('ironcurtain_engine_maintenance', pathlib.Path(__file__).with_name('engine_maintenance.py'))
+engine_maintenance = importlib.util.module_from_spec(_maintenance_spec); _maintenance_spec.loader.exec_module(engine_maintenance)
 _scheduler_spec = importlib.util.spec_from_file_location('ironcurtain_scheduler', pathlib.Path(__file__).with_name('scheduler.py'))
 scheduler = importlib.util.module_from_spec(_scheduler_spec); _scheduler_spec.loader.exec_module(scheduler)
 
@@ -608,7 +610,9 @@ class Agent:
                 if result['history_state']=='ok': result['history_state']='truncated'
             return result
     def trigger_engine_update(self):
-        with self.lock:
+        with self.dispatch_lock, self.lock:
+            if self.maintenance():
+                return 409, {'state':'unavailable','reason':'maintenance active'}
             if (getattr(self,'multi',None) and self.multi.running) or self.full_running or self.result['state']=='running' or antivirus.update_status()=='running':
                 return 409,{'state':'unavailable','reason':'local task already active'}
             if self.engine_update_last and time.monotonic()-self.engine_update_last<300:
@@ -829,11 +833,13 @@ def serve(profile_file,state_dir,socket_path,allowed_uid,group):
     if os.geteuid()!=0: raise SystemExit('host agent must be started by root')
     agent=Agent(private_json(profile_file),state_dir,rule_path=pathlib.Path(profile_file).parent/'rules.json')
     update_bridge=updates.Bridge(private_bytes,atomic_json,dispatch_lock=agent.dispatch_lock,
-        management_check=lambda:management_busy() or antivirus.update_status()=='running')
+        management_check=lambda:management_busy() or antivirus.update_status()=='running' or maintenance_bridge.busy_status() or engine_bridge.running)
     agent.multi=multi_engine.Bridge(agent,profile_file,{'open':secure_fd,'read':private_json,'write':atomic_json,'digest':fullscan.profile_digest,'updating':antivirus.update_status,'discover':inventory.discover,'runner':Runner})
     engine_bridge=engine_readiness.Bridge(engine_readiness.NativeProbe(secure_fd),antivirus.engine_status,
-        busy=lambda:maintenance_active(update_bridge.status()) or antivirus.update_status()=='running')
-    agent.maintenance=lambda:maintenance_active(update_bridge.status(), lambda:False) or antivirus.update_status()=='running'
+        busy=lambda:maintenance_active(update_bridge.status()) or antivirus.update_status()=='running' or maintenance_bridge.busy_status(), dispatch_lock=agent.dispatch_lock)
+    maintenance_bridge=engine_maintenance.Bridge(private_bytes,atomic_json,dispatch_lock=agent.dispatch_lock,
+        busy=lambda:management_busy() or maintenance_active(update_bridge.status(),lambda:False) or antivirus.update_status()=='running' or engine_bridge.running or agent.full_running or agent.result['state']=='running' or agent.multi.running)
+    agent.maintenance=lambda:maintenance_active(update_bridge.status(), lambda:False) or antivirus.update_status()=='running' or maintenance_bridge.busy_status()
     agent.scheduler=scheduler.Scheduler(state_dir,private_json,atomic_json,agent.scheduled_start,agent.scheduled_observe)
     class Handler(http.server.BaseHTTPRequestHandler):
         def setup(self):
@@ -850,6 +856,7 @@ def serve(profile_file,state_dir,socket_path,allowed_uid,group):
         def do_GET(self):
             if not self.authorized(): return self.reply(403,{'state':'unavailable'})
             if self.path=='/schedule': return self.reply(200,agent.scheduler.status())
+            if self.path=='/engine-maintenance': return self.reply(200,maintenance_bridge.status())
             if self.path=='/engines': return self.reply(200,engine_bridge.status())
             if self.path=='/multi-engine': return self.reply(200,agent.multi.status())
             if self.path=='/update-status': return self.reply(200,update_bridge.status())
@@ -875,7 +882,8 @@ def serve(profile_file,state_dir,socket_path,allowed_uid,group):
                     value = json.loads(payload, object_pairs_hook=unique)
                 except (ValueError, OSError): return self.reply(400, {'state': 'unavailable'})
                 return self.reply(*agent.scheduler.configure(value))
-            if self.path not in ['/scan','/full-scan','/checkup','/engine-update','/update-check','/update','/multi-engine','/engines'] or self.headers.get('Content-Length')!='0' or self.headers.get('Transfer-Encoding'): return self.reply(400,{'state':'unavailable'})
+            if self.path not in ['/scan','/full-scan','/checkup','/engine-update','/update-check','/update','/multi-engine','/engines','/engine-maintenance'] or self.headers.get('Content-Length')!='0' or self.headers.get('Transfer-Encoding'): return self.reply(400,{'state':'unavailable'})
+            if self.path=='/engine-maintenance': return self.reply(*maintenance_bridge.trigger())
             if self.path=='/engines': return self.reply(*engine_bridge.trigger())
             if self.path=='/multi-engine': return self.reply(*agent.trigger_multi())
             if self.path=='/engine-update': return self.reply(*agent.trigger_engine_update())

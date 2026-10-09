@@ -26,6 +26,17 @@ if [[ -e $DATA/activation.json || -L $DATA/activation.json ]]; then
   systemctl disable --now ironcurtain-antivirus-update.timer
   ic_fail '病毒库切换事务待恢复，请运行 tiemu virus-db-update；保持官方更新器停用'
 fi
+install_packages() {
+  . /etc/os-release
+  ic_env_select
+  if [[ $MANAGER == apt-get ]]; then
+    apt-get update || ic_fail '病毒引擎软件源更新失败；检查网络与 apt 源'
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove clamav clamav-freshclam || ic_fail '文件查杀引擎安装失败；请检查受信任软件源'
+  else
+    "$MANAGER" install -y clamav clamav-update || ic_fail '受信任软件源未提供文件查杀引擎；请检查发行版软件源'
+  fi
+  command -v clamscan >/dev/null && command -v freshclam >/dev/null || ic_fail '文件查杀引擎尚未就绪'
+}
 if [[ -e $DATA/source.json || -L $DATA/source.json ]]; then
   python3 - "$SOURCE" <<'PY'
 import importlib.util,pathlib,sys
@@ -33,19 +44,31 @@ spec=importlib.util.spec_from_file_location('db_cache',pathlib.Path(sys.argv[1])
 v=cache.bytes_json(pathlib.Path('/var/lib/ironcurtain-antivirus/source.json'))
 assert isinstance(v,dict) and set(v)=={'schema','source','snapshot'} and v['schema']=='ironcurtain-virus-db-source/v1' and v['source']=='xuanwu-signed' and cache.re.fullmatch('[a-f0-9]{64}',v['snapshot']), 'DB_SOURCE'
 PY
-  if [[ $ACTION == policy ]]; then systemctl disable --now ironcurtain-antivirus-update.timer; exit; fi
+  if [[ $ACTION == policy || $ACTION == install ]]; then
+    if [[ -e $TIMER ]]; then systemctl disable --now ironcurtain-antivirus-update.timer; fi
+    if [[ -e $UNIT ]]; then systemctl stop ironcurtain-antivirus-update.service; fi
+    if [[ $ACTION == install ]]; then
+      install_packages
+      python3 "$SOURCE/src/host/antivirus.py"
+      echo '文件引擎依赖维护完成；保留玄武签名病毒库与更新来源。'
+    fi
+    exit
+  fi
   ic_fail '当前使用玄武签名病毒库，请使用 tiemu virus-db-update；禁止混用更新源'
 fi
-if [[ $ACTION == install ]]; then
-  . /etc/os-release
-  ic_env_select
-  if [[ $MANAGER == apt-get ]]; then
-    apt-get update || ic_fail '病毒引擎软件源更新失败；检查网络与 apt 源'
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove clamav clamav-freshclam       || ic_fail '无法从受信任软件源安装 ClamAV，病毒扫描尚未就绪'
-  else
-    "$MANAGER" install -y clamav clamav-update       || ic_fail '当前受信任 RPM 软件源未提供 ClamAV/freshclam；请启用发行版支持的病毒引擎软件源后运行 tiemu engine-install'
+# Missing source metadata must never turn a signed database into an official writer.
+for evidence in "$DATA/cloud-highwater.json" "$DATA/database/manifest.json" "$DATA/database/manifest.json.sig"; do
+  if [[ -e $evidence || -L $evidence ]]; then
+    [[ ! -e $TIMER ]] || systemctl disable --now ironcurtain-antivirus-update.timer
+    [[ ! -e $UNIT ]] || systemctl stop ironcurtain-antivirus-update.service
+    ic_fail '玄武病毒库来源标记缺失；停止维护，请恢复签名来源后重试，禁止自动改用其他来源'
   fi
-  command -v clamscan >/dev/null && command -v freshclam >/dev/null || ic_fail '系统软件源未提供病毒引擎，尚未就绪'
+done
+if [[ $ACTION == install ]]; then
+  # Quiesce the existing official writer before package/configuration repair.
+  [[ ! -e $TIMER ]] || systemctl stop ironcurtain-antivirus-update.timer
+  [[ ! -e $UNIT ]] || systemctl stop ironcurtain-antivirus-update.service
+  install_packages
   if ! getent passwd ironcurtain-av >/dev/null; then
     useradd --system --user-group --home-dir /nonexistent --shell /usr/sbin/nologin ironcurtain-av
   fi

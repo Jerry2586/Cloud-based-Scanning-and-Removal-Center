@@ -85,7 +85,8 @@ class NativeProbe:
         if child: self.kill(child)
 
 class Bridge:
-    def __init__(self,probe,antivirus,busy=lambda:False,clock=time.monotonic):
+    def __init__(self,probe,antivirus,busy=lambda:False,clock=time.monotonic,dispatch_lock=None):
+        self.dispatch_lock=dispatch_lock if dispatch_lock is not None else threading.Lock()
         self.probe=probe;self.antivirus=antivirus;self.busy=busy;self.clock=clock;self.lock=threading.Lock();self.running=False;self.closed=False;self.thread=None;self.last=None;self.finished=None
         self.value=self.empty('unavailable','尚未执行本机引擎检查')
     def empty(self,state,reason):
@@ -98,7 +99,7 @@ class Bridge:
                 return self.empty('unavailable','引擎检查已过期；维护完成后重新核验')
             return copy.deepcopy(self.value)
     def trigger(self):
-        with self.lock:
+        with self.dispatch_lock, self.lock:
             if self.closed: return 503,self.empty('unavailable','本机检查代理正在停止')
             if self.running: return 409,copy.deepcopy(self.value)
             if self.busy(): return 409,self.empty('unavailable','程序或病毒库更新中；完成后再检查引擎')

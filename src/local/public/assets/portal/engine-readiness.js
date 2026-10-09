@@ -3,7 +3,7 @@ import {sanitizeEngineReadiness,unavailableReadiness,ENGINE_IDS} from '/contract
 const $=id=>document.getElementById(id);
 const names=CAPABILITY_NAMES;
 const labels={ready:'依赖可用',partial:'部分就绪',stale:'数据过期',unavailable:'未就绪'};
-const maintenance={clamav:'在 Linux 菜单安装引擎或维护官方病毒库；已连接玄武云端时可选择签名库。',trivy:'在可信终端安装镜像检测组件到固定位置并更新本机漏洞缓存；当前不提供网页自动安装。',osquery:'在可信终端安装资产采集组件；固定资产查询通过后再运行联合检测。',falco:'配置宿主探针与受保护事件输出，并核验服务健康；事件文件不能证明持续防护。'};
+const maintenance={clamav:'使用下方按钮安装或修复文件引擎；维护官方病毒库或选择玄武签名库时保留当前更新来源。',trivy:'在可信终端安装镜像检测组件到固定位置并更新本机漏洞缓存；当前不提供网页自动安装。',osquery:'在可信终端安装资产采集组件；固定资产查询通过后再运行联合检测。',falco:'配置宿主探针与受保护事件输出，并核验服务健康；事件文件不能证明持续防护。'};
 export function createEngineReadiness({state,request,notify}) {
  let bound=false,pending=false,starting=false,timer=null,generation=0,activeSession=null,lastValue=unavailableReadiness(),refreshWanted=false;
  function render(value) {
@@ -34,5 +34,5 @@ export function createEngineReadiness({state,request,notify}) {
   catch(error){if(session===state.csrf)notify(error.message,true);}
   finally{starting=false;if(session===state.csrf){render(lastValue);void refresh();}}
  });}
- return Object.freeze({bind,start(){if(activeSession===state.csrf)return;activeSession=state.csrf;generation++;clearTimeout(timer);timer=null;if(!state.csrf){render(unavailableReadiness('请登录后查看本机引擎'));return;}void refresh();}});
+ return Object.freeze({bind,refresh,start(){if(activeSession===state.csrf)return;activeSession=state.csrf;generation++;clearTimeout(timer);timer=null;if(!state.csrf){render(unavailableReadiness('请登录后查看本机引擎'));return;}void refresh();}});
 }

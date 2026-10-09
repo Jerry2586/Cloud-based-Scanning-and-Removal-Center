@@ -72,6 +72,7 @@ for action in check update; do
   [[ $(systemctl show "ironcurtain-panel-$action.service" -p ExecStart --value) == *"python3 -B "* ]]
 done
 [[ $(systemctl show ironcurtain-agent.service -p ExecStart --value) == *"python3 -B "* ]]
+python3 "$SOURCE/tests/helpers/engine-maintenance-deployment-probe.py" "$release"
 # Cloud has its own bounded update bridge and signed worker; no scan socket or Docker API.
 systemctl is-active --quiet ironcurtain-update-cloud-control.service
 [[ $(systemctl show ironcurtain-update-cloud-control.service -p ProtectSystem --value) == strict ]]
@@ -263,6 +264,7 @@ systemctl stop ironcurtain-domain-local-control.service
 systemctl stop ironcurtain-operations-local-control.service
 systemctl disable --now ironcurtain-domain-local-renew.timer
 /usr/local/bin/tiemu release-update
+python3 "$SOURCE/tests/helpers/engine-maintenance-deployment-probe.py" /opt/ironcurtain/local/current ready
 systemctl is-active --quiet ironcurtain-domain-local-control.service
 systemctl is-active --quiet ironcurtain-account-local-control.service
 python3 "$SOURCE/tests/helpers/operations-deployment-probe.py" ready
@@ -336,6 +338,7 @@ for recovery_role in local cloud; do
     systemctl is-enabled --quiet ironcurtain-panel-check.timer
     systemctl is-active --quiet ironcurtain-panel-check.timer
     ic_scan_wait
+    python3 "$SOURCE/tests/helpers/engine-maintenance-deployment-probe.py" /opt/ironcurtain/local/current ready
     python3 "$SOURCE/tests/helpers/operations-deployment-probe.py" ready
     IRONCURTAIN_EXPECT_RULE_SEQUENCE=2 node "$SOURCE/tests/helpers/independent-deployment-probe.js"
   fi

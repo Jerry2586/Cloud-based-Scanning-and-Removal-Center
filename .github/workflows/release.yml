@@ -29,6 +29,7 @@ jobs:
           bash scripts/build-manager.sh
           sudo env "PATH=$PATH" python3 tests/multi-engine.test.py
           sudo env "PATH=$PATH" python3 tests/engine-readiness.test.py
+          sudo env "PATH=$PATH" python3 tests/engine-maintenance.test.py
       - name: Enforce exact release tag and package version
         run: |
           version=$(node -p "JSON.parse(require('fs').readFileSync('package.json')).version")
@@ -84,7 +85,9 @@ jobs:
       - name: Real independent Docker deployment gate
         run: sudo env "PATH=$PATH" IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER=1 bash tests/independent-deployment.test.sh
       - name: Real ClamAV engine and pinned rescan gate
-        run: sudo env "PATH=$PATH" GITHUB_ACTIONS=true bash tests/antivirus-engine.test.sh
+        run: |
+          sudo env "PATH=$PATH" GITHUB_ACTIONS=true bash tests/antivirus-engine.test.sh
+          sudo env "PATH=$PATH" GITHUB_ACTIONS=true bash tests/antivirus-source-repair.test.sh
       - name: Materialize signing key only in runner temporary storage
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         env:

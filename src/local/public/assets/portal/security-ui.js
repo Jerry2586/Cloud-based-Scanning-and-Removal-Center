@@ -2,6 +2,7 @@ import {createOperationsWorkspace} from './operations-workspace.js';
 import {createScheduleSettings} from './schedule-settings.js';
 import { createCloudIntelligence } from './cloud-intelligence.js';
 import {engineDisplayText} from './engine-labels.js';
+import {createEngineMaintenance} from './engine-maintenance.js';
 import {createEngineReadiness} from './engine-readiness.js';
 import { createMultiEngine } from './multi-engine.js';
 import { createUpdateSettings } from './update-settings.js';
@@ -75,6 +76,7 @@ export function createSecurityUi({ state, can, request, notify }) {
   const cloudIntelligence = createCloudIntelligence({state,request,notify});
   const multiEngine = createMultiEngine({state,request,notify});
   const engineReadiness = createEngineReadiness({state,request,notify});
+  const engineMaintenance = createEngineMaintenance({state,request,notify,onFinished:()=>void engineReadiness.refresh()});
   const scheduleSettings = createScheduleSettings({state,request,notify});
   const updateSettings = createUpdateSettings({state,request,notify});
   const domainSettings = createDomainSettings({state,request,notify});
@@ -265,7 +267,7 @@ export function createSecurityUi({ state, can, request, notify }) {
     bound = true;
     consoleView.bind(); operationsWorkspace.bind(); operationsWorkspace.start();
     cloudIntelligence.bind();
-    multiEngine.bind(); multiEngine.start(); engineReadiness.bind(); engineReadiness.start();
+    multiEngine.bind(); multiEngine.start(); engineReadiness.bind(); engineReadiness.start(); engineMaintenance.bind(); engineMaintenance.start();
     scheduleSettings.bind(); scheduleSettings.start();
     updateSettings.bind(); updateSettings.start(); domainSettings.bind(); domainSettings.start();
     void renderSecurity(); void renderLocalSecurity();
@@ -292,5 +294,5 @@ export function createSecurityUi({ state, can, request, notify }) {
       finally { if (generation === scanGeneration) { scanRequested = false; consoleView.setBusy(false); } }
     }));
   }
-  return Object.freeze({ bind, render() { operationsWorkspace.start(); scheduleSettings.start(); engineReadiness.start(); multiEngine.start(); updateSettings.start(); domainSettings.start(); void renderSecurity(); void renderLocalSecurity(); } });
+  return Object.freeze({ bind, render() { operationsWorkspace.start(); scheduleSettings.start(); engineReadiness.start(); engineMaintenance.start(); multiEngine.start(); updateSettings.start(); domainSettings.start(); void renderSecurity(); void renderLocalSecurity(); } });
 }

@@ -1,3 +1,4 @@
+import {ENGINE_MAINTENANCE_SCHEMA} from '../src/contracts/engine-maintenance.js';
 import {createCloudControl} from '../src/cloud/control.js';
 import { request as httpRequest } from 'node:http';
 import test from 'node:test';
@@ -364,4 +365,14 @@ test('scope enrollment HTTP forwards only fixed fresh candidate references',asyn
  assert.equal((await f.post('/api/operations',{action:'discover'},headers)).status,202);
  assert.equal((await f.post('/api/operations',input,headers)).status,202);
  assert.deepEqual(calls,[{action:'status',value:undefined},{action:'apply',value:{action:'discover'}},{action:'apply',value:input}]);
+});
+
+test('file-engine maintenance requires authenticated origin and CSRF and accepts no package/path parameters',async t=>{
+ let calls=0;const f=await fixture(t,null,null,null,{engineMaintenance:async action=>{calls++;return action==='status'?{schema:ENGINE_MAINTENANCE_SCHEMA,state:'idle',code:'idle'}:{schema:ENGINE_MAINTENANCE_SCHEMA,state:'queued',code:'queued',id:'a'.repeat(32),requested_at:new Date().toISOString(),response_status:202};}});
+ assert.equal((await f.request('/api/engines/maintenance')).status,401);assert.equal((await f.post('/api/engines/install',{})).status,401);
+ const s=await f.login(),headers={cookie:s.cookie,'x-csrf-token':s.csrf};
+ assert.equal((await f.post('/api/engines/install',{}, {cookie:s.cookie})).status,403);
+ assert.equal((await f.post('/api/engines/install',{}, {...headers,origin:'https://evil.invalid'})).status,403);
+ for(const body of [{path:'/etc'},{command:'apt-get'},{packages:['evil']},{source:'https://evil.invalid'}])assert.equal((await f.post('/api/engines/install',body,headers)).status,400);
+ assert.equal(calls,0);assert.equal((await f.post('/api/engines/install',{},headers)).status,202);assert.equal(calls,1);assert.equal((await f.request('/api/engines/maintenance',{headers:{cookie:s.cookie}})).status,200);
 });

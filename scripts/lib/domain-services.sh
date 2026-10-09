@@ -4,7 +4,7 @@ ic_domain_units() {
   # Account units share the installer lifecycle snapshot; their Unix service stays independent.
   printf "%s\n" "ironcurtain-account-$ROLE-control.service"
   if [[ $ROLE == local ]]; then
-    printf "%s\n" ironcurtain-operations-local-control.service
+    printf "%s\n" ironcurtain-operations-local-control.service ironcurtain-engine-install.service
   fi
   if [[ $ROLE == cloud ]]; then
     printf "%s\n" ironcurtain-update-cloud-control.service ironcurtain-panel-cloud-check.service ironcurtain-panel-cloud-update.service ironcurtain-panel-cloud-check.timer
@@ -32,6 +32,9 @@ ic_domain_quiesce() {
   if [[ $ROLE == local && -f /etc/systemd/system/ironcurtain-operations-local-control.service ]]; then
     systemctl stop ironcurtain-operations-local-control.service || return 1
   fi
+  if [[ $ROLE == local && -f /etc/systemd/system/ironcurtain-engine-install.service ]]; then
+    systemctl stop ironcurtain-engine-install.service || return 1
+  fi
   if [[ $ROLE == cloud ]]; then
     for unit in ironcurtain-update-cloud-control.service ironcurtain-panel-cloud-check.timer; do
       [[ ! -f /etc/systemd/system/$unit ]] || systemctl stop "$unit" || return 1
@@ -57,6 +60,8 @@ ic_domain_restore() {
   done
   systemctl daemon-reload || return 1
   for unit in $(ic_domain_units); do
+    # Package repair always requires a new explicit authenticated request.
+    [[ $unit != ironcurtain-engine-install.service ]] || continue
     [[ ! -f $snapshot/$unit.enabled ]] || systemctl enable "$unit" || return 1
   done
 }
@@ -64,7 +69,7 @@ ic_domain_resume() {
   local snapshot=$1 unit
   [[ -f $snapshot/domain-units-managed ]] || return 0
   for unit in $(ic_domain_units); do
-    [[ $unit != ironcurtain-panel-cloud-check.service && $unit != ironcurtain-panel-cloud-update.service ]] || continue
+    [[ $unit != ironcurtain-panel-cloud-check.service && $unit != ironcurtain-panel-cloud-update.service && $unit != ironcurtain-engine-install.service ]] || continue
     [[ ! -f $snapshot/$unit.active ]] || systemctl start "$unit" || return 1
   done
 }

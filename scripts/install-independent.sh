@@ -212,6 +212,24 @@ ReadWritePaths=$DATA /run/ironcurtain
 [Install]
 WantedBy=multi-user.target
 EOF
+  install -d -m 700 "$DATA/engine-maintenance"
+  cat > /etc/systemd/system/ironcurtain-engine-install.service <<EOF
+[Unit]
+Description=IronCurtain fixed local file-engine maintenance
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/python3 -B $BASE/current/src/host/engine_maintenance.py
+TimeoutStartSec=12min
+TimeoutStopSec=15
+KillMode=control-group
+UMask=0077
+PrivateTmp=true
+Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin
+EOF
+  chmod 644 /etc/systemd/system/ironcurtain-engine-install.service
   install -d -m 700 "$DATA/panel-update"
   for action in check update; do
     cat > "/etc/systemd/system/ironcurtain-panel-$action.service" <<EOF
