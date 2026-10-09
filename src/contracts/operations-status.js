@@ -9,9 +9,14 @@ export function validatePorts(value) {
   return [...value].sort((a,b)=>a-b);
 }
 export function validateOperation(value) {
-  const actions = {ports:['action','revision','tcp','udp'],review:['action','id','evidence','status','reason'],quarantine:['action','id','confirm'],restore:['action','id','confirm']};
+  const actions = {discover:['action'],enroll:['action','revision','inventory','ids'],ports:['action','revision','tcp','udp'],review:['action','id','evidence','status','reason'],quarantine:['action','id','confirm'],restore:['action','id','confirm']};
   const expected = typeof value?.action === 'string' && Object.hasOwn(actions,value.action) ? actions[value.action] : null;
   if (!expected || !keys(value,expected)) throw Error('处置请求包含缺失或未支持字段');
+  if (value.action === 'discover') return {action:'discover'};
+  if (value.action === 'enroll') {
+    if (!hex(value.revision) || !hex(value.inventory) || !Array.isArray(value.ids) || value.ids.length < 1 || value.ids.length > 32 || value.ids.some(id=>!hex(id,16)) || new Set(value.ids).size !== value.ids.length) throw Error('请选择 1–32 个不重复的当前保护候选');
+    return {...value,ids:[...value.ids]};
+  }
   if (value.action === 'ports') { if (!hex(value.revision)) throw Error('配置版本无效'); return {...value,tcp:validatePorts(value.tcp),udp:validatePorts(value.udp)}; }
   if (!hex(value.id)) throw Error('证据编号无效');
   if (value.action === 'review') {
@@ -25,8 +30,26 @@ export const unavailableOperations = (reason='本机处置服务未就绪') => (
 function job(v) {
   if (!object(v) || !['idle','running','complete','failed','interrupted'].includes(v.state)) throw Error();
   if (v.state === 'idle') return {state:'idle'};
-  if (!hex(v.id,32) || !['ports','review','quarantine','restore'].includes(v.action) || !time(v.started_at) || !text(v.reason,500) || (v.state !== 'running' && (!time(v.finished_at) || v.finished_at < v.started_at))) throw Error();
+  if (!hex(v.id,32) || !['ports','review','quarantine','restore','discover','enroll'].includes(v.action) || !time(v.started_at) || !text(v.reason,500) || (v.state !== 'running' && (!time(v.finished_at) || v.finished_at < v.started_at))) throw Error();
   return {id:v.id,state:v.state,action:v.action,started_at:v.started_at,reason:v.reason,...(v.finished_at?{finished_at:v.finished_at}:{})};
+}
+function scope(v) {
+  // Older controllers do not provide an editable scope; never infer it from an asset report.
+  if (v === undefined || v === null) return null;
+  if (!object(v) || !['program_roots','business_roots','containers'].every(k=>Array.isArray(v[k]) && v[k].length<=32)) throw Error();
+  for(const key of ['program_roots','business_roots']) if(v[key].some(p=>!text(p,4096) || !p.startsWith('/'))) throw Error();
+  if(v.containers.some(p=>!text(p,128) || !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(p)))throw Error();
+  const d=v.discovery;
+  if (!object(d) || !['ready','stale','unavailable'].includes(d.state) || !Array.isArray(d.candidates) || d.candidates.length>128 || !Number.isInteger(d.count) || d.count<d.candidates.length || d.count>128 || typeof d.truncated!=='boolean' || d.truncated!==(d.count>d.candidates.length) || !Array.isArray(d.issues) || d.issues.length>8 || d.issues.some(i=>!text(i,180)))throw Error();
+  if(d.state==='unavailable') {if(d.revision!==null || d.observed_at!==null || d.count!==0)throw Error();}
+  else if(!hex(d.revision) || !time(d.observed_at))throw Error();
+  const candidates=d.candidates.map(i=>{
+    if(!object(i) || !hex(i.id,16) || !['program_roots','business_roots','containers'].includes(i.kind) || !text(i.value,1024) || !text(i.origin,180) || typeof i.enrolled!=='boolean')throw Error();
+    if(i.kind==='containers'?!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(i.value):!i.value.startsWith('/'))throw Error();
+    return {id:i.id,kind:i.kind,value:i.value,origin:i.origin,enrolled:i.enrolled};
+  });
+  if(new Set(candidates.map(i=>i.id)).size!==candidates.length)throw Error();
+  return {program_roots:[...v.program_roots],business_roots:[...v.business_roots],containers:[...v.containers],discovery:{state:d.state,revision:d.revision,observed_at:d.observed_at,candidates,count:d.count,truncated:d.truncated,issues:[...d.issues]}};
 }
 export function sanitizeOperations(v) {
   try {
@@ -43,6 +66,6 @@ export function sanitizeOperations(v) {
     const q=v.quarantine;
     if (!object(q) || !['recorded','empty','unavailable'].includes(q.state) || !Array.isArray(q.items) || q.items.length>8 || !Number.isInteger(q.count) || q.count<0 || q.count>128 || !Number.isInteger(q.pending) || q.pending<0 || q.pending>q.count) throw Error();
     const items=q.items.map(i=>{if (!hex(i.id) || !text(i.path,4096) || !text(i.signature,256) || !['preparing','captured','quarantined','restoring','restored'].includes(i.state) || !Number.isSafeInteger(i.size) || i.size<0) throw Error(); return {id:i.id,path:i.path,signature:i.signature,state:i.state,size:i.size};});
-    return {schema:SCHEMA,state:'ready',policy,job:job(v.job),risks,sources:{environment:v.sources.environment,engines:v.sources.engines,engine_coverage:/^[0-4]\/4$/.test(v.sources.engine_coverage)?v.sources.engine_coverage:'0/4',truncated:v.sources.truncated===true},audit:v.audit.map(i=>{const record=job(i);if(['idle','running'].includes(record.state) || !text(i.target,256))throw Error();return {...record,target:i.target};}),quarantine:{state:q.state,items,count:q.count,pending:q.pending}};
+    return {schema:SCHEMA,state:'ready',policy,scope:scope(v.scope),job:job(v.job),risks,sources:{environment:v.sources.environment,engines:v.sources.engines,engine_coverage:/^[0-4]\/4$/.test(v.sources.engine_coverage)?v.sources.engine_coverage:'0/4',truncated:v.sources.truncated===true},audit:v.audit.map(i=>{const record=job(i);if(['idle','running'].includes(record.state) || !text(i.target,256))throw Error();return {...record,target:i.target};}),quarantine:{state:q.state,items,count:q.count,pending:q.pending}};
   } catch { return unavailableOperations('处置数据无法核验，请检查宿主服务'); }
 }

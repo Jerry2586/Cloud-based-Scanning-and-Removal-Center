@@ -1,4 +1,5 @@
 import {sanitizeOperations,unavailableOperations,validatePorts,validateOperation} from '/contracts/operations-status.js';
+import {createScopeWorkspace} from './scope-workspace.js';
 const states={open:'待处理',investigating:'处理中',accepted:'已接受风险'};
 const phases={idle:'暂无处置任务',running:'处置执行中',complete:'操作完成 · 等待复核',failed:'操作失败',interrupted:'任务中断 · 核对实际状态'};
 const quarantineLabels={preparing:'准备副本',captured:'副本已保存，路径移除未确认',quarantined:'已隔离',restoring:'恢复中断，需要核查',restored:'原始内容已取回，副本保留'};
@@ -11,6 +12,7 @@ export function createOperationsWorkspace({state,request,notify}) {
   const current=op=>op.session===state.csrf && op.epoch===epoch;
   const busy=()=>Boolean(saving || last.job?.state==='running');
   const enabled=()=>last.state==='ready' && !busy() && Boolean(state.csrf);
+  const scope=createScopeWorkspace({getStatus:()=>last,enabled,apply,notify});
   function button(text,action) {const b=node('button',text,'sc-outline');b.type='button';b.dataset.operationAction='';b.disabled=!enabled();b.addEventListener('click',action);return b;}
   // Passive polls preserve focused controls and replace a list only when its data changes.
   function list(selector,value,build) {
@@ -22,6 +24,7 @@ export function createOperationsWorkspace({state,request,notify}) {
   }
   function sync() {
     document.querySelectorAll('[data-operation-action],[data-quarantine-id]').forEach(b=>{b.disabled=!enabled() || b.dataset.operationBlocked==='true';});
+    scope.render();
   }
   function render() {
     const ready=last.state==='ready';
@@ -67,7 +70,7 @@ export function createOperationsWorkspace({state,request,notify}) {
     });
     list('[data-operation-audit]',ready?last.audit:null,element=>{
       if(!ready)return;
-      for(const job of [...last.audit].reverse()) {const row=node('li',undefined,'ic-risk-item');row.append(node('strong',({ports:'端口策略',review:'风险受理',quarantine:'文件隔离',restore:'原始内容取回'}[job.action])+' · '+phases[job.state]),node('p',job.reason),node('small',job.target+' · '+new Date(job.finished_at).toLocaleString()));element.append(row);}
+      for(const job of [...last.audit].reverse()) {const row=node('li',undefined,'ic-risk-item');row.append(node('strong',({ports:'端口策略',review:'风险受理',quarantine:'文件隔离',restore:'原始内容取回',discover:'发现保护范围',enroll:'启用保护范围'}[job.action])+' · '+phases[job.state]),node('p',job.reason),node('small',job.target+' · '+new Date(job.finished_at).toLocaleString()));element.append(row);}
       if(!last.audit.length)element.append(node('li','暂无网页处置记录。','sc-empty-row'));
     });
     sync();
@@ -80,6 +83,7 @@ export function createOperationsWorkspace({state,request,notify}) {
         last=sanitizeOperations(v);
         if(submitted && last.state==='ready' && last.job.id===submitted.id && last.job.state!=='running') {
           if(last.job.state==='complete' && submitted.action==='ports')dirty=false;
+          if(last.job.state==='complete' && submitted.action==='enroll')scope.complete();
           submitted=null;
         }
       }
@@ -97,11 +101,11 @@ export function createOperationsWorkspace({state,request,notify}) {
     finally {if(saving===op){saving=null;if(current(op)){render();void refresh();}}}
   }
   function reset() {
-    epoch++;activeSession=state.csrf;pending=saving=submitted=null;displayedRevision=null;dirty=false;clearTimeout(timer);last=unavailableOperations();
+    epoch++;activeSession=state.csrf;pending=saving=submitted=null;displayedRevision=null;dirty=false;clearTimeout(timer);last=unavailableOperations();scope.reset();
     if(form){field('tcp').value='';field('udp').value='';}render();if(state.csrf)void refresh();
   }
   function bind() {
-    if(bound)return;bound=true;
+    if(bound)return;bound=true;scope.bind();
     form?.addEventListener('input',()=>{dirty=true;render();});
     form?.addEventListener('submit',event=>{
       event.preventDefault();if(last.state!=='ready')return;

@@ -42,7 +42,7 @@ const ASSETS = new Map([
   ['/assets/local.css', ['assets/local.css', 'text/css; charset=utf-8']],
   ['/assets/security-preview.css', ['assets/security-preview.css', 'text/css; charset=utf-8']],
   ['/assets/ironcurtain-shield.webp', ['assets/ironcurtain-shield.webp', 'image/webp']],
-  ...['app', 'security-ui', 'security-console', 'security-poller','host-workspace','operations-workspace','update-settings','schedule-settings','domain-settings','multi-engine','engine-readiness','engine-labels','cloud-intelligence'].map(name => ['/assets/portal/' + name + '.js', ['assets/portal/' + name + '.js', 'text/javascript; charset=utf-8']]),
+  ...['app', 'security-ui', 'security-console', 'security-poller','host-workspace','operations-workspace','scope-workspace','update-settings','schedule-settings','domain-settings','multi-engine','engine-readiness','engine-labels','cloud-intelligence'].map(name => ['/assets/portal/' + name + '.js', ['assets/portal/' + name + '.js', 'text/javascript; charset=utf-8']]),
 ]);
 function json(res, code, data) { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(data)); }
 async function body(req) {

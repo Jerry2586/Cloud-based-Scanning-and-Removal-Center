@@ -3,11 +3,14 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFile} from 'node:fs/promises';
 import {sanitizeOperations,unavailableOperations,validatePorts,validateOperation} from '../src/contracts/operations-status.js';
-import {operationStatus,operationJob,revision} from './fixtures/operations.js';
+import {operationStatus,operationJob,operationScope,revision} from './fixtures/operations.js';
 
 class Element {
  constructor(){this.children=[];this.dataset={};this.handlers=new Map();this.value='';this.disabled=false;this.textContent='';}
- append(...items){this.children.push(...items);}
+ append(...items){for(const item of items){item.parentElement=this;this.children.push(item);}}
+ setAttribute(name,value){this[name]=value;}
+ blur(){}
+ querySelectorAll(selector){return this.children.flatMap(child=>[...(selector==='[data-scope-candidate]' && child.dataset.scopeCandidate?[child]:[]),...child.querySelectorAll(selector)]);}
  replaceChildren(...items){this.children=items;}
  contains(value){return this===value || this.children.some(child=>child.contains?.(value));}
  addEventListener(name,fn){this.handlers.set(name,fn);}
@@ -21,10 +24,14 @@ async function harness(){
  form.querySelectorAll=()=>[tcp,udp,save,reset];
  const map=new Map([['[data-port-policy]',form],['[data-port-policy-reset]',reset]]);
  for(const selector of ['[data-risk-list]','[data-risk-state]','[data-risk-detail]','[data-recovery-state]','[data-recovery-records]','[data-operation-audit]'])map.set(selector,new Element());
+ const scopeForm=new Element(),scopeList=new Element(),scopeSave=new Element(),scopeReset=new Element(),scopeDiscover=new Element(),scopeState=new Element();
+ scopeForm.append(scopeList,scopeSave,scopeReset);
+ for(const [key,value] of [['form',scopeForm],['candidates',scopeList],['enroll',scopeSave],['reset',scopeReset],['discover',scopeDiscover],['state',scopeState],['summary',new Element()],['issues',new Element()]])map.set('[data-scope-'+key+']',value);
  const refresh=new Element(),status=new Element();
  const document={activeElement:null,createElement:()=>new Element(),querySelector:s=>map.get(s),querySelectorAll:s=>s==='[data-operations-refresh]'?[refresh]:s==='[data-operation-state]'?[status]:[],addEventListener:(name,fn)=>events.set(name,fn)};
  let source=await readFile(new URL('../src/local/public/assets/portal/operations-workspace.js',import.meta.url),'utf8');
  source=source.replace(/^import[^\n]+\n/gm,'').replace('export function','function');
+ source=(await readFile(new URL('../src/local/public/assets/portal/scope-workspace.js',import.meta.url),'utf8')).replace('export function','function')+'\n'+source;
  const context=vm.createContext({sanitizeOperations,unavailableOperations,validatePorts,validateOperation,document,window:{prompt:()=>null,confirm:()=>true},queueMicrotask,Date,setTimeout:fn=>{const id=++counter;timers.set(id,fn);return id;},clearTimeout:id=>timers.delete(id)});
  vm.runInContext(source,context);
  const workspace=context.createOperationsWorkspace({state,notify:(text,error)=>messages.push({text,error}),request:(url,options)=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});requests.push({url,options,resolve,reject});return promise;}});
@@ -32,7 +39,7 @@ async function harness(){
  const settle=async()=>{await new Promise(resolve=>setImmediate(resolve));};
  const load=async value=>{const wait=workspace.refresh();requests.at(-1).resolve(value || operationStatus());await wait;};
  const submit=()=>form.fire('submit');
- return {state,requests,messages,workspace,document,tcp,udp,form,save,reset,label,map,settle,load,submit,clear:()=>events.get('ironcurtain-session-cleared')()};
+ return {state,requests,messages,workspace,document,tcp,udp,form,save,reset,label,map,settle,load,submit,scopeForm,scopeList,scopeSave,scopeReset,scopeDiscover,scopeState,clear:()=>events.get('ironcurtain-session-cleared')()};
 }
 
 test('port draft and focused controls survive passive polling; fresh save uses the displayed revision',async()=>{
@@ -79,4 +86,35 @@ test('a receipt for another action is rejected and preserves the draft',async()=
  h.requests.at(-1).resolve({schema:'ironcurtain-operations/v1',state:'running',job:{...operationJob(),action:'restore'}});await h.settle();
  assert.equal(h.messages.at(-1).error,true);assert.match(h.messages.at(-1).text,/不一致/);
  h.requests.at(-1).resolve(operationStatus());await h.settle();assert.equal(h.tcp.value,'8443');assert.match(h.label.textContent,/未保存/);
+});
+
+const scoped=()=>({...operationStatus(),scope:operationScope()});
+const choose=(h,id='1'.repeat(16),checked=true)=>{const input=h.scopeList.querySelectorAll('[data-scope-candidate]').find(i=>i.dataset.scopeCandidate===id);input.checked=checked;input.fire('change');return input;};
+test('scope discovery submits fixed action and never supplies user paths',async()=>{
+ const h=await harness();await h.load();assert.equal(h.scopeDiscover.disabled,true);
+ await h.load(scoped());h.scopeDiscover.fire('click');assert.deepEqual(JSON.parse(JSON.stringify(h.requests.at(-1).options.body)),{action:'discover'});
+});
+test('scope selections and focus survive polling; enrollment binds both revisions',async()=>{
+ const h=await harness(),v=scoped();await h.load(v);const input=choose(h);h.document.activeElement=input;
+ await h.load(v);assert.equal(h.scopeList.querySelectorAll('[data-scope-candidate]')[0],input);assert.equal(input.checked,true);assert.equal(h.scopeSave.disabled,false);
+ h.scopeForm.fire('submit');assert.deepEqual(JSON.parse(JSON.stringify(h.requests.at(-1).options.body)),{action:'enroll',revision,inventory:v.scope.discovery.revision,ids:['1'.repeat(16)]});
+});
+test('stale discovery and changed profile keep selection but block enrollment until explicit reset',async()=>{
+ for(const change of [v=>v.policy.revision='c'.repeat(64),v=>v.scope.discovery.revision='d'.repeat(64),v=>v.scope.discovery.observed_at=new Date(Date.now()-121000).toISOString()]){
+  const h=await harness(),v=scoped();await h.load(v);const input=choose(h);change(v);await h.load(v);
+  assert.equal(input.checked,true);assert.equal(h.scopeSave.disabled,true);assert.match(h.scopeState.textContent,/过期|变化/);
+  const count=h.requests.length;h.scopeForm.fire('submit');assert.equal(h.requests.length,count);assert.equal(h.messages.at(-1).error,true);
+  h.scopeReset.fire('click');assert.equal(h.scopeList.querySelectorAll('[data-scope-candidate]')[0].checked,false);
+ }
+});
+test('failed enrollment retains selection; only matching complete receipt clears it',async()=>{
+ const h=await harness(),v=scoped();await h.load(v);choose(h);h.scopeForm.fire('submit');h.requests.at(-1).reject(Error('服务忙'));await h.settle();h.requests.at(-1).resolve(v);await h.settle();assert.equal(h.scopeSave.disabled,false);
+ h.scopeForm.fire('submit');const job={...operationJob(),action:'enroll'};h.requests.at(-1).resolve({schema:v.schema,state:'running',job});await h.settle();
+ h.requests.at(-1).resolve({...v,job:{...job,state:'complete',finished_at:'2026-10-09T01:00:01.000Z'}});await h.settle();assert.equal(h.scopeList.querySelectorAll('[data-scope-candidate]')[0].checked,false);
+});
+test('enrolled objects stay disabled, HTML-looking paths are text and logout drops drafts',async()=>{
+ const h=await harness(),v=scoped();v.scope.discovery.candidates[1].enrolled=true;v.scope.discovery.candidates[0].value='/srv/<script>alert(1)</script>';
+ await h.load(v);assert.equal(h.scopeList.querySelectorAll('[data-scope-candidate]')[1].disabled,true);choose(h);
+ h.state.csrf=null;h.clear();assert.equal(h.scopeList.querySelectorAll('[data-scope-candidate]').length,0);assert.equal(h.scopeSave.disabled,true);
+ h.state.csrf='new';h.workspace.start();h.requests.at(-1).resolve(v);await h.settle();assert.equal(h.scopeList.querySelectorAll('[data-scope-candidate]')[0].checked,false);
 });

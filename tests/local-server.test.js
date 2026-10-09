@@ -60,7 +60,7 @@ test('panel has independent entry and fixed static whitelist with no APPGOG depe
   assert.match(html, /铁幕安全/); assert.match(html, /data-security-scan/);
   assert.match(html, /data-task-progress/);
   assert.match(html, /<form id="login-form" method="post">/);
-  for(const [url,type] of [['/assets/workbench.css','text/css'],['/assets/portal/engine-labels.js','text/javascript'],['/contracts/local-workbench.js','text/javascript']]){
+  for(const [url,type] of [['/assets/workbench.css','text/css'],['/assets/portal/engine-labels.js','text/javascript'],['/assets/portal/scope-workspace.js','text/javascript'],['/contracts/local-workbench.js','text/javascript']]){
     const asset=await f.request(url);assert.equal(asset.status,200);assert.ok(asset.headers.get('content-type').startsWith(type));
   }
   assert.doesNotMatch(html, /admin-portal|data-page-target|APPGOG DEFENDER/);
@@ -348,4 +348,20 @@ test('operations rejects malformed status and an acknowledgement for a different
  assert.equal((await f.request('/api/operations',{headers})).status,503);
  const res=await f.post('/api/operations',{action:'ports',revision,tcp:[],udp:[]},headers);
  assert.equal(res.status,503);assert.ok((await res.json()).error);
+});
+
+test('scope enrollment HTTP forwards only fixed fresh candidate references',async t=>{
+ const {operationStatus,operationScope,operationJob,revision}=await import('./fixtures/operations.js');
+ const calls=[];const f=await fixture(t,null,null,null,{operations:async(action,value)=>{
+   calls.push({action,value});return action==='status'?{...operationStatus(),scope:operationScope()}:{schema:'ironcurtain-operations/v1',state:'running',job:{...operationJob(),action:value.action},response_status:202};
+ }});
+ const identity=await f.login(),headers={cookie:identity.cookie,'x-csrf-token':identity.csrf};
+ const state=await (await f.request('/api/operations',{headers})).json();assert.equal(state.scope.discovery.state,'ready');
+ const input={action:'enroll',revision,inventory:state.scope.discovery.revision,ids:[state.scope.discovery.candidates[0].id]};
+ assert.equal((await f.post('/api/operations',{...input,path:'/etc'},headers)).status,400);
+ assert.equal((await f.post('/api/operations',input,{cookie:identity.cookie})).status,403);
+ assert.equal((await f.post('/api/operations',input,{...headers,origin:'https://invalid.example'})).status,403);
+ assert.equal((await f.post('/api/operations',{action:'discover'},headers)).status,202);
+ assert.equal((await f.post('/api/operations',input,headers)).status,202);
+ assert.deepEqual(calls,[{action:'status',value:undefined},{action:'apply',value:{action:'discover'}},{action:'apply',value:input}]);
 });

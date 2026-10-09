@@ -14,6 +14,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 LINUX_ROOT = sys.platform == 'linux' and os.geteuid() == 0
 if LINUX_ROOT:
@@ -260,6 +261,88 @@ class OperationsTest(unittest.TestCase):
             finally:
                 server.shutdown();server.server_close();thread.join(5)
 
+
+
+    def scope_inventory(self, container=False):
+        self.target = self.base / 'new-site'
+        self.target.mkdir(mode=0o700, exist_ok=True)
+        candidates = [o.a.inventory.candidate('business_roots', str(self.target), '测试业务目录')]
+        rows = []
+        if container:
+            candidates.append(o.a.inventory.candidate('containers', 'app', '容器'))
+            rows = [{'name':'app','container_id':'a'*64,'image_id':'sha256:'+'b'*64,'running':True,'readonly':False,'user':'','risks':[], 'process_count':1,'filesystem_state':'observed','changed_paths':0,'changes_digest':'c'*64,'mounts':[]}]
+        return {'schema':'ironcurtain-inventory/v1','observed_at':o.a.utc(),'containers':rows,'listeners':[],'candidates':candidates,'issues':[], 'container_state':'complete','listener_state':'complete','directory_state':'complete','drift':[],'drift_state':'first-observation'}
+
+    def discover(self, inventory):
+        with patch.object(o.a.inventory, 'discover', return_value=inventory): self.submit({'action':'discover'})
+        snapshot = self.ops.snapshot()
+        self.assertEqual(snapshot['scope']['discovery']['state'], 'ready')
+        return {'action':'enroll','revision':snapshot['policy']['revision'],'inventory':snapshot['scope']['discovery']['revision'],'ids':[v['id'] for v in inventory['candidates']]}
+
+    def test_scope_enrollment_restarts_atomically_preserves_policy_and_never_approves_images(self):
+        inventory = self.scope_inventory(container=True)
+        value = self.discover(inventory)
+        calls=[]
+        def inspect(args, **limits):
+            calls.append((args, limits));return 0,json.dumps([{'Name':'/app','Id':'a'*64,'Image':'sha256:'+'b'*64}])
+        self.ops.runner=inspect
+        self.submit(value)
+        self.assertEqual(self.ops.config(),dict(self.profile,business_roots=[str(self.target)],containers=[{'name':'app'}]))
+        self.assertEqual(self.restarts,['restart']);self.assertFalse(self.ops.transaction_file.exists())
+        self.assertEqual(calls[0][0],['docker','inspect','--type','container','--','app'])
+        self.assertLessEqual(calls[0][1]['seconds'],3)
+        self.assertEqual(stat.S_IMODE(self.ops.discovery_file.stat().st_mode),0o600)
+        scope=self.ops.snapshot()['scope'];self.assertEqual(scope['discovery']['state'],'stale');self.assertTrue(all(c['enrolled'] for c in scope['discovery']['candidates']))
+        self.assertIn('重新扫描',self.ops.job['reason'])
+
+    def test_stale_unknown_conflicting_and_replaced_directory_candidates_never_write(self):
+        inventory=self.scope_inventory();value=self.discover(inventory)
+        for change in [dict(inventory='d'*64),dict(revision='e'*64),dict(ids=['f'*16])]:
+            self.submit(dict(value,**change),'failed');self.assertEqual(self.ops.config(),self.profile)
+        record=self.ops.discovery_record();record['inventory']['observed_at']='2000-01-01T00:00:00.000Z';o.persist(self.ops.discovery_file,record)
+        self.submit(dict(value,inventory=o.digest(record)),'failed');self.assertEqual(self.ops.config(),self.profile)
+        value=self.discover(inventory)
+        original=self.target.with_name('original');self.target.rename(original);self.target.mkdir()
+        self.submit(value,'failed');self.assertIn('替换',self.ops.job['reason'])
+        self.target.rmdir();self.target.symlink_to(original,target_is_directory=True)
+        self.submit(value,'failed');self.assertEqual(self.ops.config(),self.profile);self.assertEqual(self.restarts,[])
+
+    def test_changed_container_identity_or_image_and_missing_identity_refuse_enrollment(self):
+        inventory=self.scope_inventory(container=True);value=self.discover(inventory)
+        for changes in [{'Id':'d'*64},{'Image':'sha256:'+'e'*64},{'Name':'/other'}]:
+            self.ops.runner=lambda args,**limits:(0,json.dumps([{**dict(Name='/app',Id='a'*64,Image='sha256:'+'b'*64),**changes}]))
+            self.submit(value,'failed');self.assertEqual(self.ops.config(),self.profile)
+        inventory['containers'][0].pop('container_id')
+        with patch.object(o.a.inventory,'discover',return_value=inventory): self.submit({'action':'discover'},'failed')
+        self.assertEqual(self.ops.snapshot()['scope']['discovery']['revision'],value['inventory'])
+        self.assertEqual(self.ops.snapshot()['scope']['discovery']['state'],'ready')
+        self.assertEqual(self.restarts,[])
+
+    def test_enrollment_restart_failure_rolls_back_and_recovery_rejects_baseline_approval(self):
+        value=self.discover(self.scope_inventory());attempts=[]
+        def restart():
+            attempts.append(True)
+            if len(attempts)==1:raise RuntimeError('new agent failed')
+        self.ops.restart=restart;self.submit(value,'failed')
+        self.assertEqual(self.ops.config(),self.profile);self.assertEqual(len(attempts),2);self.assertFalse(self.ops.transaction_file.exists())
+        candidate=dict(self.profile,business_roots=[str(self.target)])
+        for phase in ['prepared','applied','committed']:
+            o.persist(self.ops.transaction_file,{'schema':'ironcurtain-scope-transaction/v1','previous':self.profile,'candidate':candidate,'phase':phase})
+            o.persist(self.profile_file,candidate)
+            with o.lease(self.lock):self.ops.recover_ports()
+            self.assertEqual(self.ops.config(),candidate if phase=='committed' else self.profile)
+        o.persist(self.profile_file,self.profile)
+        for bad in [dict(candidate,approved_tcp_ports=[80]),dict(candidate,program_roots=[]),dict(candidate,containers=[{'name':'app','image_id':'sha256:'+'a'*64}])]:
+            o.persist(self.ops.transaction_file,{'schema':'ironcurtain-scope-transaction/v1','previous':self.profile,'candidate':bad,'phase':'applied'})
+            with self.assertRaises(ValueError),o.lease(self.lock):self.ops.recover_ports()
+            self.assertTrue(self.ops.transaction_file.exists());self.assertEqual(self.ops.config(),self.profile)
+
+    def test_candidate_limit_duplicate_and_client_paths_are_rejected_before_worker(self):
+        base={'action':'enroll','revision':'a'*64,'inventory':'b'*64,'ids':['c'*16]}
+        for value in [dict(base,ids=[]),dict(base,ids=['c'*16]*2),dict(base,ids=[format(n,'016x') for n in range(33)]),dict(base,path=str(self.scope)),{'action':'discover','command':'sh'}]:
+            with self.assertRaises(ValueError):o.validate(value)
+        value=self.discover(self.scope_inventory());o.persist(self.profile_file,dict(self.profile,approved_tcp_ports=[443]))
+        self.submit(value,'failed');self.assertEqual(self.ops.config()['approved_tcp_ports'],[443]);self.assertEqual(self.restarts,[])
 
 if __name__ == '__main__':
     unittest.main()

@@ -118,6 +118,7 @@ def discover(run, roots=('/opt', '/srv', '/var/www'), exists=real_directory, pre
                            'filesystem_state': 'observed' if diff_code == 0 and valid_diff else 'unavailable',
                            'changed_paths': len(changes) if diff_code == 0 and valid_diff else None,
                            'changes_digest': hashlib.sha256(diff_text.encode()).hexdigest() if diff_code == 0 and valid_diff else None}
+                    if isinstance(item.get('Id'), str) and re.fullmatch(r'[a-f0-9]{64}', item['Id']): row['container_id'] = item['Id']
                     if process_count is None or row['filesystem_state'] != 'observed':
                         result['container_state'] = 'partial'; result['issues'].append('容器进程或可写层未完成读取：' + name)
                     result['containers'].append(row)
@@ -167,6 +168,7 @@ def valid_inventory(value):
         if any(not isinstance(x,str) or len(x)>180 or re.search(r'[\x00-\x1f\x7f]',x) for key in ('issues','drift') for x in value[key]): return False
         for x in value['containers']:
             if not isinstance(x,dict) or not isinstance(x.get('name'),str) or not NAME.fullmatch(x['name']): return False
+            if 'container_id' in x and (not isinstance(x['container_id'],str) or not re.fullmatch(r'[a-f0-9]{64}',x['container_id'])): return False
             if type(x.get('running')) is not bool or type(x.get('readonly')) is not bool: return False
             if not isinstance(x.get('image_id'),str) or not re.fullmatch(r'sha256:[a-f0-9]{64}',x['image_id']): return False
             if not isinstance(x.get('risks'),list) or len(x['risks'])>8 or any(not isinstance(y,str) or len(y)>180 or re.search(r'[\x00-\x1f\x7f]',y) for y in x['risks']): return False

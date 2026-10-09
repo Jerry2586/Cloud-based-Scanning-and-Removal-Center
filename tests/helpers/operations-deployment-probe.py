@@ -6,6 +6,10 @@ import json
 import os
 from pathlib import Path
 import socket
+import ssl
+import shutil
+import tempfile
+import fcntl
 import stat
 import subprocess
 import sys
@@ -78,6 +82,106 @@ def container_ready():
     subprocess.run(['docker', 'exec', 'ironcurtain-local', 'node', '--input-type=module', '-e', code], check=True, timeout=15)
 
 
+def scope_web():
+    # This probe runs only on the disposable deployment runner. Credentials stay in memory.
+    origin = 'https://127.0.0.1:8790'
+    context = ssl.create_default_context(cafile='/etc/ironcurtain/local/runtime/panel.crt')
+    cookie = csrf = ''
+    def web(route, value=None, authenticated=True):
+        connection = http.client.HTTPSConnection('127.0.0.1', 8790, context=context, timeout=12)
+        headers = {'Origin': origin}
+        if authenticated and cookie: headers['Cookie'] = cookie
+        if authenticated and csrf: headers['X-CSRF-Token'] = csrf
+        payload = None if value is None else json.dumps(value).encode()
+        if payload is not None: headers['Content-Type'] = 'application/json'
+        try:
+            connection.request('GET' if payload is None else 'POST', route, payload, headers)
+            response = connection.getresponse(); body = response.read(262145)
+            assert len(body) <= 262144
+            return response.status, response.getheader('Set-Cookie'), body
+        finally: connection.close()
+    def api(route, value=None):
+        code, _, raw = web(route, value)
+        return code, json.loads(raw)
+    def operation(value):
+        deadline = time.monotonic() + 45
+        while True:
+            code, result = api('/api/operations', value)
+            if code == 202: break
+            assert code == 409 and time.monotonic() < deadline, (code, result)
+            time.sleep(0.5)
+        ident = result['job']['id']
+        while True:
+            code, result = api('/api/operations')
+            assert code == 200 and result['job']['id'] == ident, (code, result)
+            if result['job']['state'] != 'running':
+                assert result['job']['state'] == 'complete', result['job']
+                assert any(item['id'] == ident and item['state'] == 'complete' for item in result['audit'])
+                return result
+            assert time.monotonic() < deadline, result['job']
+            time.sleep(0.25)
+    assert web('/api/operations', authenticated=False)[0] == 401
+    credentials = Path('/etc/ironcurtain/local/credentials/initial-credentials.txt').read_text().strip().splitlines()
+    code, session_cookie, raw = web('/api/login', {'username': credentials[0], 'password': credentials[1]}, authenticated=False)
+    assert code == 200
+    cookie = session_cookie.split(';')[0]; csrf = json.loads(raw)['csrf']
+    del credentials, raw, session_cookie
+    code, _, body = web('/assets/portal/scope-workspace.js')
+    assert code == 200 and b'createScopeWorkspace' in body
+    assert api('/api/operations', {'action':'discover','path':'/etc'})[0] == 400
+    original = agent.profile_validate(json.loads(PROFILE.read_text()))
+    fixture = Path(tempfile.mkdtemp(prefix='ironcurtain-web-enrollment-', dir='/srv'))
+    sample = fixture / 'health.txt'; sample.write_text('Plain deployment acceptance fixture.\n')
+    name = fixture.name
+    expected = None
+    try:
+        image = subprocess.check_output(['docker','inspect','ironcurtain-local','--format','{{.Image}}'], text=True).strip()
+        subprocess.run(['docker','create','--name',name,'--network','none','--read-only',image], check=True, capture_output=True, timeout=15)
+        found = operation({'action':'discover'})
+        discovery = found['scope']['discovery']
+        assert discovery['state'] == 'ready'
+        choices = [item for item in discovery['candidates'] if (item['kind'], item['value']) in (('program_roots',str(fixture)),('containers',name))]
+        assert len(choices) == 2, discovery
+        started = subprocess.check_output(['systemctl','show','ironcurtain-agent.service','-p','ExecMainStartTimestampMonotonic','--value'])
+        value = {'action':'enroll','revision':found['policy']['revision'],'inventory':discovery['revision'],'ids':[item['id'] for item in choices]}
+        expected = dict(original, program_roots=original['program_roots']+[str(fixture)], containers=original['containers']+[{'name':name}])
+        enrolled = operation(value)
+        assert json.loads(PROFILE.read_text()) == expected
+        assert enrolled['scope']['containers'] == [item['name'] for item in expected['containers']]
+        assert enrolled['scope']['discovery']['state'] == 'stale'
+        assert subprocess.check_output(['systemctl','show','ironcurtain-agent.service','-p','ExecMainStartTimestampMonotonic','--value']) != started
+        assert not Path('/var/lib/ironcurtain/local/agent/operations/port-transaction.json').exists()
+        container_ready()
+        # This installation deliberately skips the antivirus engine. Confirm the
+        # real agent loaded the new profile and refuses to fake file coverage.
+        deadline = time.monotonic() + 20
+        while True:
+            code, result = api('/api/scan')
+            if code == 200 and result.get('profile_digest') == agent.fullscan.profile_digest(expected): break
+            assert code in (200,503) and time.monotonic() < deadline, (code, result)
+            time.sleep(0.25)
+        assert result['protection']['program_roots'] == len(expected['program_roots'])
+        assert result['protection']['enrolled_containers'] == len(expected['containers'])
+        assert result['protection']['state'] != 'ready'
+        assert result['antivirus']['state'] != 'configured'
+        code, result = api('/api/full-scan', {})
+        assert code == 503 and result.get('state') != 'running', (code, result)
+        assert 'image_id' not in expected['containers'][-1]
+        print('Real HTTPS discovery, enrollment, agent reload and missing-engine refusal passed.')
+    finally:
+        # Only this probe's additive profile is restored; unrelated changes stop cleanup.
+        current = agent.profile_validate(json.loads(PROFILE.read_text()))
+        if current != original:
+            assert expected is not None and current == expected, 'Profile changed outside the disposable probe'
+            with open('/run/lock/ironcurtain-local.lock','rb') as guard:
+                fcntl.flock(guard, fcntl.LOCK_EX)
+                agent.atomic_json(PROFILE, original)
+                subprocess.run(['systemctl','restart','ironcurtain-agent.service'], check=True)
+        subprocess.run(['docker','rm','-f',name], capture_output=True, timeout=15)
+        shutil.rmtree(fixture)
+        web('/api/logout', {})
+
+
 if sys.argv[1:2] == ['request']:
     method, uid, raw = sys.argv[2:]
     os.setgroups([]); os.setgid(10001); os.setuid(int(uid))
@@ -97,7 +201,7 @@ if sys.argv[1:2] == ['request']:
         if connection is not None: connection.close()
         sock.close()
 else:
-    assert os.geteuid() == 0 and sys.argv[1:] in (['ready'], ['policy'])
+    assert os.geteuid() == 0 and sys.argv[1:] in (['ready'], ['policy'], ['scope'])
     ready(); container_ready()
     assert request('GET', uid=10002)[0] == 403
     assert request('POST', {'action': 'shell', 'command': 'id'})[0] == 400
@@ -118,4 +222,5 @@ else:
         after = Path(ADDRESS).parent.stat()
         assert (directory.st_dev, directory.st_ino) == (after.st_dev, after.st_ino)
         ready(); container_ready()
+    if sys.argv[1] == 'scope': scope_web()
     print('Real operations controller, exact panel identity and container mount passed.')

@@ -25,7 +25,7 @@ r = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(r)
 a = r.a
 SCHEMA = 'ironcurtain-operations/v1'
-ACTIONS = {'ports', 'review', 'quarantine', 'restore'}
+ACTIONS = {'ports', 'review', 'quarantine', 'restore', 'discover', 'enroll'}
 
 
 def digest(value):
@@ -54,11 +54,18 @@ def validate(value):
     if not isinstance(value, dict) or not isinstance(value.get('action'), str) or value['action'] not in ACTIONS:
         raise ValueError('管理动作无效')
     action = value['action']
-    keys = {'ports': {'action', 'revision', 'tcp', 'udp'}, 'review': {'action', 'id', 'evidence', 'status', 'reason'},
+    keys = {'discover': {'action'}, 'enroll': {'action', 'revision', 'inventory', 'ids'}, 'ports': {'action', 'revision', 'tcp', 'udp'}, 'review': {'action', 'id', 'evidence', 'status', 'reason'},
             'quarantine': {'action', 'id', 'confirm'}, 'restore': {'action', 'id', 'confirm'}}[action]
     if set(value) != keys:
         raise ValueError('请求含缺失或未支持字段')
-    if action == 'ports':
+    if action == 'discover':
+        return value
+    if action == 'enroll':
+        r.identifier(value['revision']); r.identifier(value['inventory'])
+        ids = value['ids']
+        if not isinstance(ids, list) or not 1 <= len(ids) <= 32 or any(not isinstance(v, str) or len(v) != 16 or any(c not in '0123456789abcdef' for c in v) for v in ids) or len(set(ids)) != len(ids):
+            raise ValueError('请选择 1–32 个不重复的当前保护候选')
+    elif action == 'ports':
         r.identifier(value['revision'])
         ports(value['tcp']); ports(value['udp'])
     else:
@@ -138,6 +145,8 @@ class Operations:
         self.review_file = self.directory / 'reviews.json'
         self.audit_file = self.directory / 'audit.json'
         self.transaction_file = self.directory / 'port-transaction.json'
+        self.discovery_file = self.directory / 'scope-discovery.json'
+        self.runner = a.Runner()
         self.pending = [Path('/opt/ironcurtain/local/admin-transaction.json'), Path('/opt/ironcurtain/local/transaction.json')]
         if self.transaction_file.exists() or self.transaction_file.is_symlink():
             with lease(self.lock_path):
@@ -226,14 +235,100 @@ class Operations:
         with self.mutex:
             job = dict(self.job)
         result = {'schema': SCHEMA, 'state': 'ready', 'policy': {'revision': digest(profile), 'tcp': sorted(set(profile['approved_tcp_ports'])), 'udp': sorted(set(profile['approved_udp_ports']))},
-                  'job': job, 'risks': risks, 'sources': sources, 'audit': audit[-12:], 'quarantine': a.findings.quarantine_status(self.state)}
+                  'scope': self.scope_snapshot(profile), 'job': job, 'risks': risks, 'sources': sources, 'audit': audit[-12:], 'quarantine': a.findings.quarantine_status(self.state)}
         # Bound UTF-8 bytes, not character counts. Preserve coverage and report truncation.
         while len(a.canonical(result)) > 262144 and result['risks']:
             result['risks'].pop()
             result['sources']['truncated'] = True
+        while len(a.canonical(result)) > 262144 and result['scope']['discovery']['candidates']:
+            result['scope']['discovery']['candidates'].pop()
+            result['scope']['discovery']['truncated'] = True
         if len(a.canonical(result)) > 262144:
             raise ValueError('管理响应超出预算')
         return result
+
+    def discovery_record(self, record=None):
+        if record is None: record = self.read(self.discovery_file, None)
+        if record is None: return None
+        if not isinstance(record, dict) or set(record) != {'schema', 'profile_revision', 'inventory', 'directories'} or record['schema'] != 'ironcurtain-scope-discovery/v1' or not a.DIGEST.fullmatch(str(record['profile_revision'])) or not a.inventory.valid_inventory(record['inventory']):
+            raise ValueError('保护候选记录无法核验，请重新发现')
+        directories = record['directories']
+        expected = {v['id'] for v in record['inventory']['candidates'] if v['kind'] != 'containers'}
+        if not isinstance(directories, dict) or set(directories) != expected or any(not isinstance(v, list) or len(v) != 2 or any(type(n) is not int or n < 0 for n in v) for v in directories.values()):
+            raise ValueError('候选目录身份无法核验，请重新发现')
+        ids = [v['id'] for v in record['inventory']['candidates']]
+        if len(ids) != len(set(ids)): raise ValueError('保护候选重复，请重新发现')
+        containers = {v['name']: v for v in record['inventory']['containers']}
+        for item in record['inventory']['candidates']:
+            if item['kind'] == 'containers' and not a.DIGEST.fullmatch(str(containers.get(item['value'], {}).get('container_id', ''))):
+                raise ValueError('候选容器身份无法核验，请重新发现')
+        return record
+
+    def scope_snapshot(self, profile):
+        discovery = {'state': 'unavailable', 'revision': None, 'observed_at': None, 'candidates': [], 'count': 0, 'truncated': False, 'issues': []}
+        try: record = self.discovery_record()
+        except ValueError:
+            record = None
+            discovery['issues'] = ['候选记录无法核验，请重新发现']
+        if record:
+            inventory = record['inventory']
+            discovery.update(state='ready' if record['profile_revision'] == digest(profile) and fresh(inventory['observed_at'], 120) else 'stale', revision=digest(record), observed_at=inventory['observed_at'], count=len(inventory['candidates']), issues=inventory['issues'][:8])
+            for item in inventory['candidates']:
+                enrolled = any(v['name'] == item['value'] for v in profile['containers']) if item['kind'] == 'containers' else item['value'] in profile[item['kind']]
+                discovery['candidates'].append({k: item[k] for k in ('id', 'kind', 'value', 'origin')} | {'enrolled': enrolled})
+        return {'program_roots': profile['program_roots'], 'business_roots': profile['business_roots'], 'containers': [v['name'] for v in profile['containers']], 'discovery': discovery}
+
+    def directory_identity(self, value):
+        if not a.inventory.safe_path(value): raise ValueError('候选目录路径异常，请重新发现')
+        try:
+            fd = a.secure_fd(value, flags=os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                meta = os.fstat(fd)
+                return [meta.st_dev, meta.st_ino]
+            finally: os.close(fd)
+        except (OSError, ValueError): raise ValueError('候选目录已变化或包含链接，请重新发现') from None
+
+    def discover_scope(self, profile):
+        inventory = a.inventory.discover(self.runner)
+        if not a.inventory.valid_inventory(inventory): raise ValueError('主机发现未生成有效记录，请检查本机服务')
+        directories = {}
+        for item in inventory['candidates']:
+            if item['kind'] != 'containers':
+                directories[item['id']] = self.directory_identity(item['value'])
+        record = {'schema': 'ironcurtain-scope-discovery/v1', 'profile_revision': digest(profile), 'inventory': inventory, 'directories': directories}
+        if len(a.canonical(record)) > 262144: raise ValueError('保护候选超出证据预算，请在 Linux 菜单分批配置')
+        self.discovery_record(record)
+        persist(self.discovery_file, record)
+        return '已发现 %d 个保护候选；请在两分钟内选择并纳管。缺失的资产在覆盖说明中保留。' % len(inventory['candidates'])
+
+    def apply_enrollment(self, value, profile):
+        record = self.discovery_record()
+        if value['revision'] != digest(profile) or not record or record['profile_revision'] != digest(profile):
+            raise ValueError('保护配置已变化，请重新发现后选择')
+        if value['inventory'] != digest(record): raise ValueError('保护候选已变化，请重新发现后选择')
+        inventory = record['inventory']
+        candidate = a.profile_validate(a.inventory.enroll(profile, inventory, value['ids']))
+        selected = {v['id']: v for v in inventory['candidates']}
+        containers = {v['name']: v for v in inventory['containers']}
+        deadline = time.monotonic() + 20
+        for ident in value['ids']:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0: raise ValueError('候选复核达到时间上限，请分批选择并重新发现')
+            item = selected[ident]
+            if item['kind'] != 'containers':
+                if self.directory_identity(item['value']) != record['directories'][ident]: raise ValueError('候选目录已被替换，请重新发现')
+            else:
+                code, raw = self.runner(['docker', 'inspect', '--type', 'container', '--', item['value']], seconds=min(3, remaining), maximum=262144)
+                try:
+                    rows = json.loads(raw)
+                    observed = containers[item['value']]
+                    if code != 0 or not isinstance(rows, list) or len(rows) != 1 or rows[0].get('Name') != '/' + item['value'] or rows[0].get('Id') != observed['container_id'] or rows[0].get('Image') != observed['image_id']: raise ValueError()
+                except (ValueError, TypeError, KeyError, AttributeError): raise ValueError('候选容器已变化或无法核验，请重新发现') from None
+        if not fresh(inventory['observed_at'], 120): raise ValueError('资产候选记录已过期，请重新发现')
+        if self.config() != profile: raise ValueError('保护配置已变化，请重新发现后选择')
+        if candidate == profile: raise ValueError('所选对象已纳管，请刷新保护范围')
+        self.apply_profile(profile, candidate, 'ironcurtain-scope-transaction/v1')
+        return '保护范围已启用。请重新扫描验证；纳管不会批准镜像或文件签名基线。'
 
     def remove_transaction(self):
         self.transaction_file.unlink()
@@ -244,15 +339,26 @@ class Operations:
     def recover_ports(self):
         transaction = self.read(self.transaction_file, None)
         if transaction is None: return
-        if not isinstance(transaction, dict) or set(transaction) != {'schema', 'previous', 'candidate', 'phase'} or transaction.get('schema') != 'ironcurtain-port-transaction/v1' or transaction.get('phase') not in ('prepared', 'applied', 'committed'):
-            raise ValueError('端口策略恢复记录无法核验')
+        if not isinstance(transaction, dict) or set(transaction) != {'schema', 'previous', 'candidate', 'phase'} or transaction.get('schema') not in ('ironcurtain-port-transaction/v1', 'ironcurtain-scope-transaction/v1') or transaction.get('phase') not in ('prepared', 'applied', 'committed'):
+            raise ValueError('配置恢复记录无法核验')
         previous = a.profile_validate(transaction['previous'])
         candidate = a.profile_validate(transaction['candidate'])
-        if candidate != dict(previous, approved_tcp_ports=ports(candidate['approved_tcp_ports']), approved_udp_ports=ports(candidate['approved_udp_ports'])):
-            raise ValueError('端口事务包含其他配置变更，保留现场等待核查')
+        if transaction['schema'] == 'ironcurtain-port-transaction/v1':
+            if candidate != dict(previous, approved_tcp_ports=ports(candidate['approved_tcp_ports']), approved_udp_ports=ports(candidate['approved_udp_ports'])):
+                raise ValueError('端口事务包含其他配置变更，保留现场等待核查')
+        else:
+            names = ('program_roots', 'business_roots', 'containers')
+            if candidate != dict(previous, **{k: candidate[k] for k in names}) or any(candidate[k][:len(previous[k])] != previous[k] for k in names):
+                raise ValueError('保护范围事务包含未允许的配置变更，保留现场等待核查')
+            for key in names:
+                added = candidate[key][len(previous[key]):]
+                if key != 'containers' and any(not a.inventory.safe_path(v) for v in added): raise ValueError('保护范围事务路径异常')
+                if key == 'containers' and any(set(v) != {'name'} for v in added): raise ValueError('纳管不能批准镜像')
+                values = [v['name'] for v in candidate[key]] if key == 'containers' else candidate[key]
+                if len(values) != len(set(values)): raise ValueError('保护范围事务重复')
         current = self.config()
         if current != previous and current != candidate:
-            raise ValueError('端口配置已被外部修改，保留事务等待人工核查')
+            raise ValueError('保护配置已被外部修改，保留事务等待人工核查')
         if transaction['phase'] == 'committed' and current != candidate:
             raise ValueError('已提交事务与当前配置不一致，保留现场等待核查')
         if transaction['phase'] != 'committed':
@@ -265,7 +371,11 @@ class Operations:
             raise ValueError('保护配置已变化，请刷新端口策略后重试')
         candidate = dict(profile, approved_tcp_ports=ports(value['tcp']), approved_udp_ports=ports(value['udp']))
         a.profile_validate(candidate)
-        transaction = {'schema': 'ironcurtain-port-transaction/v1', 'previous': profile, 'candidate': candidate, 'phase': 'prepared'}
+        self.apply_profile(profile, candidate, 'ironcurtain-port-transaction/v1')
+        return '端口检测白名单已启用，请重新检查监听。此操作不关闭端口或修改防火墙。'
+
+    def apply_profile(self, profile, candidate, schema):
+        transaction = {'schema': schema, 'previous': profile, 'candidate': candidate, 'phase': 'prepared'}
         persist(self.transaction_file, transaction)
         try:
             persist(self.profile, candidate)
@@ -276,12 +386,13 @@ class Operations:
         except Exception as error:
             try: self.recover_ports()
             except Exception:
-                raise ValueError('端口策略事务待恢复，请停止重试并在 Linux 菜单检查服务') from error
+                raise ValueError('保护配置事务待恢复，请停止重试并在 Linux 菜单检查服务') from error
             raise ValueError('新策略未完成启用，已核对并恢复配置；请刷新状态') from error
-        return '端口检测白名单已启用，请重新检查监听。此操作不关闭端口或修改防火墙。'
 
     def execute(self, value, profile):
         action = value['action']
+        if action == 'discover': return self.discover_scope(profile)
+        if action == 'enroll': return self.apply_enrollment(value, profile)
         if action == 'ports':
             return self.apply_ports(value, profile)
         if action == 'review':
@@ -319,7 +430,7 @@ class Operations:
                     return 409, {'error': '本机存在待恢复的安装或管理事务，请先在 Linux 菜单恢复'}
                 self.recover_ports()
                 profile = self.config()
-                job = {'id': uuid.uuid4().hex, 'state': 'running', 'action': value['action'], 'started_at': a.utc(), 'reason': '受控管理任务已受理', 'target': value.get('id', 'port-policy')}
+                job = {'id': uuid.uuid4().hex, 'state': 'running', 'action': value['action'], 'started_at': a.utc(), 'reason': '受控管理任务已受理', 'target': value.get('id', 'protection-scope' if value['action'] in ('discover', 'enroll') else 'port-policy')}
                 persist(self.job_file, job)
                 self.job = job
                 self.last_action = time.monotonic()
@@ -349,7 +460,7 @@ class Operations:
                 audit = self.read(self.audit_file, [])
                 if not isinstance(audit, list) or len(audit) > 128 or not all(valid_job(v, audit=True) for v in audit):
                     raise ValueError('audit invalid')
-                audit.append({**job, 'target': value.get('id', 'port-policy')})
+                audit.append({**job, 'target': value.get('id', 'protection-scope' if value['action'] in ('discover', 'enroll') else 'port-policy')})
                 persist(self.audit_file, audit[-128:])
                 persist(self.job_file, job)
                 self.job = job

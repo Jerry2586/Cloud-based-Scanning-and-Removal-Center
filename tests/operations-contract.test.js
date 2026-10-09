@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {validateOperation,validatePorts,sanitizeOperations} from '../src/contracts/operations-status.js';
-import {operationJob,operationStatus,revision} from './fixtures/operations.js';
+import {operationJob,operationStatus,operationScope,revision} from './fixtures/operations.js';
 test('operations accepts only fixed evidence-bound actions and bounded ports',()=>{
  assert.deepEqual(validateOperation({action:'ports',revision,tcp:[443,22],udp:[]}).tcp,[22,443]);
  assert.deepEqual(validateOperation({action:'review',id:revision,evidence:revision,status:'accepted',reason:' 核对业务需要 '}).reason,'核对业务需要');
@@ -26,4 +26,15 @@ test('Unicode evidence and review lengths match host codepoint limits',()=>{
  assert.equal(validateOperation({action:'review',id:revision,evidence:revision,status:'investigating',reason:'  '+'🛡'.repeat(240)+'  '}).reason,'🛡'.repeat(240));
  for(const reason of ['🛡'.repeat(3),'🛡'.repeat(241)]) assert.throws(()=>validateOperation({action:'review',id:revision,evidence:revision,status:'open',reason}));
  report.job.reason+='🛡'; assert.equal(sanitizeOperations(report).state,'unavailable');
+});
+
+test('scope is optional and idempotent, strips private discovery identity fields',()=>{
+ const old=sanitizeOperations(operationStatus());assert.equal(old.scope,null);assert.deepEqual(sanitizeOperations(old),old);
+ const report={...operationStatus(),scope:operationScope()};report.scope.discovery.candidates[0].device=123;report.scope.secret='secret';
+ const clean=sanitizeOperations(report);assert.equal(clean.state,'ready');assert.ok(!JSON.stringify(clean).includes('secret'));assert.equal(clean.scope.discovery.candidates[0].device,undefined);assert.deepEqual(sanitizeOperations(clean),clean);
+});
+test('scope enrollment accepts only bounded trusted identifiers and rejects malformed coverage',()=>{
+ const value={action:'enroll',revision,inventory:'b'.repeat(64),ids:['1'.repeat(16)]};assert.deepEqual(validateOperation(value),value);assert.deepEqual(validateOperation({action:'discover'}),{action:'discover'});
+ for(const v of [{...value,ids:[]},{...value,ids:['1'.repeat(16),'1'.repeat(16)]},{...value,ids:Array.from({length:33},(_,i)=>i.toString(16).padStart(16,'0'))},{...value,path:'/root'},{...value,inventory:'bad'},{action:'discover',command:'sh'}])assert.throws(()=>validateOperation(v));
+ for(const mutate of [v=>v.scope.discovery.candidates[0].kind='shell',v=>v.scope.discovery.candidates[0].id='x',v=>v.scope.discovery.candidates[0].value='relative',v=>v.scope.discovery.count=0,v=>v.scope.discovery.truncated=true,v=>v.scope.discovery.state='unavailable',v=>v.scope.containers=['app\nsecret'],v=>v.scope.discovery.candidates.push({...v.scope.discovery.candidates[0]})]){const v={...operationStatus(),scope:operationScope()};mutate(v);assert.equal(sanitizeOperations(v).state,'unavailable');}
 });

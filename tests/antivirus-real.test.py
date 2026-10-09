@@ -93,4 +93,50 @@ class EngineTests(unittest.TestCase):
             self.assertEqual((status['full_scan']['processed'],status['full_scan']['clean'],status['full_scan']['infected']),(2,1,1))
             self.assertEqual(status['findings_total'],1);self.assertFalse(agent.full_running)
             self.assertEqual((scope/'infected.txt').read_bytes(),pattern)
+    @unittest.skipUnless(os.name == 'posix' and os.geteuid() == 0, 'requires Linux root enrollment')
+    def test_enrolled_directory_reaches_real_engine_queue(self):
+        spec = importlib.util.spec_from_file_location('enrollment_operations', pathlib.Path(__file__).parents[1]/'src/host/operations.py')
+        operations = importlib.util.module_from_spec(spec); spec.loader.exec_module(operations)
+        with tempfile.TemporaryDirectory(prefix='ic-enrollment-', dir='/root') as tmp:
+            root=pathlib.Path(tmp); root.chmod(0o700)
+            scope=root/'new-site'; scope.mkdir(); db=root/'fixture-db'; db.mkdir()
+            pattern=b'IRONCURTAIN_ENROLLED_QUEUE_TEST_ONLY'
+            (db/'fixture.ndb').write_text('IronCurtain.Enrolled:0:*:'+pattern.hex()+'\n')
+            clean=scope/'clean.txt'; clean.write_bytes(b'clean fixture')
+            infected=scope/'infected.txt'; infected.write_bytes(pattern)
+            profile_file=root/'profile.json'; state=root/'state'; state.mkdir(mode=0o700)
+            profile=operations.a.profile_validate({'schema':'ironcurtain-profile/v1'})
+            operations.persist(profile_file,profile)
+            restarts=[]
+            control=operations.Operations(profile_file,state,root/'management.lock',lambda:restarts.append(True))
+            control.pending=[]
+            candidate=operations.a.inventory.candidate('program_roots',str(scope),'实际目录验收')
+            observed={'schema':'ironcurtain-inventory/v1','observed_at':a.utc(),'containers':[],'listeners':[],
+                'candidates':[candidate],'issues':[],'container_state':'complete','listener_state':'complete',
+                'directory_state':'complete','drift':[],'drift_state':'first-observation'}
+            def submit(value):
+                control.last_action=0
+                self.assertEqual(control.trigger(value)[0],202)
+                control.thread.join(10); self.assertFalse(control.thread.is_alive())
+                self.assertEqual(control.job['state'],'complete',control.job['reason'])
+            with patch.object(operations.a.inventory,'discover',return_value=observed):submit({'action':'discover'})
+            status=control.snapshot()
+            submit({'action':'enroll','revision':status['policy']['revision'],
+                'inventory':status['scope']['discovery']['revision'],'ids':[candidate['id']]})
+            self.assertEqual(restarts,[True])
+            enrolled=control.config(); self.assertEqual(enrolled['program_roots'],[str(scope)])
+            engine={'installed':True,'state':'configured','database_version':1,'database_at':a.utc(),
+                'signatures':1,'database_generation':'a'*64}
+            def runner(args,**kwargs):
+                # Real clamscan; only this isolated test's metadata and signature DB are substituted.
+                fixture=[x for x in args if x not in ['--official-db-only=yes','--fail-if-cvd-older-than=7']]
+                fixture=[('--database='+str(db)) if x.startswith('--database=') else x for x in fixture]
+                return a.Runner()(fixture,**kwargs)
+            result=a.fullscan.FullScan(enrolled,state,runner,a.secure_fd,engine,str(db),
+                lambda report:None,database_status=lambda:engine).run()
+            self.assertEqual((result['state'],result['indexed'],result['processed'],result['clean'],result['infected']),
+                ('finished',2,2,1,1))
+            self.assertEqual(result['findings'][0]['path'],str(infected))
+            self.assertEqual(result['findings'][0]['signature'],'IronCurtain.Enrolled.UNOFFICIAL')
+            self.assertEqual(clean.read_bytes(),b'clean fixture'); self.assertEqual(infected.read_bytes(),pattern)
 if __name__=='__main__':unittest.main()

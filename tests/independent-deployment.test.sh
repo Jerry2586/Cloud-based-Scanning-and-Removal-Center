@@ -47,6 +47,7 @@ CLOUD_HOST=$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Ga
 bash "$INSTALL_SOURCE/scripts/install-independent.sh" --role cloud --host "$CLOUD_HOST" --bind "$CLOUD_HOST"
 bash "$INSTALL_SOURCE/scripts/install-independent.sh" --role local --antivirus skip --host 127.0.0.1 --bind 127.0.0.1
 python3 "$SOURCE/tests/helpers/operations-deployment-probe.py" policy
+python3 "$SOURCE/tests/helpers/operations-deployment-probe.py" scope
 # Real non-root cloud container storage must survive a container restart.
 node "$SOURCE/tests/helpers/cloud-deployment-probe.js" seed "$CLOUD_HOST" "$WORK/cloud-control-fixture.json"
 [[ $(stat -c '%u:%g:%a' /var/lib/ironcurtain/cloud/runtime/control.sqlite) == 10001:10001:600 ]]
