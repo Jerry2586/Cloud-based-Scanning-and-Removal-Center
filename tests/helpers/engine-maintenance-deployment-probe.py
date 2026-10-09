@@ -1,5 +1,7 @@
 """Disposable CI: real installed systemd unit and root management lease; no package repair runs."""
 import datetime, fcntl, importlib.util, json, os, pathlib, subprocess, sys, time
+# Disable cache before importlib compiles installed code; doing it inside agent.py is too late.
+sys.dont_write_bytecode = True
 ROOT=pathlib.Path(sys.argv[1])
 spec=importlib.util.spec_from_file_location('installed_host',ROOT/'src/host/agent.py')
 a=importlib.util.module_from_spec(spec);spec.loader.exec_module(a)
