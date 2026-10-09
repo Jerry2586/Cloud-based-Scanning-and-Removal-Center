@@ -170,6 +170,99 @@ class OperationsTest(unittest.TestCase):
         self.assertEqual(recovered.job['state'],'interrupted')
         self.assertEqual(recovered.snapshot()['audit'][-1]['state'],'interrupted')
 
+    def test_snapshot_never_combines_completed_receipt_with_preceding_audit(self):
+        executing = threading.Event()
+        finish_execution = threading.Event()
+        audit_read = threading.Event()
+        finish_snapshot = threading.Event()
+        worker_finished = threading.Event()
+        replies, failures = [], []
+        original_run, original_read = self.ops.run, self.ops.read
+
+        def execute(value, profile):
+            executing.set()
+            if not finish_execution.wait(5):
+                raise RuntimeError('execution gate timed out')
+            return 'completed controlled action'
+
+        def run(*args):
+            try:
+                original_run(*args)
+            finally:
+                worker_finished.set()
+
+        def read(path, default):
+            value = original_read(path, default)
+            if path == self.ops.audit_file and threading.current_thread() is reader:
+                audit_read.set()
+                if not finish_snapshot.wait(5):
+                    raise RuntimeError('snapshot gate timed out')
+            return value
+
+        def snapshot():
+            try:
+                replies.append(self.ops.snapshot())
+            except Exception as error:
+                failures.append(error)
+
+        reader = threading.Thread(target=snapshot)
+        with patch.object(self.ops, 'execute', side_effect=execute), patch.object(self.ops, 'run', side_effect=run), patch.object(self.ops, 'read', side_effect=read):
+            try:
+                status, receipt = self.ops.trigger(self.ports())
+                self.assertEqual(status, 202)
+                self.assertTrue(executing.wait(2))
+                reader.start()
+                self.assertTrue(audit_read.wait(2))
+                # Reproduce the old interleaving: if the reader has released the
+                # completion boundary, commit the worker before it copies job.
+                # Otherwise the reader must return its coherent running snapshot.
+                if self.ops.mutex.acquire(blocking=False):
+                    self.ops.mutex.release()
+                    finish_execution.set()
+                    self.assertTrue(worker_finished.wait(2))
+                else:
+                    finish_execution.set()
+            finally:
+                finish_execution.set()
+                finish_snapshot.set()
+                if reader.ident is not None:
+                    reader.join(5)
+                if self.ops.thread:
+                    self.ops.thread.join(5)
+        self.assertFalse(reader.is_alive())
+        self.assertFalse(self.ops.thread.is_alive())
+        self.assertEqual(failures, [])
+        self.assertEqual(len(replies), 1)
+        reply = replies[0]
+        self.assertIn(reply['job']['state'], ('running', 'complete'))
+        if reply['job']['state'] == 'complete':
+            self.assertTrue(reply['audit'], 'completed receipt lost its audit')
+            self.assertEqual(reply['audit'][-1]['id'], receipt['job']['id'])
+            self.assertEqual(reply['audit'][-1]['state'], 'complete')
+        else:
+            self.assertEqual(reply['audit'], [])
+        final = self.ops.snapshot()
+        self.assertEqual(final['job']['state'], 'complete')
+        self.assertEqual(final['audit'][-1]['id'], final['job']['id'])
+
+    def test_failed_audit_persistence_never_reports_success(self):
+        original_persist = o.persist
+        def persist(path, value):
+            if path == self.ops.audit_file:
+                raise OSError('audit storage unavailable')
+            return original_persist(path, value)
+        with patch.object(o, 'persist', side_effect=persist):
+            self.assertEqual(self.ops.trigger(self.ports())[0], 202)
+            self.ops.thread.join(5)
+        self.assertFalse(self.ops.thread.is_alive())
+        reply = self.ops.snapshot()
+        self.assertEqual(reply['job']['state'], 'failed')
+        self.assertIn('持久化失败', reply['job']['reason'])
+        self.assertEqual(reply['audit'], [])
+        # The lease must be released even though the receipt could not be committed.
+        with o.lease(self.lock):
+            pass
+
     def test_real_isolation_and_original_restore_preserve_evidence_and_never_overwrite(self):
         item=self.observe();content=self.file.read_bytes()
         self.submit({'action':'quarantine','id':item['id'],'confirm':'quarantine'})

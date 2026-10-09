@@ -229,10 +229,12 @@ class Operations:
     def snapshot(self):
         profile = self.config()
         risks, sources = self.risk_snapshot(profile)
-        audit = self.read(self.audit_file, [])
-        if not isinstance(audit, list) or len(audit) > 128 or not all(valid_job(v, audit=True) for v in audit):
-            raise ValueError('管理审计无法核验')
+        # Read the receipt and its audit under the same completion boundary as run().
+        # A query must never combine a completed job with the preceding audit file.
         with self.mutex:
+            audit = self.read(self.audit_file, [])
+            if not isinstance(audit, list) or len(audit) > 128 or not all(valid_job(v, audit=True) for v in audit):
+                raise ValueError('管理审计无法核验')
             job = dict(self.job)
         result = {'schema': SCHEMA, 'state': 'ready', 'policy': {'revision': digest(profile), 'tcp': sorted(set(profile['approved_tcp_ports'])), 'udp': sorted(set(profile['approved_udp_ports']))},
                   'scope': self.scope_snapshot(profile), 'job': job, 'risks': risks, 'sources': sources, 'audit': audit[-12:], 'quarantine': a.findings.quarantine_status(self.state)}
