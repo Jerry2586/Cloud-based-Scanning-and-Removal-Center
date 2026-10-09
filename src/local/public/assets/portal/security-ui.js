@@ -76,7 +76,7 @@ export function createSecurityUi({ state, can, request, notify }) {
   let scanGeneration = 0;
   let acceptedLocalTask = null;
   const consoleView = createSecurityConsole();
-  const operationsWorkspace = createOperationsWorkspace({state,request,notify,
+  const operationsWorkspace = createOperationsWorkspace({state,request,notify,allowed:()=>can('system.manage'),
     isScanBusy:()=>scanRequested || localRunning || multiEngine.isBusy(),
     recheck:async(action,panel)=>{const session=state.csrf,generation=scanGeneration+1;const receipt=await runLocalCheck(action);if(session!==state.csrf || generation!==scanGeneration || !can('system.manage'))throw Error('登录状态已改变，请重新核对检测状态');consoleView.open(panel,true);return receipt;}
   });
@@ -184,6 +184,7 @@ export function createSecurityUi({ state, can, request, notify }) {
       row.textContent = item.checked_at + ' · ' + item.name + ' · ' + (localStateLabels[item.previous_state] || '首次记录') + ' → ' + (localStateLabels[item.state] || '未知') + ' · ' + item.detail;
       history?.append(row);
     }
+    operationsWorkspace.observeListeners(report,{trusted:can('system.manage') && report.state === 'finished' && !coverageIncomplete && !stale});
     consoleView.update(report, { overview, busy: scanRequested, trusted: report.state === 'finished' && !coverageIncomplete && !stale, issue: report.state === 'running' ? '本机检查中' : report.state === 'idle' ? '等待首次检查' : report.state === 'unavailable' ? '本机代理不可用' : report.state === 'failed' ? '本机检查失败' : coverageIncomplete ? '等待完整有效报告' : stale ? '报告过期或时间异常' : historyUnavailable ? '告警历史不可用' : '本机检查不可用' });
     if (historyState) historyState.textContent = historyUnavailable ? '告警历史不可用；请检查本地代理与状态目录' : report.history_state === 'truncated' ? '仅显示响应容量内的最近记录；完整记录保留在服务器' : report.history?.length ? '显示最近八条状态变化；本机最多保留一百二十八条' : '暂无状态变化记录';
   }
@@ -195,6 +196,7 @@ export function createSecurityUi({ state, can, request, notify }) {
     onError: error => {
       // A failed poll cannot prove that the last confirmed task has ended.
       syncScanControls();
+      operationsWorkspace.observeListeners(null);
       consoleView.update(null, { busy: scanRequested, issue: '本机代理不可用' });
       const status = $('security-local-state');
       if (status) { status.textContent = '本机代理不可用'; status.dataset.state = 'warning'; }
@@ -289,7 +291,7 @@ export function createSecurityUi({ state, can, request, notify }) {
     if(scanRequested || localRunning || multiEngine.isBusy())throw Error('已有检测任务，请等待当前任务完成');
     const session=state.csrf,generation=++scanGeneration;
     const current=()=>generation===scanGeneration && state.csrf===session && can('system.manage');
-    scanRequested=true;consoleView.setBusy(true,action);syncScanControls();
+    scanRequested=true;operationsWorkspace.observeListeners(null);consoleView.setBusy(true,action);syncScanControls();
     try {
       const receipt=await request(endpoints[action],{method:'POST',body:{}});
       if(!current())throw Error('登录状态已改变，请重新核对检测状态');

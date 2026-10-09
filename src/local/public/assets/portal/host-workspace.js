@@ -30,7 +30,6 @@ export function createHostWorkspace(scope) {
     table('packages',env?.packages||[],x=>[x.name,x.version],state(env?.package_state));
     table('services',env?.services||[],x=>[x.name,x.load,x.active,x.sub],state(env?.service_state));
     table('containers',inv?.containers||[],x=>[x.name,x.running?'运行':'已停止',x.readonly?'只读':'可写',x.process_count??'未读取',x.risks.join('；')||'本项元数据未发现风险'],state(inv?.container_state));
-    table('listeners',inv?.listeners||[],x=>[x.protocol.toUpperCase(),x.address,x.processes.map(p=>p.name+' ('+p.pid+')').join('、')||'归属未读取'],state(inv?.listener_state));
     const changes=scope?.querySelector('[data-host-changes]');changes?.replaceChildren();
     const messages=[...(inv?.drift||[]),...(env?.changes||[]),...(inv?.issues||[]),...(env?.issues||[]),...(protection.issues||[])];
     for(const text of [...new Set(messages)].slice(0,64)){const li=document.createElement('li');li.textContent=text;changes?.append(li);}

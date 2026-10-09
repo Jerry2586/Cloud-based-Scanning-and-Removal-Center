@@ -1,9 +1,10 @@
-import {sanitizeOperations,unavailableOperations,validatePorts,validateOperation,operationRecheckPlan} from '/contracts/operations-status.js';
+import {sanitizeOperations,unavailableOperations,validateOperation,operationRecheckPlan} from '/contracts/operations-status.js';
 import {createScopeWorkspace} from './scope-workspace.js';
+import {createListenerWorkspace,parsePortDraft} from './listener-workspace.js';
 const states={open:'待处理',investigating:'处理中',accepted:'已接受风险'};
 const phases={idle:'暂无处置任务',running:'处置执行中',complete:'操作完成 · 等待复核',failed:'操作失败',interrupted:'任务中断 · 核对实际状态'};
 const quarantineLabels={preparing:'准备副本',captured:'副本已保存，路径移除未确认',quarantined:'已隔离',restoring:'恢复中断，需要核查',restored:'原始内容已取回，副本保留'};
-export function createOperationsWorkspace({state,request,notify,recheck=null,isScanBusy=()=>false}) {
+export function createOperationsWorkspace({state,request,notify,recheck=null,isScanBusy=()=>false,allowed=()=>true}) {
   let last=unavailableOperations(),epoch=0,pending=null,saving=null,timer=null,dirty=false,activeSession=null,bound=false,displayedRevision=null,submitted=null,rechecking=null,recheckReceipt=null;
   const signatures=new WeakMap();
   const form=document.querySelector('[data-port-policy]');
@@ -11,8 +12,9 @@ export function createOperationsWorkspace({state,request,notify,recheck=null,isS
   const node=(tag,text,cls)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;};
   const current=op=>op.session===state.csrf && op.epoch===epoch;
   const busy=()=>Boolean(saving || rechecking || isScanBusy() || last.job?.state==='running');
-  const enabled=()=>last.state==='ready' && !busy() && Boolean(state.csrf);
+  const enabled=()=>last.state==='ready' && !busy() && Boolean(state.csrf) && allowed();
   const scope=createScopeWorkspace({getStatus:()=>last,enabled,apply,notify});
+  const listeners=createListenerWorkspace({getStatus:()=>last,enabled,getDraft:()=>form?{tcp:field('tcp').value,udp:field('udp').value,revision:displayedRevision,dirty}:null,writeDraft:value=>{field('tcp').value=value.tcp.join(', ');field('udp').value=value.udp.join(', ');dirty=true;render();},notify,runRecheck,canRecheck:()=>typeof recheck==='function',getSession:()=>state.csrf,getRecheckReceipt:()=>recheckReceipt});
   function button(text,action) {const b=node('button',text,'sc-outline');b.type='button';b.dataset.operationAction='';b.disabled=!enabled();b.addEventListener('click',action);return b;}
   // Passive polls preserve focused controls and replace a list only when its data changes.
   function list(selector,value,build) {
@@ -26,7 +28,7 @@ export function createOperationsWorkspace({state,request,notify,recheck=null,isS
     document.querySelectorAll('[data-operation-action],[data-quarantine-id]').forEach(b=>{b.disabled=!enabled() || b.dataset.operationBlocked==='true';});
     form?.querySelectorAll('input,button').forEach(n=>{n.disabled=!enabled();});
     document.querySelectorAll('[data-operation-recheck]').forEach(b=>{b.disabled=!enabled() || typeof recheck!=='function';});
-    scope.render();
+    scope.render();listeners.render();
   }
   function followupJob() {
     if(last.state!=='ready')return null;
@@ -52,7 +54,7 @@ export function createOperationsWorkspace({state,request,notify,recheck=null,isS
       if(ready && !dirty && !form.contains(document.activeElement)) {
         field('tcp').value=last.policy.tcp.join(', ');field('udp').value=last.policy.udp.join(', ');displayedRevision=last.policy.revision;
       }
-      form.querySelectorAll('input,button').forEach(n=>{n.disabled=!ready || busy() || !state.csrf;});
+      form.querySelectorAll('input,button').forEach(n=>{n.disabled=!enabled();});
       const conflict=ready && dirty && displayedRevision!==last.policy.revision;
       form.querySelector('[data-port-policy-state]').textContent=!ready?'等待本机处置服务':conflict?'策略已被其他操作修改，请重新加载后编辑':dirty?'有未保存修改':'已加载本机检测白名单';
     }
@@ -129,7 +131,7 @@ export function createOperationsWorkspace({state,request,notify,recheck=null,isS
     finally {if(saving===op){saving=null;if(current(op)){render();void refresh();}}}
   }
   function reset() {
-    epoch++;activeSession=state.csrf;pending=saving=submitted=rechecking=recheckReceipt=null;displayedRevision=null;dirty=false;clearTimeout(timer);last=unavailableOperations();scope.reset();
+    epoch++;activeSession=state.csrf;pending=saving=submitted=rechecking=recheckReceipt=null;displayedRevision=null;dirty=false;clearTimeout(timer);last=unavailableOperations();scope.reset();listeners.reset();
     if(form){field('tcp').value='';field('udp').value='';}render();if(state.csrf)void refresh();
   }
   function bind() {
@@ -139,8 +141,8 @@ export function createOperationsWorkspace({state,request,notify,recheck=null,isS
       event.preventDefault();if(last.state!=='ready')return;
       if(displayedRevision!==last.policy.revision){notify('策略版本已变化，请重新加载后编辑。',true);return;}
       try {
-        const parse=name=>{const text=field(name).value.trim();return validatePorts(text?text.split(/[,，\s]+/).map(v=>/^\d+$/.test(v)?Number(v):NaN):[]);};
-        void apply({action:'ports',revision:displayedRevision,tcp:parse('tcp'),udp:parse('udp')});
+        const ports=parsePortDraft(field('tcp').value,field('udp').value);
+        void apply({action:'ports',revision:displayedRevision,...ports});
       }catch(error){notify(error.message,true);}
     });
     document.querySelectorAll('[data-operations-refresh]').forEach(n=>n.addEventListener('click',()=>{void refresh();}));
@@ -149,5 +151,5 @@ export function createOperationsWorkspace({state,request,notify,recheck=null,isS
     document.addEventListener('ironcurtain-session-cleared',reset);
     document.addEventListener('click',event=>{const b=event.target.closest?.('[data-quarantine-id]');if(!b || b.disabled)return;if(window.confirm('确认隔离命中文件？系统会核对当前证据和内容，保存副本后移除路径。已有进程可能继续运行，请完成后复核。'))void apply({action:'quarantine',id:b.dataset.quarantineId,confirm:'quarantine'});});
   }
-  return Object.freeze({bind,start(){if(activeSession!==state.csrf)reset();},refresh,sync});
+  return Object.freeze({bind,start(){if(activeSession!==state.csrf)reset();},refresh,sync,observeListeners:listeners.observe});
 }

@@ -3,19 +3,19 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFile} from 'node:fs/promises';
 async function harness(options={}){
- const handlers=new Map(),events=new Map(),requests=[],busy=[],results=[],messages=[],opened=[],external=[];let operations,poller,multiParams;let multiBusy=false;
+ const handlers=new Map(),events=new Map(),requests=[],busy=[],results=[],messages=[],opened=[],external=[],observations=[];let operations,poller,multiParams;let multiBusy=false;
  const button={hasAttribute:name=>name==='data-security-full-scan',addEventListener:(name,fn)=>handlers.set(name,fn)};
  const state={csrf:'first'};let allowed=true;
  const pending=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
  const consoleView={bind(){},clear(){busy.push(false);},update(){},setExternalBusy:value=>external.push(value),setBusy:value=>busy.push(value),open:(...args)=>opened.push(args),requestResult:value=>results.push(value)};
- const widget=()=>({bind(){},start(){},sync(){},refresh(){}});
+ const widget=()=>({bind(){},start(){},sync(){},refresh(){},observeListeners:(...args)=>observations.push(args)});
  let source=await readFile(new URL('../src/local/public/assets/portal/security-ui.js',import.meta.url),'utf8');
  source=source.replace(/^import[^\n]+\n/gm,'').replace('export function','function');
- const ctx=vm.createContext({Date,document:{hidden:false,getElementById:()=>null,querySelectorAll:selector=>selector.includes('data-security-scan')?[button]:[],addEventListener:(event,fn)=>events.set(event,fn)},window:{addEventListener(){}},createSecurityConsole:()=>consoleView,createCloudIntelligence:widget,createMultiEngine:params=>{multiParams=params;return {...widget(),isBusy:()=>multiBusy};},createEngineReadiness:widget,createEngineMaintenance:widget,createScheduleSettings:widget,createOperationsWorkspace:params=>{operations=params;return widget();},createUpdateSettings:widget,createDomainSettings:widget,createSecurityPoller:params=>{poller=params;return {run(){},stop(){},refresh:async()=>{if(options.reportOnRefresh)poller.render(options.reportOnRefresh);}};},summarizeLocalSecurity(){},engineDisplayText:value=>value});
+ const ctx=vm.createContext({Date,document:{hidden:false,getElementById:id=>options.reportDom && ['security-local-state','security-local-time','security-local-checks'].includes(id)?{dataset:{},replaceChildren(){},append(){}}:null,querySelectorAll:selector=>selector.includes('data-security-scan')?[button]:[],addEventListener:(event,fn)=>events.set(event,fn)},window:{addEventListener(){}},createSecurityConsole:()=>consoleView,createCloudIntelligence:widget,createMultiEngine:params=>{multiParams=params;return {...widget(),isBusy:()=>multiBusy};},createEngineReadiness:widget,createEngineMaintenance:widget,createScheduleSettings:widget,createOperationsWorkspace:params=>{operations=params;return widget();},createUpdateSettings:widget,createDomainSettings:widget,createSecurityPoller:params=>{poller=params;return {run(){},stop(){},refresh:async()=>{if(options.reportOnRefresh)poller.render(options.reportOnRefresh);}};},summarizeLocalSecurity(){return {title:'结果',tone:'warning'};},engineDisplayText:value=>value});
  vm.runInContext(source,ctx);
  const ui=ctx.createSecurityUi({state,can:()=>allowed,notify:(text,error)=>messages.push({text,error}),request:(url,options)=>{if(options?.method==='POST'){const p=pending();requests.push({url,options,...p});return p.promise;}return Promise.resolve({state:'unpaired',connected:false});}});
  ui.bind();
- return {state,busy,external,results,requests,messages,opened,operations,poller,click:()=>handlers.get('click')(),clear:()=>events.get('ironcurtain-session-cleared')(),permission:value=>{allowed=value;},joint:{busy:value=>{multiBusy=value;multiParams.onStateChange();},params:()=>multiParams}};
+ return {state,busy,external,results,observations,requests,messages,opened,operations,poller,click:()=>handlers.get('click')(),clear:()=>events.get('ironcurtain-session-cleared')(),permission:value=>{allowed=value;},joint:{busy:value=>{multiBusy=value;multiParams.onStateChange();},params:()=>multiParams}};
 }
 test('credential rotation during a scan request releases busy state and permits the next scan',async()=>{
  const h=await harness(),first=h.click();assert.equal(h.requests.length,1);h.state.csrf='rotated';h.requests[0].resolve({state:'running',task_id:'a'.repeat(32)});await first;
@@ -85,4 +85,14 @@ test('an engine update stays locked through old scans and unavailable polls unti
 });
 test('engine update acceptance without an identity cannot start a confirmed task',async()=>{
  const h=await harness();const task=h.operations.recheck('engine-update','scan'),failed=assert.rejects(task,/有效检测任务/);h.requests[0].resolve({state:'running'});await failed;assert.equal(h.opened.length,0);assert.equal(h.operations.isScanBusy(),false);
+});
+
+test('new local detection invalidates editable listener evidence even if request fails',async()=>{
+ const h=await harness();const run=h.click();assert.equal(h.observations.length,1);assert.equal(h.observations[0][0],null);h.requests[0].reject(Error('请求超时'));await run;
+ assert.equal(h.observations.at(-1)[0],null);assert.equal(h.results.at(-1).error,'请求超时');
+ h.poller.onError(Error('断线'));assert.equal(h.observations.at(-1)[0],null);
+});
+test('operations use the shared management permission gate and revoked reports are view-only',async()=>{
+ const h=await harness({reportDom:true});assert.equal(h.operations.allowed(),true);h.permission(false);assert.equal(h.operations.allowed(),false);
+ h.poller.render({state:'finished',rules:{state:'unavailable'}});assert.equal(h.observations.at(-1)[1].trusted,false);
 });
