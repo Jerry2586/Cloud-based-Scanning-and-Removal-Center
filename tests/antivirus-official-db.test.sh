@@ -52,6 +52,9 @@ grep -q 'FOUND' "$WORK/scan-eicar.log"
 grep -qi 'Eicar' "$WORK/scan-eicar.log"
 echo 'Official signed databases load; clean sample passes and EICAR test sample is detected.'
 
+# Real installed agent -> fixed trusted systemd updater, before switching source.
+python3 "$ROOT/tests/helpers/engine-update-official-probe.py"
+
 # Independently sign only genuine freshly downloaded CVD files. CLD is not
 # silently converted: unsupported input fails this cloud acceptance explicitly.
 systemctl disable --now ironcurtain-antivirus-update.timer

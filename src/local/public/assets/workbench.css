@@ -105,3 +105,12 @@
 
 /* Protected scope uses the same light/dark workbench tokens as other management cards. */
 .ic-scope-fieldset{border:0;padding:0;margin:16px 0;min-width:0}.ic-scope-fieldset legend{font-weight:600;margin-bottom:10px}.ic-scope-candidates{list-style:none;padding:0;margin:0;display:grid;gap:8px;max-height:400px;overflow:auto}.ic-scope-candidate{display:flex;gap:12px;align-items:flex-start;padding:12px;border:1px solid var(--line);border-radius:10px}.ic-scope-candidate input{width:18px;height:18px;flex:none;margin-top:3px;accent-color:var(--accent)}.ic-scope-candidate label{display:flex;gap:12px;width:100%;cursor:pointer}.ic-scope-candidate .ic-scope-copy{min-width:0;display:grid;gap:5px;overflow-wrap:anywhere}.ic-scope-candidate small{color:var(--muted)}.ic-scope-summary{display:grid;gap:6px;overflow-wrap:anywhere;margin-top:14px}.ic-scope-summary p{margin:0}.ic-scope-panel .ic-action-row{flex-wrap:wrap}.ic-scope-candidate:has(input:checked){border-color:var(--accent)}
+
+/* Unit progress uses the same theme variables in light and dark modes. */
+.ic-capability-progress{display:block;width:100%;height:6px;margin:12px 0 6px;accent-color:var(--ic-green);border:0;border-radius:999px;overflow:hidden;background:var(--surface-soft)}
+.ic-capability-progress::-webkit-progress-bar{background:var(--surface-soft);border-radius:999px}
+.ic-capability-progress::-webkit-progress-value{background:var(--ic-green);border-radius:999px}
+.ic-capability-progress::-moz-progress-bar{background:var(--ic-green);border-radius:999px}
+.ic-capability-progress-text{display:block;color:var(--muted);font-size:11px;line-height:1.5}
+.ic-evidence-action{display:inline-flex;align-items:center;text-decoration:none;max-width:100%;margin-top:9px}
+.ic-evidence-action:focus-visible{outline:2px solid var(--ic-green);outline-offset:3px}

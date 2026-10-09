@@ -87,6 +87,14 @@ class SourceTests(unittest.TestCase):
             evidence.unlink()
 
 class UpdaterTests(unittest.TestCase):
+ def test_blocking_completion_rejects_active_failed_and_unknown_services(self):
+  for completed in [{}, {'LoadState':'loaded','ActiveState':'active','Result':'success'}, {'LoadState':'loaded','ActiveState':'inactive','Result':'exit-code'}]:
+   with self.subTest(completed=completed),patch.object(av,'check_official_updater'),patch.object(av.subprocess,'run'),patch.object(av,'_properties',return_value=completed):
+    with self.assertRaises(ValueError):av.request_official_update(wait=True)
+  with patch.object(av,'check_official_updater'),patch.object(av.subprocess,'run') as run,patch.object(av,'_properties',return_value={'LoadState':'loaded','ActiveState':'inactive','Result':'success'}):
+   av.request_official_update(wait=True)
+   self.assertEqual(run.call_args.args[0],['systemctl','start','ironcurtain-antivirus-update.service'])
+
  def test_service_states_and_fixed_arguments(self):
   for props,expected in [({'LoadState':'loaded','ActiveState':'active','Result':'success'},'running'),({'LoadState':'loaded','ActiveState':'inactive','Result':'success'},'idle'),({'LoadState':'loaded','ActiveState':'failed','Result':'exit-code'},'failed'),({},'unavailable')]:
    self.assertEqual(av.update_status(props),expected)
@@ -98,9 +106,10 @@ class UpdaterTests(unittest.TestCase):
  def test_official_update_trust_source_and_fixed_systemd_service(self):
   with tempfile.TemporaryDirectory(dir='/root',prefix='ic-updater-') as tmp:
    unit=pathlib.Path(tmp)/'update.service';unit.write_text('fixture');unit.chmod(0o644)
-   props={'LoadState':'loaded','FragmentPath':str(unit)}
+   props={'LoadState':'loaded','FragmentPath':str(unit),'ActiveState':'inactive','Result':'success'}
    with patch.object(av,'UPDATE_UNIT',str(unit)),patch.object(av,'database_source',return_value='official-direct'),patch.object(av.shutil,'which',return_value='/usr/bin/freshclam'),patch.object(av,'_properties',return_value=props),patch.object(av.subprocess,'run') as run:
     av.request_official_update();self.assertEqual(run.call_args.args[0],['systemctl','start','--no-block','ironcurtain-antivirus-update.service'])
+    av.request_official_update(wait=True);self.assertEqual(run.call_args.args[0],['systemctl','start','ironcurtain-antivirus-update.service']);self.assertEqual(run.call_args.kwargs['timeout'],270)
     for change in ['permissions','owner','link','source','fragment']:
      if change=='permissions':unit.chmod(0o666)
      elif change=='owner':os.chown(unit,65534,-1)

@@ -71,21 +71,28 @@ function completeReport(report, checks) {
 }
 
 export function createSecurityUi({ state, can, request, notify }) {
+  let localRunning = false;
+  let scanRequested = false;
+  let scanGeneration = 0;
+  let acceptedLocalTask = null;
   const consoleView = createSecurityConsole();
   const operationsWorkspace = createOperationsWorkspace({state,request,notify,
-    isScanBusy:()=>scanRequested || localRunning,
+    isScanBusy:()=>scanRequested || localRunning || multiEngine.isBusy(),
     recheck:async(action,panel)=>{const session=state.csrf,generation=scanGeneration+1;const receipt=await runLocalCheck(action);if(session!==state.csrf || generation!==scanGeneration || !can('system.manage'))throw Error('登录状态已改变，请重新核对检测状态');consoleView.open(panel,true);return receipt;}
   });
   const cloudIntelligence = createCloudIntelligence({state,request,notify});
-  const multiEngine = createMultiEngine({state,request,notify});
+  const multiEngine = createMultiEngine({state,request,notify,
+    allowed:()=>Boolean(state.csrf) && can('system.manage'),
+    isScanBusy:()=>scanRequested || localRunning,
+    onStateChange:()=>syncScanControls(),
+    onFinished:()=>void localSecurityPoller.refresh()
+  });
+  function syncScanControls(){consoleView.setExternalBusy(multiEngine.isBusy() || localRunning,multiEngine.isBusy()?'联合检测任务尚未确认结束；请在联合检测查看状态，本机扫描与处置复检暂不可重复启动':localRunning?'本机任务终态尚未确认；请刷新检测状态，断线或旧报告不能证明任务已结束':'');multiEngine.sync();operationsWorkspace.sync();}
   const engineReadiness = createEngineReadiness({state,request,notify});
   const engineMaintenance = createEngineMaintenance({state,request,notify,onFinished:()=>void engineReadiness.refresh()});
   const scheduleSettings = createScheduleSettings({state,request,notify});
   const updateSettings = createUpdateSettings({state,request,notify});
   const domainSettings = createDomainSettings({state,request,notify});
-  let localRunning = false;
-  let scanRequested = false;
-  let scanGeneration = 0;
   let bound = false;
   const localStateLabels = { ok: '正常', warning: '需复核', finding: '发现问题', unavailable: '不可用' };
   let findingsSignature=null,latestFindingsReport=null;
@@ -94,7 +101,7 @@ export function createSecurityUi({ state, can, request, notify }) {
     latestFindingsReport=report;
     const list = $('security-malware-findings'), status = $('security-malware-findings-state');
     const signature=JSON.stringify([report.state,report.findings_source,report.findings_state,report.findings_total,report.findings]);
-    if(signature===findingsSignature){operationsWorkspace.sync();return;}
+    if(signature===findingsSignature){syncScanControls();return;}
     if(list?.contains(document.activeElement) && state.csrf)return;
     findingsSignature=signature;list?.replaceChildren();
     const visible = (report.state === 'finished' || ['full','multi'].includes(report.findings_source)) && ['complete','partial'].includes(report.findings_state);
@@ -112,7 +119,7 @@ export function createSecurityUi({ state, can, request, notify }) {
       const action=document.createElement('button');action.type='button';action.className='sc-outline';action.textContent='隔离命中文件';action.dataset.quarantineId=item.id;action.disabled=true;
       row.append(title, path, evidence, action); list?.append(row);
     }
-    operationsWorkspace.sync();
+    syncScanControls();
   }
   function ruleLabel(value) {
     return value?.state==='ready' ? 'v'+value.version+' · 序号 '+value.sequence+' · '+value.indicators+' 条 · 有效至 '+new Date(value.expires_at*1000).toLocaleString() : value?.state==='missing' ? '尚未安装签名规则' : '规则不可用 / 未核验';
@@ -142,8 +149,14 @@ export function createSecurityUi({ state, can, request, notify }) {
     const list = $('security-local-checks');
     const history = $('security-local-history');
     const historyState = $('security-local-history-state');
-    localRunning = report.checkup?.state === 'running' || report.state === 'running' || ['indexing','scanning'].includes(report.full_scan?.state) || report.antivirus?.update_state==='running';
-    operationsWorkspace.sync();
+    const running=report.engine_update?.state==='running' || report.checkup?.state==='running' || report.state==='running' || ['indexing','scanning'].includes(report.full_scan?.state) || report.antivirus?.update_state==='running';
+    if(acceptedLocalTask){
+      const task=acceptedLocalTask.action==='checkup'?report.checkup:acceptedLocalTask.action==='full-scan'?report.full_scan:acceptedLocalTask.action==='scan'?report:acceptedLocalTask.action==='engine-update'?report.engine_update:null;
+      const terminal=task && task.task_id===acceptedLocalTask.id && ['finished','partial','failed','paused'].includes(task.state);
+      if(terminal){acceptedLocalTask=null;localRunning=running;}else localRunning=true;
+    }else if(running)localRunning=true;
+    else if(['finished','failed'].includes(report.state) || ['finished','failed','paused'].includes(report.engine_update?.state))localRunning=false;
+    syncScanControls();
     if (!status || !timestamp || !list) return;
     const checks = Array.isArray(report.checks) ? report.checks : [];
     const findings = checks.filter(item => item.state === 'finding').length;
@@ -180,8 +193,8 @@ export function createSecurityUi({ state, can, request, notify }) {
     allowed: () => Boolean(state.csrf) && can('system.manage') && !document.hidden && Boolean($('security-local-state')),
     render: renderLocalReport,
     onError: error => {
-      localRunning = false;
-      operationsWorkspace.sync();
+      // A failed poll cannot prove that the last confirmed task has ended.
+      syncScanControls();
       consoleView.update(null, { busy: scanRequested, issue: '本机代理不可用' });
       const status = $('security-local-state');
       if (status) { status.textContent = '本机代理不可用'; status.dataset.state = 'warning'; }
@@ -197,9 +210,11 @@ export function createSecurityUi({ state, can, request, notify }) {
   document.addEventListener('ironcurtain-session-cleared', () => {
     localSecurityPoller.stop();
     localRunning = false;
+    acceptedLocalTask = null;
     scanRequested = false;
     scanGeneration++;
     consoleView.clear('请登录后查看');
+    multiEngine.start();
     securityRenderGeneration++;
     for (const id of ['security-cloud-state', 'security-cloud-reason', 'security-identity', 'security-build-probe', 'security-license-probe', 'security-integrity', 'security-host-scan', 'security-build-host-scan', 'security-event-title', 'security-event-message', 'security-cloud-rules', 'security-local-rules', 'security-cloud-release']) {
       const node = $(id); if (node) node.textContent = '请登录后查看';
@@ -271,20 +286,21 @@ export function createSecurityUi({ state, can, request, notify }) {
     const endpoints={scan:'/api/scan','full-scan':'/api/full-scan',checkup:'/api/checkup','engine-update':'/api/engine/update'};
     if(!Object.hasOwn(endpoints,action))throw Error('不支持的检测操作');
     if(!state.csrf || !can('system.manage'))throw Error('请登录有检测权限的账户');
-    if(scanRequested || localRunning)throw Error('已有检测任务，请等待当前任务完成');
+    if(scanRequested || localRunning || multiEngine.isBusy())throw Error('已有检测任务，请等待当前任务完成');
     const session=state.csrf,generation=++scanGeneration;
     const current=()=>generation===scanGeneration && state.csrf===session && can('system.manage');
-    scanRequested=true;consoleView.setBusy(true,action);operationsWorkspace.sync();
+    scanRequested=true;consoleView.setBusy(true,action);syncScanControls();
     try {
       const receipt=await request(endpoints[action],{method:'POST',body:{}});
       if(!current())throw Error('登录状态已改变，请重新核对检测状态');
-      if(receipt?.state!=='running' || (action!=='engine-update' && !/^[a-f0-9]{32}$/.test(receipt.task_id || '')))throw Error(receipt?.error || '未取得有效检测任务确认，请刷新核对');
-      localRunning=true;operationsWorkspace.sync();
+      if(receipt?.state!=='running' || !/^[a-f0-9]{32}$/.test(receipt.task_id || ''))throw Error(receipt?.error || '未取得有效检测任务确认，请刷新核对');
+      acceptedLocalTask={action,id:receipt.task_id};
+      localRunning=true;syncScanControls();
       consoleView.requestResult(receipt);await localSecurityPoller.refresh();
       if(!current())throw Error('登录状态已改变，请重新核对检测状态');
       return receipt;
     } catch(error) {if(current())consoleView.requestResult({error:error.message});throw error;}
-    finally {if(generation===scanGeneration){scanRequested=false;consoleView.setBusy(false);operationsWorkspace.sync();}}
+    finally {if(generation===scanGeneration){scanRequested=false;consoleView.setBusy(false);syncScanControls();}}
   }
   function bind() {
     if (bound) return;
@@ -301,8 +317,9 @@ export function createSecurityUi({ state, can, request, notify }) {
       try { await localSecurityPoller.refresh(); }
       finally { button.disabled = false; }
     }));
-    document.querySelectorAll('[data-security-scan], [data-security-container-scan], [data-security-full-scan], [data-security-checkup], [data-security-engine-update]').forEach(button => button.addEventListener('click', async () => {
-      if (scanRequested || localRunning || !state.csrf || !can('system.manage')) return;
+    document.querySelectorAll('[data-security-scan], [data-security-full-scan], [data-security-checkup], [data-security-engine-update]').forEach(button => button.addEventListener('click', async () => {
+      if (!state.csrf || !can('system.manage')) return;
+      if (scanRequested || localRunning || multiEngine.isBusy()){notify('已有检测任务，任务终态尚未确认，请刷新检测状态',true);return;}
       const session=state.csrf,generation=scanGeneration;
       const action=button.hasAttribute('data-security-engine-update')?'engine-update':button.hasAttribute('data-security-checkup')?'checkup':button.hasAttribute('data-security-full-scan')?'full-scan':'scan';
       try {await runLocalCheck(action);}

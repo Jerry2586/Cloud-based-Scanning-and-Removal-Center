@@ -157,10 +157,14 @@ class AgentRecoveryTests(unittest.TestCase):
   a.atomic_json(self.state/'checkup-report.json',value)
   self.assertEqual(a.Agent(self.agent.profile,self.state).checkup['state'],'idle')
  def test_local_engine_update_busy_cooldown_failure_and_fixed_action(self):
-  with patch.object(a.antivirus,'update_status',return_value='idle'),patch.object(a.antivirus,'request_official_update') as request:
-   self.assertEqual(self.agent.trigger_engine_update()[0],202);request.assert_called_once_with()
+  with patch.object(a.antivirus,'check_official_updater'),patch.object(a.antivirus,'update_status',return_value='idle'),patch.object(a.threading,'Thread'):
+   code,receipt=self.agent.trigger_engine_update();self.assertEqual(code,202);self.assertRegex(receipt['task_id'],r'^[a-f0-9]{32}$')
+   self.assertEqual(self.agent.trigger_engine_update()[0],409)
+   with patch.object(a.antivirus,'request_official_update') as request:
+    self.agent.update_engine();request.assert_called_once_with(wait=True)
    self.assertEqual(self.agent.trigger_engine_update()[0],429)
-   self.agent.engine_update_last=0;request.side_effect=ValueError('fixture');self.assertEqual(self.agent.trigger_engine_update()[0],503)
+   self.agent.engine_update_last=0
+   with patch.object(a.antivirus,'check_official_updater',side_effect=ValueError('fixture')):self.assertEqual(self.agent.trigger_engine_update()[0],503)
   with patch.object(a.antivirus,'update_status',return_value='running'):
    self.assertEqual(self.agent.trigger_engine_update()[0],409)
 

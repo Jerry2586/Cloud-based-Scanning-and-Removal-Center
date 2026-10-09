@@ -70,7 +70,7 @@ def update_status(service=None):
     except (OSError, ValueError, UnicodeError, subprocess.SubprocessError): return 'unavailable'
 
 UPDATE_UNIT='/etc/systemd/system/ironcurtain-antivirus-update.service'
-def request_official_update():
+def check_official_updater():
     # The browser can only start the root-installed, unprivileged official updater.
     if database_source()!='official-direct' or not shutil.which('freshclam'): raise ValueError('official updater unavailable')
     unit=pathlib.Path(UPDATE_UNIT)
@@ -80,7 +80,16 @@ def request_official_update():
             raise ValueError('untrusted updater unit')
     properties=_properties('ironcurtain-antivirus-update.service','LoadState,FragmentPath')
     if properties.get('LoadState')!='loaded' or properties.get('FragmentPath')!=UPDATE_UNIT: raise ValueError('unexpected updater unit')
-    subprocess.run(['systemctl','start','--no-block','ironcurtain-antivirus-update.service'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1, check=True)
+
+def request_official_update(*, wait=False):
+    check_official_updater()
+    # Blocking start confirms the root-installed oneshot result, not merely enqueueing.
+    command=['systemctl','start'] + ([] if wait else ['--no-block']) + ['ironcurtain-antivirus-update.service']
+    subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=270 if wait else 1, check=True)
+    if wait:
+        completed=_properties('ironcurtain-antivirus-update.service','LoadState,ActiveState,Result')
+        if completed.get('LoadState')!='loaded' or completed.get('ActiveState')!='inactive' or completed.get('Result')!='success':
+            raise ValueError('updater completion not confirmed')
 
 @functools.lru_cache(maxsize=2)
 def _version(executable, bucket):

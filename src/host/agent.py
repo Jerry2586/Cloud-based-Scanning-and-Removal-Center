@@ -522,12 +522,32 @@ def valid_checkup(value,profile):
     if value['stage']=='files' and not env: return False
     return True
 
+def valid_engine_update(value):
+    if (not isinstance(value,dict) or value.get('schema')!='ironcurtain-engine-update/v1'
+        or value.get('state') not in ('running','finished','failed','paused')
+        or not isinstance(value.get('task_id'),str) or not re.fullmatch(r'[a-f0-9]{32}',value['task_id'])
+        or not valid_timestamp(value.get('started_at')) or not valid_timestamp(value.get('updated_at'))
+        or value['updated_at']<value['started_at'] or not isinstance(value.get('detail'),str)
+        or not 0<len(value['detail'])<=180 or re.search(r'[\x00-\x1f\x7f]',value['detail'])): return False
+    end=value.get('finished_at')
+    return end is None if value['state']=='running' else valid_timestamp(end) and value['started_at']<=end<=value['updated_at']
+
 class Agent:
     def __init__(self,profile,state_dir,interval=300,rule_path=None):
         self.rule_path=rule_path; self.rule_hits={'items':[],'total':0,'state':'unavailable'}
         self.profile=profile_validate(profile); self.state_dir=pathlib.Path(state_dir); self.interval=interval; self.lock=threading.Lock(); self.last=0; self.stop=threading.Event()
         self.dispatch_lock=threading.Lock(); self.management_lease=ManagementLease.acquire; self.maintenance=lambda:True
         self.engine_update_last=0
+        self.engine_update={'schema':'ironcurtain-engine-update/v1','state':'unavailable'}
+        try:
+            saved_update=private_json(self.state_dir/'engine-update-report.json',4096)
+            if not valid_engine_update(saved_update): raise ValueError('invalid saved engine update')
+            if saved_update['state']=='running':
+                stamp=max(utc(),saved_update['updated_at'])
+                saved_update={**saved_update,'state':'paused','finished_at':stamp,'updated_at':stamp,'detail':'代理重启中断更新确认，请检查病毒库状态后重试'}
+                atomic_json(self.state_dir/'engine-update-report.json',saved_update)
+            self.engine_update=saved_update
+        except (OSError,ValueError,TypeError): pass
         self.previous={}; self.history=[]; self.history_available=True; self.outbound=None; self.findings_bundle={'schema':'ironcurtain-findings/v1','state':'unavailable','items':[], 'total':0}
         self.inventory={'state':'unavailable'}; self.full_result={'schema':'ironcurtain-full-scan/v1','state':'idle'}; self.full_running=False; self.findings_source='quick'; self.checkup={'schema':'ironcurtain-checkup/v1','state':'idle'}
         try:
@@ -592,6 +612,7 @@ class Agent:
             result=copy.deepcopy(self.result)
             result['profile_digest']=fullscan.profile_digest(self.profile)
             result['antivirus']=engine
+            result['engine_update']=copy.deepcopy(self.engine_update)
             result['checkup']=copy.deepcopy(self.checkup)
             result['inventory']=inventory.public_inventory(self.inventory)
             result['protection']=inventory.protection(self.profile,self.inventory,result['antivirus'],result.get('checks',[]),result.get('checked_at') if result['state']=='finished' else None)
@@ -609,19 +630,53 @@ class Agent:
                 result['history']=result['history'][-8:]
                 if result['history_state']=='ok': result['history_state']='truncated'
             return result
-    def trigger_engine_update(self):
-        with self.dispatch_lock, self.lock:
-            if self.maintenance():
-                return 409, {'state':'unavailable','reason':'maintenance active'}
-            if (getattr(self,'multi',None) and self.multi.running) or self.full_running or self.result['state']=='running' or antivirus.update_status()=='running':
+    @managed_detection
+    def trigger_engine_update(self, lease):
+        with self.lock:
+            if self.engine_update.get('state')=='running' or (getattr(self,'multi',None) and self.multi.running) or self.full_running or self.result['state']=='running' or antivirus.update_status()=='running':
                 return 409,{'state':'unavailable','reason':'local task already active'}
-            if self.engine_update_last and time.monotonic()-self.engine_update_last<300:
-                return 429,{'state':'unavailable','reason':'updater cooldown'}
-            try: antivirus.request_official_update()
+            try: antivirus.check_official_updater()
             except (OSError,ValueError,subprocess.SubprocessError):
                 return 503,{'state':'unavailable','reason':'official updater unavailable'}
+            if self.engine_update_last and time.monotonic()-self.engine_update_last<300:
+                return 429,{'state':'unavailable','reason':'updater cooldown'}
+            try:
+                stamp=utc()
+                value={'schema':'ironcurtain-engine-update/v1','state':'running','task_id':uuid.uuid4().hex,'started_at':stamp,'updated_at':stamp,'detail':'官方病毒库更新中，等待更新器完成'}
+                atomic_json(self.state_dir/'engine-update-report.json',value)
+            except (OSError,ValueError,subprocess.SubprocessError):
+                return 503,{'state':'unavailable','reason':'official updater unavailable'}
+            self.engine_update=value
+            worker=threading.Thread(target=lease.run,args=(self.update_engine,),daemon=True)
+            try: worker.start()
+            except RuntimeError:
+                stamp=max(utc(),value['updated_at'])
+                failed={**value,'state':'failed','finished_at':stamp,'updated_at':stamp,'detail':'更新任务无法启动，请重试'}
+                try:
+                    atomic_json(self.state_dir/'engine-update-report.json',failed)
+                    self.engine_update=failed
+                except (OSError,ValueError):
+                    self.engine_update={**failed,'state':'paused','detail':'更新任务未启动且记录保存失败，请检查代理日志后重试'}
+                return 503,{'state':'unavailable','reason':'update worker unavailable'}
             self.engine_update_last=time.monotonic()
-        return 202,{'state':'running'}
+        return 202,{'state':'running','task_id':value['task_id']}
+    def update_engine(self):
+        state='finished';detail='官方更新器执行完成；病毒库实际加载由文件查杀确认'
+        try: antivirus.request_official_update(wait=True)
+        except subprocess.TimeoutExpired:
+            state='paused';detail='更新器完成确认超时，请核对病毒库与服务状态'
+        except (OSError,ValueError,subprocess.SubprocessError):
+            state='failed';detail='官方病毒库更新失败，请检查更新器日志与网络'
+        with self.lock:
+            stamp=max(utc(),self.engine_update['updated_at'])
+            value={**self.engine_update,'state':state,'finished_at':stamp,'updated_at':stamp,'detail':detail}
+            try: atomic_json(self.state_dir/'engine-update-report.json',value)
+            except (OSError,ValueError):
+                # The worker has exited; expose an unconfirmed terminal, never success.
+                # Retained disk running state also recovers as paused after restart.
+                self.engine_update={**value,'state':'paused','detail':'更新结果保存失败，无法确认完成，请检查代理日志后重试'}
+                return
+            self.engine_update=value
     def clear_checkup(self):
         # A separate scan invalidates the combined record on disk as well as in memory.
         value={'schema':'ironcurtain-checkup/v1','state':'idle','profile_digest':fullscan.profile_digest(self.profile)}
@@ -631,7 +686,7 @@ class Agent:
     @managed_detection
     def trigger(self, lease):
         with self.lock:
-            if (getattr(self,'multi',None) and self.multi.running) or self.full_running: return 409,{'state':'unavailable','reason':'file scan in progress'}
+            if self.engine_update.get('state')=='running' or (getattr(self,'multi',None) and self.multi.running) or self.full_running: return 409,{'state':'unavailable','reason':'file scan in progress'}
             if self.result['state']=='running': return 409,{**copy.deepcopy(self.result),'history':copy.deepcopy(self.history[-8:]),'history_state':'unavailable' if not self.history_available else 'truncated' if len(self.history)>8 else 'ok'}
             if self.last and time.monotonic()-self.last<60: return 429,{'state':'unavailable','reason':'scan cooldown'}
             if not self.clear_checkup(): return 503,{'state':'unavailable','reason':'task persistence unavailable'}
@@ -680,7 +735,7 @@ class Agent:
     @managed_detection
     def trigger_full(self, lease):
         with self.lock:
-            if (getattr(self,'multi',None) and self.multi.running) or self.full_running or self.result['state']=='running': return 409,{'state':'unavailable','reason':'scan already active'}
+            if self.engine_update.get('state')=='running' or (getattr(self,'multi',None) and self.multi.running) or self.full_running or self.result['state']=='running': return 409,{'state':'unavailable','reason':'scan already active'}
             engine=antivirus.engine_status()
             if engine.get('update_state')=='running': return 409,{'state':'unavailable','reason':'database update in progress'}
             if not (self.profile['program_roots'] or self.profile['business_roots']) or not engine.get('installed') or engine.get('state')!='configured':
@@ -721,7 +776,7 @@ class Agent:
     @managed_detection
     def trigger_checkup(self, lease):
         with self.lock:
-            if (getattr(self,'multi',None) and self.multi.running) or self.full_running or self.result['state']=='running' or antivirus.update_status()=='running': return 409,{'state':'unavailable','reason':'scan already active'}
+            if self.engine_update.get('state')=='running' or (getattr(self,'multi',None) and self.multi.running) or self.full_running or self.result['state']=='running' or antivirus.update_status()=='running': return 409,{'state':'unavailable','reason':'scan already active'}
             if self.last and time.monotonic()-self.last<60: return 429,{'state':'unavailable','reason':'scan cooldown'}
             started=utc(); task_id=uuid.uuid4().hex
             task={'schema':'ironcurtain-checkup/v1','state':'running','task_id':task_id,'stage':'environment','profile_digest':fullscan.profile_digest(self.profile),'started_at':started,'updated_at':started,'reasons':[]}
@@ -833,13 +888,13 @@ def serve(profile_file,state_dir,socket_path,allowed_uid,group):
     if os.geteuid()!=0: raise SystemExit('host agent must be started by root')
     agent=Agent(private_json(profile_file),state_dir,rule_path=pathlib.Path(profile_file).parent/'rules.json')
     update_bridge=updates.Bridge(private_bytes,atomic_json,dispatch_lock=agent.dispatch_lock,
-        management_check=lambda:management_busy() or antivirus.update_status()=='running' or maintenance_bridge.busy_status() or engine_bridge.running)
-    agent.multi=multi_engine.Bridge(agent,profile_file,{'open':secure_fd,'read':private_json,'write':atomic_json,'digest':fullscan.profile_digest,'valid_file_report':fullscan.valid_report,'updating':antivirus.update_status,'discover':inventory.discover,'runner':Runner})
+        management_check=lambda:management_busy() or agent.engine_update.get('state')=='running' or antivirus.update_status()=='running' or maintenance_bridge.busy_status() or engine_bridge.running)
+    agent.multi=multi_engine.Bridge(agent,profile_file,{'open':secure_fd,'read':private_json,'write':atomic_json,'digest':fullscan.profile_digest,'valid_file_report':fullscan.valid_report,'updating':lambda:'running' if agent.engine_update.get('state')=='running' else antivirus.update_status(),'discover':inventory.discover,'runner':Runner})
     engine_bridge=engine_readiness.Bridge(engine_readiness.NativeProbe(secure_fd),antivirus.engine_status,
-        busy=lambda:maintenance_active(update_bridge.status()) or antivirus.update_status()=='running' or maintenance_bridge.busy_status(), dispatch_lock=agent.dispatch_lock)
+        busy=lambda:maintenance_active(update_bridge.status()) or agent.engine_update.get('state')=='running' or antivirus.update_status()=='running' or maintenance_bridge.busy_status(), dispatch_lock=agent.dispatch_lock)
     maintenance_bridge=engine_maintenance.Bridge(private_bytes,atomic_json,dispatch_lock=agent.dispatch_lock,
-        busy=lambda:management_busy() or maintenance_active(update_bridge.status(),lambda:False) or antivirus.update_status()=='running' or engine_bridge.running or agent.full_running or agent.result['state']=='running' or agent.multi.running)
-    agent.maintenance=lambda:maintenance_active(update_bridge.status(), lambda:False) or antivirus.update_status()=='running' or maintenance_bridge.busy_status()
+        busy=lambda:management_busy() or maintenance_active(update_bridge.status(),lambda:False) or agent.engine_update.get('state')=='running' or antivirus.update_status()=='running' or engine_bridge.running or agent.full_running or agent.result['state']=='running' or agent.multi.running)
+    agent.maintenance=lambda:maintenance_active(update_bridge.status(), lambda:False) or agent.engine_update.get('state')=='running' or antivirus.update_status()=='running' or maintenance_bridge.busy_status()
     agent.scheduler=scheduler.Scheduler(state_dir,private_json,atomic_json,agent.scheduled_start,agent.scheduled_observe)
     class Handler(http.server.BaseHTTPRequestHandler):
         def setup(self):

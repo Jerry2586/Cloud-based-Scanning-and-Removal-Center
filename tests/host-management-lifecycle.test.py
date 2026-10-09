@@ -41,6 +41,20 @@ class LeaseTest(unittest.TestCase):
                     deadline=time.monotonic()+2
                     while not self.exclusive() and time.monotonic()<deadline:time.sleep(.01)
                     self.assertTrue(self.exclusive())
+    def test_official_update_holds_real_management_lease_until_worker_exit(self):
+        entered,release=threading.Event(),threading.Event()
+        def updating(**kw):
+            self.assertEqual(kw,{'wait':True});entered.set();release.wait(5)
+        with patch.object(a.antivirus,'check_official_updater'),patch.object(a.antivirus,'update_status',return_value='idle'),patch.object(a.antivirus,'request_official_update',side_effect=updating):
+            code,receipt=self.agent.trigger_engine_update();self.assertEqual(code,202);self.assertTrue(entered.wait(2))
+            try:
+                self.assertFalse(self.exclusive());self.assertEqual(self.agent.trigger()[0],409)
+                self.assertEqual(self.agent.trigger_engine_update()[0],409)
+                self.assertEqual(self.agent.status()['engine_update']['task_id'],receipt['task_id'])
+            finally:release.set()
+            deadline=time.monotonic()+2
+            while not self.exclusive() and time.monotonic()<deadline:time.sleep(.01)
+            self.assertTrue(self.exclusive());self.assertEqual(self.agent.engine_update['state'],'finished')
     def test_combined_checkup_holds_lease_across_environment_and_files(self):
         entered,release,done=threading.Event(),threading.Event(),threading.Event()
         def environment():

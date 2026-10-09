@@ -37,12 +37,16 @@ def call(path, body=None, *, bad_csrf=False):
 
 assert call('/api/engines/maintenance')[0] == 401
 assert call('/api/engines/install', {})[0] == 401
+assert call('/api/engine/update', {})[0] == 401
 code, headers, result = call('/api/login', credentials)
 assert code == 200, 'Disposable panel credentials rejected'
 cookie = headers['Set-Cookie'].split(';')[0]
 csrf = result['csrf']
 del credentials
 assert call('/api/engines/install', {}, bad_csrf=True)[0] == 403
+assert call('/api/engine/update', {}, bad_csrf=True)[0] == 403
+# Cloud-signed databases must never be overwritten by the direct updater.
+assert call('/api/engine/update', {})[0] == 503
 assert call('/api/engines/install', {'command': 'custom'})[0] == 400
 code, _, status = call('/api/engines/maintenance')
 assert code == 200 and status['state'] in ('idle', 'finished', 'failed'), status
