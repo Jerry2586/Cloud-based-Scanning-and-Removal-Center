@@ -54,7 +54,7 @@ export function summarizeLocalSecurity(report,{coverageComplete=false,stale=fals
  return {title,detail,tone,findings,infected,attention,notes,coverage:coverageComplete && !stale?'报告完整且有效':'尚不能确认完整覆盖'};
 }
 // Exactly one foreground task; each percentage keeps its original denominator.
-export function describeWorkbenchTask(report,{busy=false,action=null,trusted=false,requestIssue=null,requestedTaskId=null,now=Date.now()}={}) {
+function describeTask(report,{busy=false,action=null,trusted=false,requestIssue=null,requestedTaskId=null,now=Date.now()}={}) {
  const checkup=describeCheckup(report,{busy:busy && action==='checkup',now});
  const file=sanitizeFullScan(report?.full_scan), fileView=describeFullScan(file,now);
  const progress=hostScanProgress(report);
@@ -77,4 +77,30 @@ export function describeWorkbenchTask(report,{busy=false,action=null,trusted=fal
   report?.checked_at && task('scan',trusted?'环境与容器检查已完成':'环境检查记录待复核',trusted?'25 项固定核验 · 详情见主机与容器':'请核对报告时间和覆盖范围',trusted?100:null,false,'环境检查记录',report.checked_at)
  ].filter(entry=>entry && safeTimestamp(entry.at)).sort((a,b)=>Date.parse(b.at)-Date.parse(a.at));
  return entries[0] || task('idle','还没有执行扫描','一键体检会先检查主机、容器和端口，再扫描已纳管目录',null,false,'等待开始');
+}
+
+// Navigation is offered only for current, validated terminal reports. It never starts a task.
+export function describeWorkbenchTask(report,options={}) {
+ const value=describeTask(report,options), now=options.now ?? Date.now();
+ const current=value.at && Date.parse(value.at)>=now-900000 && Date.parse(value.at)<=now+30000;
+ const actions=[];
+ if(!value.active && current && !options.requestIssue && !['请求需要复核','等待本次报告'].includes(value.stage)) {
+  const file=sanitizeFullScan(report?.full_scan);
+  if(value.kind==='full-scan' && ['finished','partial'].includes(file.state)) {
+   if(file.infected>0)actions.push({label:'查看命中文件',panel:'quarantine'});
+   actions.push({label:'查看扫描详情',panel:'scan'});
+  } else if(value.kind==='scan' && options.trusted && report?.state==='finished') {
+   if(report.checks?.some(check=>validHostCheck(check) && check.state==='finding'))actions.push({label:'处理环境风险',panel:'quarantine'});
+   actions.push({label:'查看主机与容器结果',panel:'environment'});
+  } else if(value.kind==='checkup' && ['finished','partial'].includes(describeCheckup(report,{now}).state)) {
+   actions.push({label:'查看体检结果',panel:'quarantine'},{label:'查看覆盖详情',panel:'scan'});
+  }
+ }
+ return {...value,actions};
+}
+// The environment page retains its own progress even while a file task is in front.
+export function describeEnvironmentTask(report,options={}) {
+ return describeWorkbenchTask(report ? {...report,full_scan:undefined,checkup:undefined,antivirus:undefined} : report,
+  {...options,busy:options.busy && options.action==='scan',requestIssue:options.action==='scan'?options.requestIssue:null,
+   requestedTaskId:options.action==='scan'?options.requestedTaskId:null});
 }

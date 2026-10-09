@@ -46,7 +46,7 @@ func (e ClamAV) Run(ctx context.Context, q Request, progress func(Result)) Resul
 		progress(r)
 		return nil
 	}
-	args := []string{"-I", q.WorkerFile, q.ProfileFile, q.StateDir, q.ProfileDigest}
+	args := []string{"-I", q.WorkerFile, q.ProfileFile, q.StateDir, q.ProfileDigest, q.JobID}
 	var c CommandResult
 	if s, ok := e.Exec.(StreamingExecutor); ok {
 		c = s.ExecuteStream(ctx, "/usr/bin/python3", args, consume)

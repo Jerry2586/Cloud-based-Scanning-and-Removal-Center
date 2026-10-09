@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {HOST_SCAN_IDS} from '../src/contracts/host-scan-contract.js';
-import {summarizeLocalSecurity,describeWorkbenchTask} from '../src/contracts/local-workbench.js';
+import {summarizeLocalSecurity,describeWorkbenchTask,describeEnvironmentTask} from '../src/contracts/local-workbench.js';
 const now=Date.now(),at=n=>new Date(now+n*1000).toISOString();
 const check=(id,state='ok')=>({id,name:id,detail:'observed',state,category:'host',severity:state==='finding'?'high':'info',checked_at:at(-10),scope:id,evidence_digest:'a'.repeat(64)});
 const protection=()=>({schema:'ironcurtain-protection/v1',state:'ready',checked_at:at(-10),issues:[],program_roots:1,business_roots:0,enrolled_containers:0,discovered_containers:0,unenrolled_containers:0,file_scope:'configured-directories-only',trust:'independent-signatures-required',monitor_interval_seconds:300});
@@ -67,4 +67,28 @@ test('complete host checks cannot hide missing, empty, incomplete or stale prote
  // File task completion is independent of whole-host protection readiness.
  const files=describeWorkbenchTask({...r,protection:{...protection(),state:'incomplete'},full_scan:{...scan(),infected:0,clean:2}},{now});
  assert.equal(files.kind,'full-scan');assert.equal(files.percent,100);
+});
+
+test('finished file tasks offer results without disguising partial coverage',()=>{
+ const report={state:'idle',full_scan:scan()};
+ assert.deepEqual(describeWorkbenchTask(report,{now}).actions,[{label:'查看命中文件',panel:'quarantine'},{label:'查看扫描详情',panel:'scan'}]);
+ const clean={...report,full_scan:{...scan(),infected:0,clean:2}};
+ assert.deepEqual(describeWorkbenchTask(clean,{now}).actions,[{label:'查看扫描详情',panel:'scan'}]);
+ const partial={...report,full_scan:{...scan(),state:'partial',processed:1,clean:0,errors:0,reasons:['超时']}};
+ assert.equal(describeWorkbenchTask(partial,{now}).percent,50);
+ assert.equal(describeWorkbenchTask(partial,{now}).actions[0].panel,'quarantine');
+});
+test('pending, rejected, stale, failed and invalid reports offer no completion actions',()=>{
+ const report={state:'idle',full_scan:scan()};
+ for(const options of [{busy:true},{requestIssue:'被拒绝'},{requestedTaskId:'b'.repeat(32)}])assert.deepEqual(describeWorkbenchTask(report,{now,...options}).actions,[]);
+ for(const file of [{...scan(),updated_at:at(-1000),started_at:at(-1100),finished_at:at(-1000)},{...scan(),state:'failed'},{...scan(),indexed:-1}])assert.deepEqual(describeWorkbenchTask({...report,full_scan:file},{now}).actions,[]);
+});
+test('environment progress and result links remain independent of a foreground file task',()=>{
+ const report={state:'finished',checked_at:at(-10),checks:HOST_SCAN_IDS.map(id=>check(id)),full_scan:scan()};
+ assert.equal(describeWorkbenchTask(report,{now,trusted:true}).kind,'full-scan');
+ const view=describeEnvironmentTask(report,{now,trusted:true,busy:true,action:'full-scan',requestedTaskId:'b'.repeat(32),requestIssue:'文件请求失败'});
+ assert.equal(view.kind,'scan');assert.equal(view.percent,100);assert.equal(view.active,false);
+ assert.deepEqual(view.actions,[{label:'查看主机与容器结果',panel:'environment'}]);
+ assert.deepEqual(describeEnvironmentTask(report,{now,trusted:false}).actions,[]);
+ assert.equal(describeEnvironmentTask(report,{now,busy:true,action:'scan'}).active,true);
 });

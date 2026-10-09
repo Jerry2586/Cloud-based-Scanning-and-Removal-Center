@@ -30,5 +30,8 @@ export function sanitizeMultiEngine(value) {
  }
  if (value.completed!==engines.filter(e=>terminal.has(e.state)).length || value.coverage!==engines.filter(e=>e.state==='complete').length || (value.state==='finished' && value.coverage!==4) || (value.state==='partial' && value.coverage===4)) return bad;
  if (value.state!=='running' && (value.completed!==4 || !time(value.finished_at) || value.finished_at<value.started_at || value.finished_at>value.updated_at)) return bad;
- return {schema:bad.schema,state:value.state,job_id:value.job_id,profile_digest:value.profile_digest,started_at:value.started_at,updated_at:value.updated_at,...(value.state!=='running'?{finished_at:value.finished_at}:{}),completed:value.completed,total:4,coverage:value.coverage,engines,...status};
+ const note=value.file_evidence;
+ if(note!==undefined && (!note || typeof note!=='object' || Array.isArray(note) || !['ready','unavailable','superseded','not-applicable'].includes(note.state) || !safe(note.reason,180) || !['finished','partial'].includes(value.state))) return bad;
+ const evidence=note?{file_evidence:{state:note.state,reason:note.reason}}:{};
+ return {schema:bad.schema,state:value.state,job_id:value.job_id,profile_digest:value.profile_digest,started_at:value.started_at,updated_at:value.updated_at,...(value.state!=='running'?{finished_at:value.finished_at}:{}),completed:value.completed,total:4,coverage:value.coverage,engines,...evidence,...status};
 }

@@ -1,5 +1,5 @@
 """Real clamscan with a deterministic test-only signature, not official DB acceptance."""
-import importlib.util, os, pathlib, shutil, tempfile, unittest
+import contextlib, hashlib, importlib.util, io, json, os, pathlib, shutil, sys, tempfile, unittest
 from unittest.mock import patch
 spec=importlib.util.spec_from_file_location('agent',pathlib.Path(__file__).parents[1]/'src/host/agent.py')
 a=importlib.util.module_from_spec(spec);spec.loader.exec_module(a)
@@ -139,4 +139,69 @@ class EngineTests(unittest.TestCase):
             self.assertEqual(result['findings'][0]['path'],str(infected))
             self.assertEqual(result['findings'][0]['signature'],'IronCurtain.Enrolled.UNOFFICIAL')
             self.assertEqual(clean.read_bytes(),b'clean fixture'); self.assertEqual(infected.read_bytes(),pattern)
+    @unittest.skipUnless(os.name == 'posix' and os.geteuid() == 0, 'requires root file evidence and quarantine')
+    def test_real_worker_binds_joint_file_evidence_and_quarantine(self):
+        # Real clamscan and worker; the other adapters are explicitly unavailable.
+        source=pathlib.Path(__file__).parents[1]/'src/host'
+        def load(name,file):
+            spec=importlib.util.spec_from_file_location(name,source/file)
+            module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
+        worker=load('real_joint_worker','clamav-worker.py')
+        bridge_module=load('real_joint_bridge','multi_engine.py')
+        operations=load('real_joint_operations','operations.py')
+        with tempfile.TemporaryDirectory(prefix='ic-real-joint-',dir='/root') as tmp:
+            base=pathlib.Path(tmp);base.chmod(0o700)
+            scope=base/'site';scope.mkdir();db=base/'fixture-db';db.mkdir();state=base/'state';state.mkdir(mode=0o700)
+            pattern=b'IRONCURTAIN_REAL_JOINT_TEST_ONLY'
+            (db/'fixture.ndb').write_text('IronCurtain.Joint:0:*:'+pattern.hex()+'\n')
+            clean=scope/'clean.txt';clean.write_bytes(b'clean fixture')
+            target=scope/'infected.txt'
+            profile=worker.host.profile_validate({'schema':'ironcurtain-profile/v1','program_roots':[str(scope)]})
+            profile_file=base/'profile.json';worker.host.atomic_json(profile_file,profile)
+            digest=worker.host.fullscan.profile_digest(profile)
+            engine={'installed':True,'state':'configured','database_version':1,'database_at':a.utc(),
+                'signatures':1,'database_generation':'a'*64}
+            real_runner=worker.host.Runner()
+            def runner(args,**kwargs):
+                fixture=[x for x in args if x not in ['--official-db-only=yes','--fail-if-cvd-older-than=7']]
+                fixture=[('--database='+str(db)) if x.startswith('--database=') else x for x in fixture]
+                return real_runner(fixture,**kwargs)
+            agent=worker.host.Agent(profile,state)
+            tools={'read':worker.host.private_json,'write':worker.host.atomic_json,'digest':worker.host.fullscan.profile_digest,
+                'valid_file_report':worker.host.fullscan.valid_report,'updating':lambda:'idle'}
+            bridge=bridge_module.Bridge(agent,profile_file,tools)
+            for changed in (False,True):
+                target.write_bytes(pattern);job=('c' if changed else 'b')*64
+                started=bridge_module.stamp();output=io.StringIO()
+                with patch.object(worker.host.antivirus,'engine_status',return_value=engine), \
+                     patch.object(worker.host.antivirus,'database_status',return_value=engine), \
+                     patch.object(worker.host.antivirus,'DATABASE_DIR',str(db)), \
+                     patch.object(worker.host,'Runner',return_value=runner), \
+                     patch.object(worker.signal,'signal'), \
+                     patch.object(sys,'argv',[str(source/'clamav-worker.py'),str(profile_file),str(state),digest,job]), \
+                     contextlib.redirect_stdout(output):
+                    worker.main()
+                detail=json.loads(output.getvalue().splitlines()[-1])
+                report=worker.host.private_json(state/'multi-clamav'/'full-scan-report.json')
+                self.assertEqual(report['multi_job_id'],job)
+                self.assertEqual(detail['evidence_digest'],hashlib.sha256(worker.host.canonical(report)).hexdigest())
+                self.assertEqual((report['processed'],report['clean'],report['infected']),(2,1,1))
+                end=bridge_module.stamp()
+                unavailable=[dict(id=i,state='unavailable',detail='adapter not part of this integration test',
+                    completed=0,total=0,finding_total=0,findings=[]) for i in bridge_module.IDS[1:]]
+                summary=dict(schema='ironcurtain-multi-engine/v1',job_id=job,profile_digest=digest,state='partial',
+                    started_at=started,updated_at=end,finished_at=end,completed=4,total=4,coverage=1,engines=[detail,*unavailable])
+                self.assertTrue(bridge_module.valid(summary,digest))
+                self.assertTrue(bridge.publish_file_evidence(summary))
+                self.assertEqual(agent.findings_source,'multi')
+                item=agent.findings_bundle['items'][0]
+                self.assertEqual(item['path'],str(target))
+                if changed:
+                    target.write_bytes(b'changed after detection')
+                    with self.assertRaises(ValueError):operations.r.quarantine(state,profile,item['id'])
+                    self.assertEqual(target.read_bytes(),b'changed after detection')
+                else:
+                    record=operations.r.quarantine(state,profile,item['id'])
+                    self.assertEqual(record['state'],'quarantined');self.assertFalse(target.exists())
+                self.assertEqual(clean.read_bytes(),b'clean fixture')
 if __name__=='__main__':unittest.main()

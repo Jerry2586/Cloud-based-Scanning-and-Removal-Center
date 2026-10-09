@@ -72,7 +72,7 @@ func (interruptedStream) Execute(context.Context, string, []string) CommandResul
 	return CommandResult{Code: -1}
 }
 func (interruptedStream) ExecuteStream(_ context.Context, _ string, args []string, consume func([]byte) error) CommandResult {
-	if len(args) != 5 || args[0] != "-I" {
+	if len(args) != 6 || args[0] != "-I" || args[5] != requestFixture().JobID {
 		return CommandResult{Code: -1, Err: errors.New("bad worker args")}
 	}
 	r := base("clamav", "running", "observed")

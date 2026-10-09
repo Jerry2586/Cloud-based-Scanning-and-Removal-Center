@@ -18,6 +18,20 @@ test('observed CVEs survive partial completion and assets are independently cate
  assert.equal(sanitizeMultiEngine(v).engines[1].findings.length,1);
  v.engines[2].findings=[{kind:'malware',severity:'high',target:'port',rule:'bad',detail:''}];v.engines[2].finding_total=1;assert.equal(sanitizeMultiEngine(v).state,'unavailable');
 });
+test('completed detection keeps bounded independent file evidence status',()=>{
+ const v=make();v.state='partial';v.completed=4;v.coverage=1;v.finished_at=v.updated_at;
+ for(const e of v.engines)e.state='unavailable';v.engines[0].state='complete';
+ for(const state of ['ready','unavailable','superseded','not-applicable']) {
+  v.file_evidence={state,reason:'文件证据状态',secret:'not public'};
+  const actual=sanitizeMultiEngine(v);assert.equal(actual.state,'partial');assert.equal(actual.coverage,1);
+  assert.deepEqual(actual.file_evidence,{state,reason:'文件证据状态'});
+ }
+ for(const note of [{state:'ready',reason:'x'.repeat(181)},{state:'clean',reason:'bad'},[],null]) {
+  v.file_evidence=note;assert.equal(sanitizeMultiEngine(v).state,'unavailable');
+ }
+ const running=make();running.file_evidence={state:'ready',reason:'premature'};
+ assert.equal(sanitizeMultiEngine(running).state,'unavailable');
+});
 test('host client exposes only a fixed Unix action and rejects missing agent',async()=>{
  assert.throws(()=>localMultiEngine('shell'),/Unknown/);
  const value=await localMultiEngine('status',{IRONCURTAIN_SCAN_SOCKET:join(tmpdir(),'missing-ironcurtain-'+process.pid+'.sock')});assert.equal(value.state,'unavailable');assert.equal(value.response_status,503);

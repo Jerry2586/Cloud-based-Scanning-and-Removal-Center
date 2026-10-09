@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Fixed Go adapter: reuse the pinned file queue and managed official database."""
-import hashlib, importlib.util, json, os, pathlib, signal, sys, threading, time
+import hashlib, importlib.util, json, os, pathlib, re, signal, sys, threading, time
 sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location('ironcurtain_worker_agent', pathlib.Path(__file__).with_name('agent.py'))
 host = importlib.util.module_from_spec(spec); spec.loader.exec_module(host)
 
 def main():
-    if len(sys.argv) != 4 or os.geteuid() != 0: raise SystemExit(2)
-    profile_file, state_dir, expected = sys.argv[1:]
+    if len(sys.argv) != 5 or os.geteuid() != 0: raise SystemExit(2)
+    profile_file, state_dir, expected, job_id = sys.argv[1:]
+    if not re.fullmatch(r'[a-f0-9]{64}', job_id): raise SystemExit(2)
     profile = host.private_json(profile_file); host.profile_validate(profile)
     if host.fullscan.profile_digest(profile) != expected: raise SystemExit(2)
     stop = threading.Event()
@@ -29,6 +30,7 @@ def main():
     def text(value, limit): return ''.join(' ' if ord(c)<32 or ord(c)==127 else c for c in value)[:limit]
     def publish(report):
         nonlocal last
+        report = {**report, 'multi_job_id': job_id}
         host.atomic_json(state / 'full-scan-report.json', report)
         final = report.get('state') in ('finished','partial','failed','paused','interrupted')
         if not final and time.monotonic() - last < 1: return

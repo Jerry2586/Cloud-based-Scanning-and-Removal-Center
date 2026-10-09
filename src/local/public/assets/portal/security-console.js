@@ -4,7 +4,7 @@ import { describeCheckup } from '../../../../contracts/checkup-status.js';
 import { createHostWorkspace } from './host-workspace.js';
 import { describeFullScan, sanitizeFullScan } from '../../../../contracts/protection-status.js';
 import { hostScanProgress } from '../../../../contracts/host-scan-contract.js';
-import { summarizeLocalSecurity, describeWorkbenchTask, friendlyActivity, checkName } from '/contracts/local-workbench.js';
+import { summarizeLocalSecurity, describeWorkbenchTask, describeEnvironmentTask, friendlyActivity, checkName } from '/contracts/local-workbench.js';
 import { sanitizeInventory, sanitizeProtection } from '/contracts/protection-status.js';
 
 // View-only controller; authorization and report validation remain in security-ui.
@@ -236,16 +236,25 @@ export function createSecurityConsole() {
     set('[data-readiness-agent]',ready?'已取得本机报告 · '+(report.state==='running'?'检查执行中':latestContext.trusted?'环境报告有效':'请核对范围与报告时间'):report?.reason || latestContext.issue || '等待本机代理报告');
     set('[data-engine-overview]',engine.title+(engine.database_version?' · 病毒库 '+engine.database_version:''));
     set('[data-readiness-state]',ready && engine.state==='configured' && protection.state==='ready' && latestContext.trusted?'当前检查范围已就绪':'尚需核验');
-    set('[data-task-stage]',task.stage);set('[data-task-title]',task.title);set('[data-task-detail]',task.detail);
-    set('[data-task-kind]',({checkup:'全面体检',scan:'环境与容器核验','full-scan':'文件深度查杀','engine-update':'病毒库维护',idle:'当前任务'})[task.kind] || '当前任务');
-    set('[data-task-percent]',task.percent===null?task.active?'等待进度':'—':task.percent+'%');
-    set('[data-task-scope]',task.active?'百分比仅代表当前阶段；结果以本机报告为准。':task.at?'任务记录：'+new Date(task.at).toLocaleString('zh-CN',{hour12:false}):'仅查杀已纳管目录；未配置范围时不会假报全盘安全。');
-    scope?.querySelectorAll('[data-task-progress]').forEach(node=>{
-      if(task.percent===null)node.removeAttribute('aria-valuenow');else node.setAttribute('aria-valuenow',String(task.percent));
-      node.setAttribute('aria-valuetext',task.title+' · '+task.detail);node.setAttribute('aria-busy',String(task.active));
-      node.dataset.active=String(task.active);node.dataset.indeterminate=String(task.active && task.percent===null);
-      const bar=node.querySelector('span');if(bar)bar.style.width=task.percent===null?task.active?'24%':'0%':task.percent+'%';
-    });
+    function renderTask(value,prefix) {
+      for(const key of ['stage','title','detail'])set('[data-'+prefix+'-'+key+']',value[key]);
+      set('[data-'+prefix+'-kind]',({checkup:'全面体检',scan:'环境与容器核验','full-scan':'文件深度查杀','engine-update':'病毒库维护',idle:'当前任务'})[value.kind] || '当前任务');
+      set('[data-'+prefix+'-percent]',value.percent===null?value.active?'等待进度':'—':value.percent+'%');
+      set('[data-'+prefix+'-scope]',value.active?'百分比仅代表当前阶段；结果以本机报告为准。':value.at?'任务记录：'+new Date(value.at).toLocaleString('zh-CN',{hour12:false}):'仅查杀已纳管目录；未配置范围时不会假报全盘安全。');
+      scope?.querySelectorAll('[data-'+prefix+'-progress]').forEach(node=>{
+        if(value.percent===null)node.removeAttribute('aria-valuenow');else node.setAttribute('aria-valuenow',String(value.percent));
+        node.setAttribute('aria-valuetext',value.title+' · '+value.detail);node.setAttribute('aria-busy',String(value.active));
+        node.dataset.active=String(value.active);node.dataset.indeterminate=String(value.active && value.percent===null);
+        const bar=node.querySelector('span');if(bar)bar.style.width=value.percent===null?value.active?'24%':'0%':value.percent+'%';
+      });
+      scope?.querySelectorAll('[data-'+prefix+'-action]').forEach(button=>{
+        const action=value.actions[Number(button.dataset[prefix==='task'?'taskAction':'environmentTaskAction'])];
+        button.hidden=!action;button.disabled=!action;button.dataset.securityOpen=action?.panel || '';
+        button.textContent=action? action.label+' →':'';
+      });
+    }
+    renderTask(task,'task');
+    renderTask(describeEnvironmentTask(report,{busy:requestBusy,action:requestAction,trusted:latestContext.trusted,requestIssue,requestedTaskId}),'environment-task');
 
   }
 

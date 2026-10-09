@@ -38,7 +38,7 @@ export function createMultiEngine({state,request,notify}) {
     line.append(label,target,note);items?.append(line);
    }
   }
-  const summary=$('multi-engine-evidence');if(summary) summary.textContent=ready?'每类最多展示 16 条摘要。端口资产数量独立统计，不计为病毒命中。':'暂无可核验结果';
+  const summary=$('multi-engine-evidence');if(summary) summary.textContent=ready?'每类最多展示 16 条摘要。端口资产数量独立统计，不计为病毒命中。'+(job.file_evidence?' '+job.file_evidence.reason:''):'暂无可核验结果';
   if(button) button.disabled=starting || job.state==='running' || !state.csrf;
  }
  async function refresh() {

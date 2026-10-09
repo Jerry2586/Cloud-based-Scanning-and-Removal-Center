@@ -601,7 +601,7 @@ class Agent:
             result['rule_hits']=copy.deepcopy(self.rule_hits)
             result['quarantine']=findings.quarantine_status(self.state_dir)
             bundle=self.findings_bundle
-            evidence_available=result['state']=='finished' or self.findings_source=='full'
+            evidence_available=result['state']=='finished' or self.findings_source in ('full','multi')
             result['findings']=[{k:item[k] for k in ['id','path','signature','sha256','observed_at','size']} for item in bundle['items'][:8]] if evidence_available else []
             result['findings_state']=bundle['state'] if evidence_available else 'unavailable'
             result['findings_total']=bundle['total'] if evidence_available else 0
@@ -834,7 +834,7 @@ def serve(profile_file,state_dir,socket_path,allowed_uid,group):
     agent=Agent(private_json(profile_file),state_dir,rule_path=pathlib.Path(profile_file).parent/'rules.json')
     update_bridge=updates.Bridge(private_bytes,atomic_json,dispatch_lock=agent.dispatch_lock,
         management_check=lambda:management_busy() or antivirus.update_status()=='running' or maintenance_bridge.busy_status() or engine_bridge.running)
-    agent.multi=multi_engine.Bridge(agent,profile_file,{'open':secure_fd,'read':private_json,'write':atomic_json,'digest':fullscan.profile_digest,'updating':antivirus.update_status,'discover':inventory.discover,'runner':Runner})
+    agent.multi=multi_engine.Bridge(agent,profile_file,{'open':secure_fd,'read':private_json,'write':atomic_json,'digest':fullscan.profile_digest,'valid_file_report':fullscan.valid_report,'updating':antivirus.update_status,'discover':inventory.discover,'runner':Runner})
     engine_bridge=engine_readiness.Bridge(engine_readiness.NativeProbe(secure_fd),antivirus.engine_status,
         busy=lambda:maintenance_active(update_bridge.status()) or antivirus.update_status()=='running' or maintenance_bridge.busy_status(), dispatch_lock=agent.dispatch_lock)
     maintenance_bridge=engine_maintenance.Bridge(private_bytes,atomic_json,dispatch_lock=agent.dispatch_lock,

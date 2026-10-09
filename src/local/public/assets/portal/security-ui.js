@@ -94,11 +94,11 @@ export function createSecurityUi({ state, can, request, notify }) {
     if(signature===findingsSignature){operationsWorkspace.sync();return;}
     if(list?.contains(document.activeElement) && state.csrf)return;
     findingsSignature=signature;list?.replaceChildren();
-    const visible = (report.state === 'finished' || report.findings_source === 'full') && ['complete','partial'].includes(report.findings_state);
+    const visible = (report.state === 'finished' || ['full','multi'].includes(report.findings_source)) && ['complete','partial'].includes(report.findings_state);
     if (status) status.textContent = !visible ? '等候本次扫描的可核验文件证据' : report.findings_total > (report.findings?.length || 0)
       ? '特征命中 '+report.findings_total+'；页面仅展示已复核的 '+(report.findings?.length || 0)+' 条，完整记录请在 Linux 菜单查看'
       : report.findings_state === 'partial' ? '部分文件证据未完成复核；扫描告警继续保留' : '本次命中 '+report.findings_total+' 个文件；可在本页核对后隔离，系统再次验证证据';
-    if (visible && status) status.textContent = (report.findings_source==='full'?'文件深度查杀：':'环境与范围核验：')+status.textContent;
+    if (visible && status) status.textContent = (report.findings_source==='multi'?'联合检测文件证据：':report.findings_source==='full'?'文件深度查杀：':'环境与范围核验：')+status.textContent;
     if (!visible) return;
     for (const item of report.findings || []) {
       const row = document.createElement('li'); row.dataset.state = 'finding';

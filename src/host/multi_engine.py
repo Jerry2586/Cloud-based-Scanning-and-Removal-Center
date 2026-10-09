@@ -1,5 +1,5 @@
 """Fixed host-only bridge for the signed Go detector. No user supplied targets."""
-import copy, datetime, json, os, pathlib, platform, re, secrets, signal, stat, subprocess, threading, time
+import copy, datetime, hashlib, json, os, pathlib, platform, re, secrets, signal, stat, subprocess, threading, time
 IDS = ('clamav','trivy','osquery','falco')
 TERMINAL = ('complete','partial','unavailable','failed','cancelled')
 
@@ -38,6 +38,7 @@ def valid(value,profile_digest):
 class Bridge:
     def __init__(self,agent,profile_file,tools):
         self.agent=agent;self.profile_file=str(profile_file);self.tools=tools;self.running=False;self.last=0;self.child=None;self.closing=False;self.thread=None
+        self.file_evidence=None;self.evidence_until=0;self.evidence_checked_at=None
         self.file=agent.state_dir/'multi-engine-report.json'
         self.digest=tools['digest'](agent.profile)
         self.value={'schema':'ironcurtain-multi-engine/v1','state':'idle'}
@@ -48,8 +49,77 @@ class Bridge:
             if saved['state']=='running': self.fail('代理重启中断任务，请重新检测')
         except FileNotFoundError: pass
         except (OSError,ValueError,TypeError): self.value={'schema':'ironcurtain-multi-engine/v1','state':'unavailable','reason':'上次任务记录无法核验'}
+        # Reload only evidence still bound to this signed manager report.
+        self.transfer_file_evidence(self.value)
+    def file_bundle(self,value):
+        if value.get('state') not in ('finished','partial'): return None
+        if not valid(value,self.digest): raise ValueError('invalid evidence manager report')
+        engine=value['engines'][0]
+        if engine['state'] not in ('complete','partial'): return None
+        report=self.tools['read'](self.agent.state_dir/'multi-clamav'/'full-scan-report.json',256*1024)
+        expected_state='finished' if engine['state']=='complete' else 'partial'
+        if (not self.tools['valid_file_report'](report) or report.get('state')!=expected_state
+            or report.get('multi_job_id')!=value['job_id'] or report.get('profile_digest')!=self.digest
+            or not value['started_at']<=report['started_at']<=report['finished_at']<=report['updated_at']<=value['updated_at']
+            or (engine['completed'],engine['total'],engine['finding_total'])!=(report['processed'],report['indexed'],report['infected'])):
+            raise ValueError('unbound file evidence')
+        encoded=json.dumps(report,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()
+        if hashlib.sha256(encoded).hexdigest()!=engine.get('evidence_digest'): raise ValueError('file evidence digest mismatch')
+        now=time.time()
+        age=now-datetime.datetime.fromisoformat(report['updated_at'].replace('Z','+00:00')).timestamp()
+        if not -30<=age<=900: raise ValueError('stale file evidence report')
+        items=report['findings']
+        if len({x['id'] for x in items})!=len(items): raise ValueError('duplicate file evidence')
+        for item in items:
+            age=now-datetime.datetime.fromisoformat(item['observed_at'].replace('Z','+00:00')).timestamp()
+            if item['observed_at']>report['updated_at'] or not -30<=age<=900:
+                raise ValueError('stale file finding')
+            if item['observed_at']<report['started_at'] and not report.get('resumed_from'):
+                raise ValueError('file finding predates task')
+        return {'schema':'ironcurtain-findings/v1','checked_at':report['updated_at'],'profile_digest':self.digest,
+            'items':copy.deepcopy(items),'total':report['infected'],
+            'state':'complete' if report['state']=='finished' and report['infected']==len(items) else 'partial'}
+    def publish_file_evidence(self,value):
+        bundle=self.file_bundle(value)
+        if bundle is None: return False
+        with self.agent.lock:
+            if self.tools['digest'](self.agent.profile)!=self.digest: raise ValueError('changed evidence profile')
+            if bundle['checked_at']<self.agent.findings_bundle.get('checked_at',''): return False
+            self.tools['write'](self.agent.state_dir/'last-findings.json',bundle)
+            self.agent.findings_bundle=bundle
+            self.agent.findings_source='multi'
+        return True
+    def transfer_file_evidence(self,value):
+        # A completed detector report remains usable even if actionable file evidence
+        # expires while another adapter is running. Never weaken quarantine checks.
+        note=None;expires=0;checked_at=None
+        if value.get('state') not in ('finished','partial'): return
+        try:
+            published=self.publish_file_evidence(value)
+            if published:
+                with self.agent.lock:
+                    bundle=self.agent.findings_bundle
+                    checked_at=bundle['checked_at']
+                    times=[bundle['checked_at'],*(x['observed_at'] for x in bundle['items'])]
+                    expires=min(datetime.datetime.fromisoformat(x.replace('Z','+00:00')).timestamp() for x in times)+900
+                note={'state':'ready','reason':'完整文件证据已核验；处置前再次检查文件身份'}
+            elif value['engines'][0]['state'] in ('complete','partial'):
+                note={'state':'superseded','reason':'已有更新的文件检测结果，请在风险与处置查看当前证据'}
+            else:
+                note={'state':'not-applicable','reason':'本次文件查杀未提供可处置证据'}
+        except (OSError,ValueError,TypeError,KeyError):
+            note={'state':'unavailable','reason':'文件证据无法核验、已过期或未能保存；重新执行文件查杀后再处置'}
+        with self.agent.lock: self.file_evidence=note;self.evidence_until=expires;self.evidence_checked_at=checked_at
     def status(self):
-        with self.agent.lock: return copy.deepcopy(self.value)
+        with self.agent.lock:
+            value=copy.deepcopy(self.value)
+            note=copy.deepcopy(self.file_evidence)
+            if note and note['state']=='ready' and (time.time()>self.evidence_until or self.tools['digest'](self.agent.profile)!=self.digest):
+                note={'state':'unavailable','reason':'文件证据已过期或保护范围已改变；重新执行文件查杀后再处置'}
+            elif note and note['state']=='ready' and (self.agent.findings_source!='multi' or self.agent.findings_bundle.get('checked_at')!=self.evidence_checked_at):
+                note={'state':'superseded','reason':'已有更新的文件检测结果，请在风险与处置查看当前证据'}
+            if note and value.get('state') in ('finished','partial'): value['file_evidence']=note
+            return value
     def trigger(self, lease=None):
         with self.agent.lock:
             if self.closing: return 503,{'state':'unavailable','reason':'代理正在停止'}
@@ -62,7 +132,7 @@ class Bridge:
                 'engines':[{'id':i,'state':'queued','detail':'等待 Go 主控执行','completed':0,'total':0,'finding_total':0,'findings':[]} for i in IDS]}
             try: self.tools['write'](self.file,value)
             except (OSError,ValueError): return 503,{'state':'unavailable','reason':'任务保存失败'}
-            self.running=True;self.value=value;self.last=time.monotonic()
+            self.running=True;self.value=value;self.last=time.monotonic();self.file_evidence=None;self.evidence_until=0;self.evidence_checked_at=None
         try:
             self.thread=threading.Thread(target=lease.run if lease else self.run,args=(self.run,) if lease else (),daemon=True)
             self.thread.start()
@@ -79,7 +149,7 @@ class Bridge:
                 if e['state'] in ('running','queued'): e['state']='failed';e['detail']=reason
             value.update(state='failed',completed=4,coverage=sum(e['state']=='complete' for e in value['engines']),updated_at=stamp(),finished_at=stamp())
             value['updated_at']=value['finished_at']
-            self.value=value
+            self.value=value;self.file_evidence=None;self.evidence_until=0;self.evidence_checked_at=None
         try: self.tools['write'](self.file,value)
         except (OSError,ValueError): pass
     def run(self):
@@ -119,6 +189,7 @@ class Bridge:
                         with self.agent.lock: self.value=value
                         last=value
                     if child.wait(timeout=5)!=0 or last['state']=='running': raise ValueError('manager interrupted')
+                    self.transfer_file_evidence(last)
                 except BaseException:
                     self.kill(child);raise
                 finally:
