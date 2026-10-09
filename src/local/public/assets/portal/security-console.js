@@ -310,5 +310,5 @@ export function createSecurityConsole() {
     scope?.querySelectorAll('[data-security-group]').forEach(node => { node.replaceChildren(); });
     open('home');
   }
-  return Object.freeze({ bind, update, clear, setBusy, requestResult });
+  return Object.freeze({ bind, update, clear, setBusy, requestResult, open });
 }

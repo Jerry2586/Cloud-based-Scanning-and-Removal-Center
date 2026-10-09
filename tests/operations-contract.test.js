@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {validateOperation,validatePorts,sanitizeOperations} from '../src/contracts/operations-status.js';
+import {validateOperation,validatePorts,sanitizeOperations,operationRecheckPlan} from '../src/contracts/operations-status.js';
 import {operationJob,operationStatus,operationScope,revision} from './fixtures/operations.js';
 test('operations accepts only fixed evidence-bound actions and bounded ports',()=>{
  assert.deepEqual(validateOperation({action:'ports',revision,tcp:[443,22],udp:[]}).tcp,[22,443]);
@@ -37,4 +37,10 @@ test('scope enrollment accepts only bounded trusted identifiers and rejects malf
  const value={action:'enroll',revision,inventory:'b'.repeat(64),ids:['1'.repeat(16)]};assert.deepEqual(validateOperation(value),value);assert.deepEqual(validateOperation({action:'discover'}),{action:'discover'});
  for(const v of [{...value,ids:[]},{...value,ids:['1'.repeat(16),'1'.repeat(16)]},{...value,ids:Array.from({length:33},(_,i)=>i.toString(16).padStart(16,'0'))},{...value,path:'/root'},{...value,inventory:'bad'},{action:'discover',command:'sh'}])assert.throws(()=>validateOperation(v));
  for(const mutate of [v=>v.scope.discovery.candidates[0].kind='shell',v=>v.scope.discovery.candidates[0].id='x',v=>v.scope.discovery.candidates[0].value='relative',v=>v.scope.discovery.count=0,v=>v.scope.discovery.truncated=true,v=>v.scope.discovery.state='unavailable',v=>v.scope.containers=['app\nsecret'],v=>v.scope.discovery.candidates.push({...v.scope.discovery.candidates[0]})]){const v={...operationStatus(),scope:operationScope()};mutate(v);assert.equal(sanitizeOperations(v).state,'unavailable');}
+});
+
+test('follow-up plans require a completed identified operation and select only fixed checks',()=>{
+ for(const action of ['ports','enroll'])assert.deepEqual(operationRecheckPlan({...operationJob('complete'),action}),{action:'scan',panel:'environment',label:'复检环境与端口'});
+ for(const action of ['quarantine','restore'])assert.deepEqual(operationRecheckPlan({...operationJob('complete'),action}),{action:'checkup',panel:'scan',label:'复检文件与环境'});
+ for(const value of [null,{},operationJob(),operationJob('failed'),operationJob('interrupted'),{...operationJob('complete'),action:'review'},{...operationJob('complete'),action:'discover'},{...operationJob('complete'),action:'shell'},{...operationJob('complete'),id:'invalid'},{...operationJob('complete'),finished_at:'invalid'}])assert.equal(operationRecheckPlan(value),null);
 });

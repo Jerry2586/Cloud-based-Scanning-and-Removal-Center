@@ -26,6 +26,13 @@ export function validateOperation(value) {
   if (value.confirm !== (value.action === 'quarantine' ? 'quarantine' : 'restore-original')) throw Error('请明确确认文件操作');
   return {...value};
 }
+// Successful persisted operations select one fixed follow-up; review is not a repair.
+export function operationRecheckPlan(job) {
+  if (job?.state !== 'complete' || !hex(job.id,32) || !time(job.finished_at)) return null;
+  if (['ports','enroll'].includes(job.action)) return {action:'scan',panel:'environment',label:'复检环境与端口'};
+  if (['quarantine','restore'].includes(job.action)) return {action:'checkup',panel:'scan',label:'复检文件与环境'};
+  return null;
+}
 export const unavailableOperations = (reason='本机处置服务未就绪') => ({schema:SCHEMA,state:'unavailable',reason});
 function job(v) {
   if (!object(v) || !['idle','running','complete','failed','interrupted'].includes(v.state)) throw Error();

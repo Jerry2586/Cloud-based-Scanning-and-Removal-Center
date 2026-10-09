@@ -1,16 +1,16 @@
-import {sanitizeOperations,unavailableOperations,validatePorts,validateOperation} from '/contracts/operations-status.js';
+import {sanitizeOperations,unavailableOperations,validatePorts,validateOperation,operationRecheckPlan} from '/contracts/operations-status.js';
 import {createScopeWorkspace} from './scope-workspace.js';
 const states={open:'待处理',investigating:'处理中',accepted:'已接受风险'};
 const phases={idle:'暂无处置任务',running:'处置执行中',complete:'操作完成 · 等待复核',failed:'操作失败',interrupted:'任务中断 · 核对实际状态'};
 const quarantineLabels={preparing:'准备副本',captured:'副本已保存，路径移除未确认',quarantined:'已隔离',restoring:'恢复中断，需要核查',restored:'原始内容已取回，副本保留'};
-export function createOperationsWorkspace({state,request,notify}) {
-  let last=unavailableOperations(),epoch=0,pending=null,saving=null,timer=null,dirty=false,activeSession=null,bound=false,displayedRevision=null,submitted=null;
+export function createOperationsWorkspace({state,request,notify,recheck=null,isScanBusy=()=>false}) {
+  let last=unavailableOperations(),epoch=0,pending=null,saving=null,timer=null,dirty=false,activeSession=null,bound=false,displayedRevision=null,submitted=null,rechecking=null,recheckReceipt=null;
   const signatures=new WeakMap();
   const form=document.querySelector('[data-port-policy]');
   const field=name=>form?.querySelector('[name="'+name+'"]');
   const node=(tag,text,cls)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;};
   const current=op=>op.session===state.csrf && op.epoch===epoch;
-  const busy=()=>Boolean(saving || last.job?.state==='running');
+  const busy=()=>Boolean(saving || rechecking || isScanBusy() || last.job?.state==='running');
   const enabled=()=>last.state==='ready' && !busy() && Boolean(state.csrf);
   const scope=createScopeWorkspace({getStatus:()=>last,enabled,apply,notify});
   function button(text,action) {const b=node('button',text,'sc-outline');b.type='button';b.dataset.operationAction='';b.disabled=!enabled();b.addEventListener('click',action);return b;}
@@ -24,7 +24,26 @@ export function createOperationsWorkspace({state,request,notify}) {
   }
   function sync() {
     document.querySelectorAll('[data-operation-action],[data-quarantine-id]').forEach(b=>{b.disabled=!enabled() || b.dataset.operationBlocked==='true';});
+    form?.querySelectorAll('input,button').forEach(n=>{n.disabled=!enabled();});
+    document.querySelectorAll('[data-operation-recheck]').forEach(b=>{b.disabled=!enabled() || typeof recheck!=='function';});
     scope.render();
+  }
+  function followupJob() {
+    if(last.state!=='ready')return null;
+    return [last.job,...last.audit].filter(job=>operationRecheckPlan(job)).sort((a,b)=>Date.parse(b.finished_at)-Date.parse(a.finished_at))[0] || null;
+  }
+  async function runRecheck(job) {
+    const plan=operationRecheckPlan(job);
+    if(!plan || !enabled() || typeof recheck!=='function')return;
+    const op={session:state.csrf,epoch};rechecking=op;render();
+    try {
+      const receipt=await recheck(plan.action,plan.panel);
+      if(!current(op))return;
+      if(receipt?.state!=='running' || !/^[a-f0-9]{32}$/.test(receipt.task_id || ''))throw Error('复检未取得有效任务确认，请核对本机检测状态');
+      recheckReceipt={id:job.id,taskId:receipt.task_id};
+      notify('复检已受理，任务 '+receipt.task_id.slice(0,8)+'；请核对新报告与覆盖范围。');
+    } catch(error) {if(current(op))notify(error.message,true);}
+    finally {if(rechecking===op){rechecking=null;if(current(op))render();}}
   }
   function render() {
     const ready=last.state==='ready';
@@ -73,6 +92,15 @@ export function createOperationsWorkspace({state,request,notify}) {
       for(const job of [...last.audit].reverse()) {const row=node('li',undefined,'ic-risk-item');row.append(node('strong',({ports:'端口策略',review:'风险受理',quarantine:'文件隔离',restore:'原始内容取回',discover:'发现保护范围',enroll:'启用保护范围'}[job.action])+' · '+phases[job.state]),node('p',job.reason),node('small',job.target+' · '+new Date(job.finished_at).toLocaleString()));element.append(row);}
       if(!last.audit.length)element.append(node('li','暂无网页处置记录。','sc-empty-row'));
     });
+    const followup=followupJob(),plan=operationRecheckPlan(followup);
+    for(const selector of ['[data-risk-followup]','[data-recovery-followup]'])list(selector,[ready,followup,Boolean(rechecking),recheckReceipt],element=>{
+      if(!ready){element.append(node('p','等待可核验的本机处置记录。','sc-muted'));return;}
+      if(!followup){element.append(node('p','端口策略、保护范围、隔离或原内容取回成功后，可从这里发起对应复检。','sc-muted'));return;}
+      const actionName={ports:'端口策略',enroll:'保护范围',quarantine:'文件隔离',restore:'原内容取回'}[followup.action];
+      element.append(node('p',actionName+'已完成 · '+new Date(followup.finished_at).toLocaleString()),node('p',followup.reason,'sc-muted'));
+      if(recheckReceipt?.id===followup.id)element.append(node('p','复检任务 '+recheckReceipt.taskId.slice(0,8)+' 已受理；结果请查看检测页，不代表风险已消除。','sc-muted'));
+      const start=button(rechecking?'正在提交复检…':plan.label,()=>void runRecheck(followup));start.dataset.operationRecheck='';element.append(start);
+    });
     sync();
   }
   function schedule(op) {if(!current(op))return;clearTimeout(timer);timer=setTimeout(()=>{if(current(op))void refresh();},last.job?.state==='running'?2000:15000);}
@@ -101,7 +129,7 @@ export function createOperationsWorkspace({state,request,notify}) {
     finally {if(saving===op){saving=null;if(current(op)){render();void refresh();}}}
   }
   function reset() {
-    epoch++;activeSession=state.csrf;pending=saving=submitted=null;displayedRevision=null;dirty=false;clearTimeout(timer);last=unavailableOperations();scope.reset();
+    epoch++;activeSession=state.csrf;pending=saving=submitted=rechecking=recheckReceipt=null;displayedRevision=null;dirty=false;clearTimeout(timer);last=unavailableOperations();scope.reset();
     if(form){field('tcp').value='';field('udp').value='';}render();if(state.csrf)void refresh();
   }
   function bind() {

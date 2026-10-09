@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFile} from 'node:fs/promises';
-import {sanitizeOperations,unavailableOperations,validatePorts,validateOperation} from '../src/contracts/operations-status.js';
+import {sanitizeOperations,unavailableOperations,validatePorts,validateOperation,operationRecheckPlan} from '../src/contracts/operations-status.js';
 import {operationStatus,operationJob,operationScope,revision} from './fixtures/operations.js';
 
 class Element {
@@ -16,25 +16,25 @@ class Element {
  addEventListener(name,fn){this.handlers.set(name,fn);}
  fire(name,event={}){return this.handlers.get(name)?.({preventDefault(){},...event});}
 }
-async function harness(){
+async function harness(options={}){
  const state={csrf:'session-one'},requests=[],messages=[],events=new Map(),timers=new Map();let counter=0;
  const tcp=new Element(),udp=new Element(),save=new Element(),reset=new Element(),label=new Element(),form=new Element();
  form.append(tcp,udp,save,reset,label);
  form.querySelector=selector=>({'[name="tcp"]':tcp,'[name="udp"]':udp,'[data-port-policy-state]':label}[selector]);
  form.querySelectorAll=()=>[tcp,udp,save,reset];
  const map=new Map([['[data-port-policy]',form],['[data-port-policy-reset]',reset]]);
- for(const selector of ['[data-risk-list]','[data-risk-state]','[data-risk-detail]','[data-recovery-state]','[data-recovery-records]','[data-operation-audit]'])map.set(selector,new Element());
+ for(const selector of ['[data-risk-list]','[data-risk-state]','[data-risk-detail]','[data-recovery-state]','[data-recovery-records]','[data-operation-audit]','[data-risk-followup]','[data-recovery-followup]'])map.set(selector,new Element());
  const scopeForm=new Element(),scopeList=new Element(),scopeSave=new Element(),scopeReset=new Element(),scopeDiscover=new Element(),scopeState=new Element();
  scopeForm.append(scopeList,scopeSave,scopeReset);
  for(const [key,value] of [['form',scopeForm],['candidates',scopeList],['enroll',scopeSave],['reset',scopeReset],['discover',scopeDiscover],['state',scopeState],['summary',new Element()],['issues',new Element()]])map.set('[data-scope-'+key+']',value);
  const refresh=new Element(),status=new Element();
- const document={activeElement:null,createElement:()=>new Element(),querySelector:s=>map.get(s),querySelectorAll:s=>s==='[data-operations-refresh]'?[refresh]:s==='[data-operation-state]'?[status]:[],addEventListener:(name,fn)=>events.set(name,fn)};
+ const document={activeElement:null,createElement:()=>new Element(),querySelector:s=>map.get(s),querySelectorAll:s=>s==='[data-operations-refresh]'?[refresh]:s==='[data-operation-state]'?[status]:s.includes('data-operation-action') || s.includes('data-operation-recheck')?[...map.values()].flatMap(n=>n.children.filter(c=>Object.hasOwn(c.dataset,'operationAction') || Object.hasOwn(c.dataset,'operationRecheck'))):[],addEventListener:(name,fn)=>events.set(name,fn)};
  let source=await readFile(new URL('../src/local/public/assets/portal/operations-workspace.js',import.meta.url),'utf8');
  source=source.replace(/^import[^\n]+\n/gm,'').replace('export function','function');
  source=(await readFile(new URL('../src/local/public/assets/portal/scope-workspace.js',import.meta.url),'utf8')).replace('export function','function')+'\n'+source;
- const context=vm.createContext({sanitizeOperations,unavailableOperations,validatePorts,validateOperation,document,window:{prompt:()=>null,confirm:()=>true},queueMicrotask,Date,setTimeout:fn=>{const id=++counter;timers.set(id,fn);return id;},clearTimeout:id=>timers.delete(id)});
+ const context=vm.createContext({sanitizeOperations,unavailableOperations,validatePorts,validateOperation,operationRecheckPlan,document,window:{prompt:()=>null,confirm:()=>true},queueMicrotask,Date,setTimeout:fn=>{const id=++counter;timers.set(id,fn);return id;},clearTimeout:id=>timers.delete(id)});
  vm.runInContext(source,context);
- const workspace=context.createOperationsWorkspace({state,notify:(text,error)=>messages.push({text,error}),request:(url,options)=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});requests.push({url,options,resolve,reject});return promise;}});
+ const workspace=context.createOperationsWorkspace({...options,state,notify:(text,error)=>messages.push({text,error}),request:(url,options)=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});requests.push({url,options,resolve,reject});return promise;}});
  workspace.bind();
  const settle=async()=>{await new Promise(resolve=>setImmediate(resolve));};
  const load=async value=>{const wait=workspace.refresh();requests.at(-1).resolve(value || operationStatus());await wait;};
@@ -117,4 +117,25 @@ test('enrolled objects stay disabled, HTML-looking paths are text and logout dro
  await h.load(v);assert.equal(h.scopeList.querySelectorAll('[data-scope-candidate]')[1].disabled,true);choose(h);
  h.state.csrf=null;h.clear();assert.equal(h.scopeList.querySelectorAll('[data-scope-candidate]').length,0);assert.equal(h.scopeSave.disabled,true);
  h.state.csrf='new';h.workspace.start();h.requests.at(-1).resolve(v);await h.settle();assert.equal(h.scopeList.querySelectorAll('[data-scope-candidate]')[0].checked,false);
+});
+
+const followupButton=h=>h.map.get('[data-risk-followup]').children.find(n=>Object.hasOwn(n.dataset,'operationRecheck'));
+test('completed responses expose a fixed recheck and keep acceptance separate from resolution',async()=>{
+ const calls=[];let resolve;
+ const h=await harness({recheck:(action,panel)=>{calls.push({action,panel});return new Promise(done=>{resolve=done;});}});
+ await h.load({...operationStatus(),job:operationJob('complete')});const b=followupButton(h);assert.equal(b.textContent,'复检环境与端口');b.fire('click');b.fire('click');
+ assert.deepEqual(calls,[{action:'scan',panel:'environment'}]);assert.equal(h.save.disabled,true);
+ resolve({state:'running',task_id:'c'.repeat(32)});await h.settle();assert.equal(h.messages.length,1);assert.match(h.messages[0].text,/已受理/);assert.match(h.map.get('[data-risk-followup]').children.map(n=>n.textContent).join(' '),/不代表风险已消除/);
+});
+test('only successful persisted actions expose rechecks and file actions select joint checkup',async()=>{
+ const calls=[];const h=await harness({recheck:async(action,panel)=>{calls.push({action,panel});return {state:'running',task_id:'d'.repeat(32)};}});
+ for(const job of [operationJob('failed'),operationJob('interrupted'),{...operationJob('complete'),action:'review'}]){await h.load({...operationStatus(),job});assert.equal(followupButton(h),undefined);}
+ await h.load({...operationStatus(),audit:[{...operationJob('complete'),action:'restore',target:'a'.repeat(64)}]});followupButton(h).fire('click');await h.settle();assert.deepEqual(calls,[{action:'checkup',panel:'scan'}]);
+});
+test('scan contention, logout and failed confirmations never report a recheck as accepted',async()=>{
+ let scanBusy=true,resolve;const calls=[];
+ const h=await harness({isScanBusy:()=>scanBusy,recheck:()=>{calls.push(1);return new Promise(done=>{resolve=done;});}});
+ await h.load({...operationStatus(),job:operationJob('complete')});assert.equal(followupButton(h).disabled,true);followupButton(h).fire('click');assert.equal(calls.length,0);
+ scanBusy=false;h.workspace.sync();assert.equal(followupButton(h).disabled,false);followupButton(h).fire('click');resolve({state:'running',task_id:'wrong'});await h.settle();assert.equal(h.messages.at(-1).error,true);assert.equal(h.messages.some(n=>n.text.includes('已受理')),false);
+ followupButton(h).fire('click');h.state.csrf=null;h.clear();h.state.csrf='session-two';h.workspace.start();resolve({state:'running',task_id:'e'.repeat(32)});await h.settle();assert.equal(h.messages.length,1);assert.equal(followupButton(h),undefined);
 });
