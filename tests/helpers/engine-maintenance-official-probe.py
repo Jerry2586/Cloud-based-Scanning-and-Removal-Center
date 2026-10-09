@@ -8,6 +8,7 @@ import subprocess
 import time
 
 import ci_credentials
+from file_response_recheck import file_response_recheck
 
 if os.geteuid() != 0 or os.environ.get('GITHUB_ACTIONS') != 'true' or os.environ.get('IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER') != '1':
     raise SystemExit('Requires explicit disposable root Linux CI')
@@ -28,8 +29,8 @@ def call(path, body=None, *, bad_csrf=False):
     try:
         client.request('POST' if body is not None else 'GET', path, body, headers)
         reply = client.getresponse()
-        payload = reply.read(16385)
-        assert len(payload) <= 16384, 'Maintenance response exceeds bound'
+        payload = reply.read(262145)
+        assert len(payload) <= 262144, 'Acceptance response exceeds bound'
         return reply.status, dict(reply.getheaders()), json.loads(payload)
     finally:
         client.close()
@@ -87,5 +88,10 @@ assert subprocess.check_output(['systemctl', 'show', '-p', 'UnitFileState', '--v
 assert subprocess.run(['systemctl', 'is-active', '--quiet', unit]).returncode != 0
 job = json.loads(Path('/var/lib/ironcurtain/local/engine-maintenance/job.json').read_text())
 assert job['id'] == started['id'] and job['state'] == 'finished'
+def response_api(path, body=None):
+    code, _, result = call(path, body)
+    return code, result
+
+file_response_recheck(response_api)
 assert call('/api/logout', {})[0] == 200
 print('Real trusted HTTPS maintenance: auth/CSRF/strict input, fresh task, installed root worker and actual package repair passed.')

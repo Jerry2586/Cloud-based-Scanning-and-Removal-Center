@@ -83,7 +83,7 @@ jobs:
       - name: Actual mirror pull and build after injected official registry timeout
         run: sudo env "PATH=$PATH" GITHUB_ACTIONS=true IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER=1 bash tests/install-image-mirror.test.sh
       - name: Real independent Docker deployment gate
-        run: sudo env "PATH=$PATH" IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER=1 bash tests/independent-deployment.test.sh
+        run: sudo env "PATH=$PATH" GITHUB_ACTIONS=true IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER=1 bash tests/independent-deployment.test.sh
       - name: Real ClamAV engine and pinned rescan gate
         run: |
           sudo env "PATH=$PATH" GITHUB_ACTIONS=true bash tests/antivirus-engine.test.sh

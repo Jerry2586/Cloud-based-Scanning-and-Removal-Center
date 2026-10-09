@@ -129,7 +129,7 @@ jobs:
       - name: Real independent local and cloud Docker installation and upgrade
         run: |
           set -o pipefail
-          sudo env "PATH=$PATH" IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER=1 bash tests/independent-deployment.test.sh 2>&1 | tee "$RUNNER_TEMP/independent-deployment.log"
+          sudo env "PATH=$PATH" GITHUB_ACTIONS=true IRONCURTAIN_ACCEPT_DISPOSABLE_RUNNER=1 bash tests/independent-deployment.test.sh 2>&1 | tee "$RUNNER_TEMP/independent-deployment.log"
       - name: Diagnose independent services and HTTPS gateway failure
         if: failure()
         run: |

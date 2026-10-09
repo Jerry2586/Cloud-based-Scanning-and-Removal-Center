@@ -15,6 +15,8 @@ import subprocess
 import sys
 import time
 
+from response_recheck import recheck, require_disposable
+
 ADDRESS = '/run/ironcurtain-operations-local/control.sock'
 PROFILE = Path('/etc/ironcurtain/local/profile.json')
 SERVICE = 'ironcurtain-operations-local-control.service'
@@ -72,7 +74,7 @@ def apply(tcp, udp):
             assert state['job']['state'] == 'complete', state['job']
             assert state['policy']['tcp'] == sorted(tcp) and state['policy']['udp'] == sorted(udp)
             assert any(item['id'] == job_id and item['state'] == 'complete' for item in state['audit'])
-            return
+            return state
         assert time.monotonic() < deadline, state['job']
         time.sleep(0.25)
 
@@ -82,7 +84,8 @@ def container_ready():
     subprocess.run(['docker', 'exec', 'ironcurtain-local', 'node', '--input-type=module', '-e', code], check=True, timeout=15)
 
 
-def scope_web():
+def scope_web(mode='scope'):
+    require_disposable()
     # This probe runs only on the disposable deployment runner. Credentials stay in memory.
     origin = 'https://127.0.0.1:8790'
     context = ssl.create_default_context(cafile='/etc/ironcurtain/local/runtime/panel.crt')
@@ -126,6 +129,16 @@ def scope_web():
     assert code == 200
     cookie = session_cookie.split(';')[0]; csrf = json.loads(raw)['csrf']
     del credentials, raw, session_cookie
+    if mode == 'policy':
+        try:
+            expected = agent.profile_validate(json.loads(PROFILE.read_text()))
+            state = ready()
+            assert state['job']['action'] == 'ports' and state['job']['state'] == 'complete'
+            recheck(api, 'scan', agent.fullscan.profile_digest(expected), state['job'])
+            print('Real completed port policy -> authenticated scan -> fresh environment report passed.')
+            return
+        finally:
+            web('/api/logout', {})
     code, _, body = web('/assets/portal/scope-workspace.js')
     assert code == 200 and b'createScopeWorkspace' in body
     assert api('/api/operations', {'action':'discover','path':'/etc'})[0] == 400
@@ -154,12 +167,7 @@ def scope_web():
         container_ready()
         # This installation deliberately skips the antivirus engine. Confirm the
         # real agent loaded the new profile and refuses to fake file coverage.
-        deadline = time.monotonic() + 20
-        while True:
-            code, result = api('/api/scan')
-            if code == 200 and result.get('profile_digest') == agent.fullscan.profile_digest(expected): break
-            assert code in (200,503) and time.monotonic() < deadline, (code, result)
-            time.sleep(0.25)
+        result = recheck(api, 'scan', agent.fullscan.profile_digest(expected), enrolled['job'])
         assert result['protection']['program_roots'] == len(expected['program_roots'])
         assert result['protection']['enrolled_containers'] == len(expected['containers'])
         assert result['protection']['state'] != 'ready'
@@ -215,6 +223,7 @@ else:
         changed = json.loads(PROFILE.read_text())
         assert changed == dict(original, approved_tcp_ports=sorted(tcp + [extra]), approved_udp_ports=sorted(udp))
         assert subprocess.check_output(['systemctl', 'show', 'ironcurtain-agent.service', '-p', 'ExecMainStartTimestampMonotonic', '--value']) != started
+        scope_web('policy')
         apply(tcp, udp)
         assert json.loads(PROFILE.read_text()) == dict(original, approved_tcp_ports=sorted(tcp), approved_udp_ports=sorted(udp))
         directory = Path(ADDRESS).parent.stat()
