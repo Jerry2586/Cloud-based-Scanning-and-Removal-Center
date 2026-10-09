@@ -110,6 +110,8 @@ class UpdaterTests(unittest.TestCase):
    with patch.object(av,'UPDATE_UNIT',str(unit)),patch.object(av,'database_source',return_value='official-direct'),patch.object(av.shutil,'which',return_value='/usr/bin/freshclam'),patch.object(av,'_properties',return_value=props),patch.object(av.subprocess,'run') as run:
     av.request_official_update();self.assertEqual(run.call_args.args[0],['systemctl','start','--no-block','ironcurtain-antivirus-update.service'])
     av.request_official_update(wait=True);self.assertEqual(run.call_args.args[0],['systemctl','start','ironcurtain-antivirus-update.service']);self.assertEqual(run.call_args.kwargs['timeout'],270)
+    self.assertEqual(run.call_count,2)
+    run.reset_mock()
     for change in ['permissions','owner','link','source','fragment']:
      if change=='permissions':unit.chmod(0o666)
      elif change=='owner':os.chown(unit,65534,-1)
@@ -117,13 +119,15 @@ class UpdaterTests(unittest.TestCase):
      elif change=='source':
       with patch.object(av,'database_source',return_value='xuanwu-signed'):
        with self.assertRaises(ValueError):av.request_official_update()
+      run.assert_not_called()
       continue
      elif change=='fragment':
       with patch.object(av,'_properties',return_value={'LoadState':'loaded','FragmentPath':'/untrusted'}):
        with self.assertRaises(ValueError):av.request_official_update()
+      run.assert_not_called()
       continue
      with self.assertRaises(ValueError):av.request_official_update()
      unit.unlink();unit.write_text('fixture');unit.chmod(0o644)
-    self.assertEqual(run.call_count,1)
+    run.assert_not_called()
 
 if __name__=='__main__': unittest.main()
