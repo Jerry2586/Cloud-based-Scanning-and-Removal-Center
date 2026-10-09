@@ -27,18 +27,26 @@ def request(method, value=None, uid=10001):
 
 
 def ready():
-    subprocess.run(['systemctl', 'is-active', '--quiet', SERVICE], check=True)
-    directory = Path(ADDRESS).parent.stat()
-    assert (directory.st_uid, directory.st_gid, stat.S_IMODE(directory.st_mode)) == (0, 10001, 0o750)
-    meta = Path(ADDRESS).stat()
-    assert stat.S_ISSOCK(meta.st_mode) and (meta.st_uid, meta.st_gid, stat.S_IMODE(meta.st_mode)) == (0, 10001, 0o660)
+    # systemctl restart returns before the Python listener has rebound its socket.
     deadline = time.monotonic() + 15
     while True:
-        code, result = request('GET')
+        active = subprocess.run(['systemctl', 'is-active', '--quiet', SERVICE]).returncode == 0
+        result = {'transport': 'service-starting'}
+        code = 0
+        if active:
+            directory = Path(ADDRESS).parent.stat()
+            assert (directory.st_uid, directory.st_gid, stat.S_IMODE(directory.st_mode)) == (0, 10001, 0o750)
+            try:
+                meta = Path(ADDRESS).stat()
+            except FileNotFoundError:
+                result = {'transport': 'socket-starting'}
+            else:
+                assert stat.S_ISSOCK(meta.st_mode) and (meta.st_uid, meta.st_gid, stat.S_IMODE(meta.st_mode)) == (0, 10001, 0o660)
+                code, result = request('GET')
         if code == 200 and result.get('state') == 'ready':
             assert result['schema'] == 'ironcurtain-operations/v1'
             return result
-        assert time.monotonic() < deadline, (code, result)
+        assert code in (0, 503) and time.monotonic() < deadline, (code, result)
         time.sleep(0.25)
 
 
@@ -73,13 +81,21 @@ def container_ready():
 if sys.argv[1:2] == ['request']:
     method, uid, raw = sys.argv[2:]
     os.setgroups([]); os.setgid(10001); os.setuid(int(uid))
-    sock = socket.socket(socket.AF_UNIX); sock.settimeout(5); sock.connect(ADDRESS)
-    connection = http.client.HTTPConnection('localhost', timeout=5); connection.sock = sock
-    payload = None if method == 'GET' else json.dumps(json.loads(raw)).encode()
-    connection.request(method, '/operations', body=payload, headers={} if payload is None else {'Content-Type': 'application/json'})
-    response = connection.getresponse(); body = response.read(262145)
-    assert len(body) <= 262144
-    print(json.dumps([response.status, json.loads(body)])); connection.close()
+    connection = None
+    sock = socket.socket(socket.AF_UNIX); sock.settimeout(5)
+    try:
+        sock.connect(ADDRESS)
+        connection = http.client.HTTPConnection('localhost', timeout=5); connection.sock = sock
+        payload = None if method == 'GET' else json.dumps(json.loads(raw)).encode()
+        connection.request(method, '/operations', body=payload, headers={} if payload is None else {'Content-Type': 'application/json'})
+        response = connection.getresponse(); body = response.read(262145)
+        assert len(body) <= 262144
+        print(json.dumps([response.status, json.loads(body)]))
+    except (FileNotFoundError, ConnectionRefusedError, ConnectionResetError, BrokenPipeError, TimeoutError, http.client.RemoteDisconnected) as error:
+        print(json.dumps([0, {'transport': type(error).__name__}]))
+    finally:
+        if connection is not None: connection.close()
+        sock.close()
 else:
     assert os.geteuid() == 0 and sys.argv[1:] in (['ready'], ['policy'])
     ready(); container_ready()
